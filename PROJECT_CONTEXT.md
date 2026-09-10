@@ -1,6 +1,8 @@
-# TCGTerminal Project Context
+# CardboardDex (TCGTerminal) Project Context
 
 This is the handoff document for agents working in this repository. Read this file and `AGENTS.md` before changing code. `ARCHITECTURE.md` describes the system boundaries in more detail.
+
+- **GitHub Repository**: [https://github.com/n8liu/cardboarddex.git](https://github.com/n8liu/cardboarddex.git)
 
 ## Product goal
 
@@ -25,6 +27,7 @@ The browser communicates only with FastAPI. API keys and provider calls remain s
 
 ## Technology
 
+- Repository: [https://github.com/n8liu/cardboarddex.git](https://github.com/n8liu/cardboarddex.git)
 - Frontend: Next.js 16 App Router, Tailwind CSS, Recharts, dynamic client/server cache synchronization.
 - Backend: Python 3.11+, FastAPI, SQLAlchemy 2, Alembic.
 - Data: PostgreSQL 16 (`tcgterminal` database and user).

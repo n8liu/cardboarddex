@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session
 
 from app.database import Base
 from app.models import Card, PriceObservation, ProviderCardState, Set
+import httpx
+from jobs import collect_prices
 from jobs.collect_prices import (
     _observation,
     normalize_number,
@@ -141,6 +143,7 @@ class FakeBulkTCGAPIClient:
 
 
 def test_bulk_price_collection_processes_multiple_cards_in_single_request() -> None:
+    collect_prices._BULK_PRICES_SUPPORTED = True
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
     with Session(engine) as session:
@@ -161,3 +164,59 @@ def test_bulk_price_collection_processes_multiple_cards_in_single_request() -> N
     assert len(observations) == 2
     assert observations[0].price == 30.00
     assert observations[1].price == 50.00
+
+
+class FakeForbiddenBulkClient:
+    def __init__(self) -> None:
+        self.bulk_calls = 0
+        self.individual_calls = 0
+
+    def get_bulk_prices(self, card_ids: list[str]) -> dict:
+        self.bulk_calls += 1
+        request = httpx.Request("GET", "https://api.tcgapi.dev/v1/bulk/prices")
+        response = httpx.Response(403, request=request, json={"error": {"message": "Pro tier or higher required", "code": "TIER_REQUIRED"}})
+        raise httpx.HTTPStatusError("Client error '403 Forbidden'", request=request, response=response)
+
+    def get_card(self, card_id: str) -> dict:
+        self.individual_calls += 1
+        return {"data": {
+            "id": card_id,
+            "name": "Pikachu" if card_id == "101" else "Raichu",
+            "number": "1" if card_id == "101" else "2",
+            "set_name": "Base Set",
+        }}
+
+    def get_card_prices(self, card_id: str, printing: str | None = None) -> dict:
+        return {"data": [
+            {
+                "card_id": card_id,
+                "printing": "Normal",
+                "market_price": 50.00 if card_id == "101" else 30.00,
+                "last_updated_at": "2026-08-28T07:00:00.000Z",
+            }
+        ]}
+
+
+def test_bulk_price_collection_403_falls_back_to_individual_collection() -> None:
+    collect_prices._BULK_PRICES_SUPPORTED = True
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(Set(id="1", name="Base Set"))
+        session.add(Card(id="101", name="Pikachu", set_id="1", number="1"))
+        session.add(Card(id="102", name="Raichu", set_id="1", number="2"))
+        session.commit()
+
+        client = FakeForbiddenBulkClient()
+        result = run_price_collection(session, limit=2, tcgapi=client)  # type: ignore[arg-type]
+
+        observations = list(session.scalars(select(PriceObservation).order_by(PriceObservation.price)))
+
+    assert client.bulk_calls == 1
+    assert client.individual_calls == 2
+    assert result["cards"] == 2
+    assert result["tcgapi_observations"] == 2
+    assert result["provider_errors"] == 0
+    assert len(observations) == 2
+    assert collect_prices._BULK_PRICES_SUPPORTED is False
+

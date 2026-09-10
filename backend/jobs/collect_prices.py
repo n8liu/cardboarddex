@@ -127,7 +127,33 @@ def _observation(session: Session, *, card_id: str, provider: str,
 
 
 def _collect_tcgapi(session: Session, card: Card, set_name: str, client: TCGAPIClient) -> int:
-    card_payload = client.get_card(card.id)
+    try:
+        card_payload = client.get_card(card.id)
+    except httpx.HTTPStatusError as exc:
+        if exc.response is not None and exc.response.status_code == 404:
+            logger.info(
+                "TCG API card not found card_id=%s name=%s set=%s status=404; marking unmatched",
+                card.id,
+                card.name,
+                set_name,
+            )
+            _state(
+                session,
+                card.id,
+                "tcgapi",
+                "unmatched",
+                {"reason": "card_not_found_404"},
+            )
+            return 0
+        logger.error(
+            "TCG API get_card failed card_id=%s status=%s error=%s: %s",
+            card.id,
+            exc.response.status_code if exc.response is not None else None,
+            type(exc).__name__,
+            exc,
+        )
+        raise
+
     item = card_payload.get("data")
     if not isinstance(item, dict):
         _state(
@@ -157,7 +183,35 @@ def _collect_tcgapi(session: Session, card: Card, set_name: str, client: TCGAPIC
         )
         return 0
 
-    prices_payload = client.get_card_prices(card.id)
+    try:
+        prices_payload = client.get_card_prices(card.id)
+    except httpx.HTTPStatusError as exc:
+        if exc.response is not None and exc.response.status_code == 404:
+            logger.info(
+                "TCG API price data not found card_id=%s name=%s set=%s status=404; marking no_price_data",
+                card.id,
+                card.name,
+                set_name,
+            )
+            _state(
+                session,
+                card.id,
+                "tcgapi",
+                "no_price_data",
+                {"card": card_payload, "reason": "price_data_not_found"},
+                card.id,
+                "canonical_tcgapi_id",
+            )
+            return 0
+        logger.error(
+            "TCG API get_card_prices failed card_id=%s status=%s error=%s: %s",
+            card.id,
+            exc.response.status_code if exc.response is not None else None,
+            type(exc).__name__,
+            exc,
+        )
+        raise
+
     raw_prices = prices_payload.get("data")
     if isinstance(raw_prices, dict):
         prices = [raw_prices]
@@ -205,11 +259,15 @@ def _cards_for_collection(session: Session, limit: int) -> list[Card]:
     ))
 
 
+_BULK_PRICES_SUPPORTED: bool = True
+
+
 def run_price_collection(
     session: Session,
     limit: int | None = None,
     tcgapi: TCGAPIClient | None = None,
 ) -> dict[str, int]:
+    global _BULK_PRICES_SUPPORTED
     configured_limit = limit if limit is not None else get_settings().price_collection_card_limit
     tcgapi_client = tcgapi or TCGAPIClient()
     result = {"cards": 0, "tcgapi_observations": 0, "provider_errors": 0}
@@ -218,7 +276,7 @@ def run_price_collection(
         return result
 
     # Check if client supports bulk price lookups (GET /bulk/prices)
-    if hasattr(tcgapi_client, "get_bulk_prices"):
+    if _BULK_PRICES_SUPPORTED and hasattr(tcgapi_client, "get_bulk_prices"):
         chunk_size = 100
         for i in range(0, len(candidates), chunk_size):
             chunk = candidates[i : i + chunk_size]
@@ -273,6 +331,54 @@ def run_price_collection(
                             session, card, card.set.name, tcgapi_client
                         )
                 session.commit()
+            except httpx.HTTPStatusError as exc:
+                session.rollback()
+                session.info.pop("price_observation_fingerprints", None)
+                status_code = exc.response.status_code if exc.response is not None else None
+                if status_code in (403, 404):
+                    _BULK_PRICES_SUPPORTED = False
+                    logger.warning(
+                        "TCG API bulk prices endpoint unavailable or tier restricted status=%s error=%s: %s; "
+                        "disabling bulk lookups and falling back to individual card pricing",
+                        status_code,
+                        type(exc).__name__,
+                        exc,
+                    )
+                    # Process remaining cards individually
+                    for card in chunk:
+                        result["cards"] += 1
+                        try:
+                            result["tcgapi_observations"] += _collect_tcgapi(
+                                session, card, card.set.name, tcgapi_client
+                            )
+                            session.commit()
+                        except (
+                            httpx.HTTPError,
+                            KeyError,
+                            TypeError,
+                            ValueError,
+                            ProviderRequestLimitExceeded,
+                            TCGAPIConfigurationError,
+                            SQLAlchemyError,
+                        ) as card_exc:
+                            session.rollback()
+                            session.info.pop("price_observation_fingerprints", None)
+                            result["provider_errors"] += 1
+                            logger.exception(
+                                "Price collection provider failed provider=tcgapi card_id=%s error=%s: %s",
+                                card.id,
+                                type(card_exc).__name__,
+                                card_exc,
+                            )
+                else:
+                    result["provider_errors"] += len(chunk)
+                    logger.exception(
+                        "Bulk price collection HTTP error chunk_size=%s status=%s error=%s: %s",
+                        len(chunk),
+                        status_code,
+                        type(exc).__name__,
+                        exc,
+                    )
             except (
                 httpx.HTTPError,
                 KeyError,
@@ -290,6 +396,7 @@ def run_price_collection(
                     len(chunk),
                     type(exc).__name__,
                     exc,
+                    exc_info=True,
                 )
     else:
         for card in candidates:

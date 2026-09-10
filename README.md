@@ -37,3 +37,12 @@ A full-stack Pokémon trading card price tracker and market analytics tool. It i
 - **Backend**: Python 3.11+, FastAPI, SQLAlchemy 2, Alembic, Celery
 - **Database & Cache**: PostgreSQL 16, Redis 7 (rate limiting + shared token caching)
 - **Data Sources**: [TCG API](https://tcgapi.dev) (Catalog & Pricing), eBay Browse API (Comps)
+
+docker compose up -d
+
+cd backend
+source .venv/bin/activate
+uvicorn app.main:app --reload --port 8000
+
+cd frontend
+npm run dev

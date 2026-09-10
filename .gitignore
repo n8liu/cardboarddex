@@ -1,27 +1,40 @@
 # Environment & Secrets
 .env
-.env*.local
+.env.*
 *.env
+!.env.example
+*.pem
+*.key
+*.cert
 
 # Operating System
 .DS_Store
 **/.DS_Store
+._*
 Thumbs.db
+ehthumbs.db
+.Spotlight-V100
+.Trashes
 
 # Python & Virtual Environments
 .venv/
 venv/
 env/
+ENV/
 __pycache__/
 *.py[cod]
 *$py.class
 *.egg-info/
 *.egg
+dist/
+build/
 .pytest_cache/
 .coverage
 coverage/
 htmlcov/
 .ruff_cache/
+.mypy_cache/
+pip-wheel-metadata/
 
 # Celery & Background Jobs
 celerybeat-schedule*
@@ -29,6 +42,9 @@ celerybeat-schedule*
 
 # Local Databases & Backups
 *.db
+*.db-journal
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
 backend/*.db
@@ -46,10 +62,24 @@ frontend/out/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
 .turbo/
+.vercel/
+
+# Logs & Temporary Files
+*.log
+logs/
+*.tmp
 
 # IDE & Editors
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
+
+# Agent & Scratch
+.agents/
+.gemini/
+scratch/
+
