@@ -30,10 +30,20 @@ function formatDate(value: string | null): string {
 export default async function CardPage({ params, searchParams }: CardPageProps) {
   const { id } = await params;
   const sp = searchParams ? await searchParams : undefined;
-  const [card, pricing] = await Promise.all([
-    getCard(id, { ref: sp?.ref }),
-    getCardPricing(id),
-  ]);
+  let card = null;
+  let pricing = null;
+
+  try {
+    const [fetchedCard, fetchedPricing] = await Promise.all([
+      getCard(id, { ref: sp?.ref }),
+      getCardPricing(id),
+    ]);
+    card = fetchedCard;
+    pricing = fetchedPricing;
+  } catch (err) {
+    console.error(`[CardPage] Failed fetching card ${id} data:`, err);
+  }
+
   if (!card) notFound();
   const number = card.printed_total ? `${card.number}/${card.printed_total}` : card.number;
   const setCatalogUrl = `/catalog?set=${encodeURIComponent(card.set_id)}${

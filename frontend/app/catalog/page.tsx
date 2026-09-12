@@ -28,10 +28,20 @@ export default async function CatalogPage({ searchParams }: CatalogProps) {
   const sortBy: CardSort = validSorts.includes(params.sort as CardSort)
     ? (params.sort as CardSort)
     : "price_desc";
-  const [cards, sets] = await Promise.all([
-    searchCards(query, { setId, sortBy, hideSealed, game }),
-    getCardSets(),
-  ]);
+
+  let cards: Awaited<ReturnType<typeof searchCards>> = [];
+  let sets: Awaited<ReturnType<typeof getCardSets>> = [];
+
+  try {
+    const [fetchedCards, fetchedSets] = await Promise.all([
+      searchCards(query, { setId, sortBy, hideSealed, game }),
+      getCardSets(),
+    ]);
+    cards = fetchedCards;
+    sets = fetchedSets;
+  } catch (err) {
+    console.error("Failed fetching catalog cards or sets:", err);
+  }
 
   return (
     <main className="min-h-[calc(100vh-65px)] bg-[#f7f8f6] text-slate-950">

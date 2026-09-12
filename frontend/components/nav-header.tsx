@@ -66,6 +66,7 @@ export function NavHeader() {
           <Link
             className="flex items-center gap-2.5 text-sm font-bold tracking-tight text-slate-950 transition hover:opacity-90"
             href="/"
+            prefetch={false}
             onClick={() => handleNavClick("/")}
           >
             <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-900 font-mono text-[11px] font-black text-white shadow-xs tracking-tighter">
@@ -84,6 +85,7 @@ export function NavHeader() {
             <Link
               key={link.href}
               href={link.href}
+              prefetch={false}
               onClick={() => handleNavClick(link.href)}
               className={`rounded-lg px-3 py-1.5 transition uppercase tracking-wider font-semibold ${
                 link.active
@@ -112,6 +114,7 @@ export function NavHeader() {
             <Link
               key={link.href}
               href={link.href}
+              prefetch={false}
               onClick={() => handleNavClick(link.href)}
               className={`rounded-lg px-2.5 py-1 text-[11px] whitespace-nowrap transition uppercase tracking-wider font-semibold ${
                 link.active
