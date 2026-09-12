@@ -1,9 +1,12 @@
 import type { NextConfig } from "next";
 
-const apiOrigin = new URL(
-  process.env.NEXT_PUBLIC_API_URL ||
-    "https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws",
-);
+const DEFAULT_API_URL =
+  "https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws";
+const envApi = process.env.NEXT_PUBLIC_API_URL?.trim();
+const resolvedApi = (!envApi || envApi.includes("api.cardboarddex.com"))
+  ? DEFAULT_API_URL
+  : envApi;
+const apiOrigin = new URL(resolvedApi);
 const apiIsLocal = ["127.0.0.1", "localhost"].includes(apiOrigin.hostname);
 
 const nextConfig: NextConfig = {

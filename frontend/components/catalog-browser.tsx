@@ -81,9 +81,22 @@ export function CatalogBrowser({
             setIsSearching(false);
           }
         })();
+      } else if (initialCards.length === 0) {
+        void (async () => {
+          setIsSearching(true);
+          try {
+            const nextCards = await searchCards(q.trim(), { setId: s, sortBy: sort, hideSealed: hs, game: g });
+            setCards(nextCards);
+            setHasMore(nextCards.length === CARD_PAGE_SIZE);
+          } catch (err) {
+            console.error("Failed fetching initial catalog cards on client:", err);
+          } finally {
+            setIsSearching(false);
+          }
+        })();
       }
     }
-  }, [getUrlParams, initialHideSealed, initialQuery, initialSetId, initialSortBy]);
+  }, [getUrlParams, initialCards.length, initialHideSealed, initialQuery, initialSetId, initialSortBy]);
 
   useEffect(() => {
     setSetsList(sets);

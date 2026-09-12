@@ -25,9 +25,18 @@ import type {
 } from "@/types/card";
 import type { PokemonCardsResponse } from "@/types/pokemon";
 
-const API_URL =
-  process.env.NEXT_PUBLIC_API_URL ||
+const DEFAULT_API_URL =
   "https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws";
+
+function resolveApiUrl(): string {
+  const envUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
+  if (!envUrl || envUrl.includes("api.cardboarddex.com")) {
+    return DEFAULT_API_URL;
+  }
+  return envUrl;
+}
+
+const API_URL = resolveApiUrl();
 export const CARD_PAGE_SIZE = 24;
 
 export function buildQueryString(

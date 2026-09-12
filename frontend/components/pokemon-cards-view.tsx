@@ -70,7 +70,7 @@ export function PokemonCardsView({
   useEffect(() => {
     if (isFirstMount.current) {
       isFirstMount.current = false;
-      if (initialParams.s !== "" || initialParams.sort !== "price_desc" || initialParams.game !== "all") {
+      if (initialParams.s !== "" || initialParams.sort !== "price_desc" || initialParams.game !== "all" || initialCards.length === 0) {
         void handleFilterChange(initialParams.s, initialParams.sort, initialParams.game);
       }
       return;
