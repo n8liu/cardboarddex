@@ -29,16 +29,43 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
 ## Technology
 
 - Repository: [https://github.com/n8liu/cardboarddex.git](https://github.com/n8liu/cardboarddex.git)
-- Frontend: Next.js 16 App Router, Tailwind CSS, Recharts, dynamic client/server cache synchronization, IBM Plex Mono typography.
-- Backend: Python 3.11+, FastAPI, SQLAlchemy 2, Alembic.
-- Data: PostgreSQL 16 (`cardboarddex` database and user).
-- Background work: Celery and Redis with dual-layer rate limiter (burst pacing + daily safety ceiling) and alternating 15-minute price cycling.
+- Frontend: Next.js 16 App Router, Tailwind CSS, Recharts, dynamic client/server cache synchronization, IBM Plex Mono typography. Deployed to **Cloudflare Pages** ([https://cardboarddex.pages.dev](https://cardboarddex.pages.dev)).
+- Backend: Python 3.11+, FastAPI, SQLAlchemy 2, Alembic. Deployed to **AWS ECS Fargate** ([https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws](https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws)).
+- Data: PostgreSQL 16 on **AWS RDS** (`cardboarddex-db.c7gc44wq4clr.us-west-2.rds.amazonaws.com:5432`, `db.t4g.micro`, 20GB gp3, `us-west-2`) and local development DB (`cardboarddex`).
+- Background work: Celery and Redis running 24/7 passively on **AWS ECS Fargate** (`cardboarddex-celery-worker` service) with dual-layer rate limiter (burst pacing + daily safety ceiling) and alternating 15-minute price cycling.
+- Media & Storage: **Amazon S3 Card Asset Bucket** (`cardboarddex-card-assets-349558247779`, `us-west-2`) with read-through caching in FastAPI (`/cards/:id/image`) and batch sync CLI (`jobs/sync_images_to_s3.py`).
 - External sources: [PokéAPI](https://pokeapi.co/), [TCG API Cards](https://tcgapi.dev/api/cards/), [TCG API Prices](https://tcgapi.dev/api/prices/), and eBay Developers APIs only.
-- Future target: Hybrid Cloudflare Edge (DNS, DDoS WAF, R2 image storage with $0 egress) + AWS Core (RDS PostgreSQL, ElastiCache Redis, ECS Fargate for API & Celery).
+- Live Infrastructure: Hybrid architecture active with Cloudflare Edge (Pages frontend, DNS, DDoS WAF) + AWS Core (RDS PostgreSQL, S3 Asset Bucket, ECS Fargate for API, ECS Fargate for Celery Worker + Redis).
 
-## Current state as of 2026-09-11 (updated 2026-09-11)
+## Current state as of 2026-09-12 (updated 2026-09-12)
 
 ### Implemented and verified
+
+- **Live AWS Production Infrastructure (RDS, S3 Asset Pipeline, ECS Fargate, & 24/7 Passive Celery Worker)**:
+  - **AWS RDS PostgreSQL 16**: Provisioned and active at `cardboarddex-db.c7gc44wq4clr.us-west-2.rds.amazonaws.com:5432` (`db.t4g.micro`, 20GB gp3, `us-west-2`). All database migrations applied cleanly via Alembic. Live database holds 234 expansion sets, 9,000 cards, and 8,732 price observations committed (with 49 sets fully cataloged on the API).
+  - **Amazon S3 Card Asset Pipeline & Read-Through Cache**:
+    - S3 bucket `cardboarddex-card-assets-349558247779` created in `us-west-2` with public read access.
+    - Implemented read-through caching in [`backend/app/routers/cards.py`](backend/app/routers/cards.py) (`get_card_image`): checks S3 first; if absent, fetches from TCG API CDN, asynchronously uploads to S3, and streams image to client.
+    - Built batch synchronization CLI [`backend/jobs/sync_images_to_s3.py`](backend/jobs/sync_images_to_s3.py) with concurrent async downloads and multi-threaded S3 uploads (`--limit`, `--all`, `--concurrency`). Over 740+ card images synced directly to S3.
+    - Added S3 bucket domain to Next.js `images.remotePatterns` in [`frontend/next.config.ts`](frontend/next.config.ts).
+  - **Passive 24/7 Celery Background Worker & Redis on AWS ECS Fargate**:
+    - Created multi-container ECS task definition `cardboarddex-celery-worker:1` pairing `redis:7-alpine` on `localhost:6379` with `celery -A app.celery_app.celery_app worker -B --loglevel=info`.
+    - Deployed ECS Fargate service `cardboarddex-celery-worker` running 24/7 in ECS cluster `default` with CloudWatch logging (`/ecs/cardboarddex-celery-worker`).
+    - Passively executes alternating 15-minute price updates (TCG API at :00, :30; eBay comps at :15, :45) and daily catalog synchronization at 02:00 UTC without manual intervention.
+  - **AWS ECS Fargate Backend Service**:
+    - FastAPI app running on ECS Fargate at `https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws`.
+    - Added global exception handler in [`backend/app/main.py`](backend/app/main.py) injecting CORS headers (`Access-Control-Allow-Origin: *`, `Access-Control-Allow-Methods: *`, `Access-Control-Allow-Headers: *`) into 500 internal server error responses, ensuring frontend error boundaries can inspect backend errors rather than being blocked by browser CORS restrictions.
+  - **Idempotent Catalog Ingestion**:
+    - Updated [`backend/jobs/sync_catalog.py`](backend/jobs/sync_catalog.py) to check existing price observation fingerprints before inserting, resolving `UniqueViolation: uq_price_observations_fingerprint` when re-syncing sets.
+    - Handles TCG API daily account quota (1,000 req/day limit) gracefully; passive worker resumes automatically when quota refreshes at midnight UTC.
+
+- **Cloudflare Pages Production Resilience & Error Isolation**:
+  - Live production frontend deployed at `https://cardboarddex.pages.dev`.
+  - Added smart API endpoint fallback in [`frontend/lib/api.ts`](frontend/lib/api.ts) and [`frontend/next.config.ts`](frontend/next.config.ts) routing to the live AWS ECS URL (`https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws`) when `NEXT_PUBLIC_API_URL` points to unconfigured `api.cardboarddex.com`.
+  - Added client-side fallback fetching on mount in [`frontend/components/catalog-browser.tsx`](frontend/components/catalog-browser.tsx) and [`frontend/components/pokemon-cards-view.tsx`](frontend/components/pokemon-cards-view.tsx) if initial SSR payload is empty or errored.
+  - Implemented comprehensive error boundary in [`frontend/app/error.tsx`](frontend/app/error.tsx) with technical details toggle, direct action buttons (`Retry Action`, `Reload Application`, `Return to Pokédex`), and API health status check.
+  - Added graceful SSR error catching on `/catalog`, `/cards/[id]`, `/live-updates`, and `/top-volume` routes, rendering UI shells rather than 500 error pages on transient backend outages.
+  - Disabled navigation prefetching (`prefetch={false}`) in [`frontend/components/nav-header.tsx`](frontend/components/nav-header.tsx) to prevent burst 404 / RSC fetch floods on Cloudflare Pages edge, and added `frontend/wrangler.toml` specifying `compatibility_flags = ["nodejs_compat"]`.
 
 - **Automated CI/CD & Hybrid Cloud Deployment Architecture (Cloudflare + AWS)**:
   - Containerized backend using multi-stage [`backend/Dockerfile`](backend/Dockerfile) and [`backend/.dockerignore`](backend/.dockerignore) supporting FastAPI (`uvicorn`), Celery Worker, Celery Beat scheduler, and Alembic database migrations.
@@ -322,6 +349,8 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
 
 The local PostgreSQL database (`cardboarddex`) has been populated with canonical TCG API IDs using `python -m jobs.sync_catalog --all` and `python -m jobs.sync_catalog --game pokemon-japan --all`. Both English and Japanese sets are supported seamlessly: English sets default to `series="Pokemon"` / `series=None`, while Japanese sets are tagged `series="Pokemon Japan"`. Over **482 sets**, **54,480+ cards**, and **66,500+ active price observations** (including 17,400+ verified eBay comps, 1,120+ graded slabs, and per-printing TCG market prices) are active in PostgreSQL. All card records link to active TCGPlayer/TCG API CDN assets proxied through `/cards/:id/image`.
 
+In production on **AWS RDS PostgreSQL** (`cardboarddex-db.c7gc44wq4clr.us-west-2.rds.amazonaws.com:5432`), the database holds **234 expansion sets**, **9,000 cards**, and **8,732 price observations** committed across 49 fully cataloged sets. The passive Celery Beat scheduler running 24/7 on AWS ECS Fargate automatically resumes set indexing daily as the TCG API 1,000 req/day quota refreshes at 00:00 UTC. Card images are served via Amazon S3 read-through cache (`cardboarddex-card-assets-349558247779`) and proxied through `/cards/:id/image`.
+
 ## Canonical provider behavior
 
 ### TCG API
@@ -381,6 +410,11 @@ python jobs/collect_ebay_prices.py "Charizard Base Set"
 python jobs/collect_ebay_prices.py "151 Binder Collection"
 python jobs/collect_ebay_prices.py "Lugia ex"
 
+# S3 Card Image Synchronization
+python jobs/sync_images_to_s3.py --limit 100 --concurrency 5
+python jobs/sync_images_to_s3.py --all --concurrency 10
+python jobs/sync_images_to_s3.py --card-id 28402
+
 # Background Celery Worker
 celery -A app.celery_app worker --beat --loglevel=info
 ```
@@ -405,6 +439,9 @@ docker compose up -d
 | --- | --- |
 | `DATABASE_URL` | SQLAlchemy PostgreSQL URL (`postgresql+psycopg://cardboarddex:cardboarddex@localhost:5432/cardboarddex`). |
 | `REDIS_URL` | Celery broker/result backend and shared request limiter (`redis://localhost:6379/0`). |
+| `AWS_DEFAULT_REGION` | AWS region for S3 and ECS (defaults to `us-west-2`). |
+| `S3_CARD_ASSETS_BUCKET` | S3 bucket name for card image caching (`cardboarddex-card-assets-349558247779`). |
+| `S3_CUSTOM_DOMAIN` | Optional custom domain or CDN domain for card assets. |
 | `TCGAPI_API_KEY` | Required server-side TCG API key. |
 | `TCGAPI_BASE_URL` | Defaults to `https://api.tcgapi.dev/v1`. |
 | `TCGAPI_DAILY_REQUEST_LIMIT` | Redis-backed request cutoff; defaults to 2000. |
@@ -434,11 +471,11 @@ Never commit `.env` or API credentials.
 - Introduce Redis-backed `CatalogSyncBuffer` to checkpoint `(set_id, page)` progress, enabling graceful pause on daily request limit (`ProviderRequestLimitExceeded`) and seamless resumption on subsequent runs.
 - Optimize TCG API set pagination and page-by-page card ingestion in `TCGAPIClient`.
 
-### 3. Move media and runtime infrastructure to Cloudflare + AWS (Hybrid Architecture)
+### 3. Media & CDN Edge Distribution (Phase 2)
 
-- Put domain DNS, DDoS protection, and edge caching on Cloudflare.
-- Store card images in Cloudflare R2 ($0 egress fees, standard S3 API) and deliver through Cloudflare CDN.
-- Run PostgreSQL on RDS, Redis/Celery coordination on ElastiCache, and API/workers on ECS Fargate with secrets in AWS Secrets Manager.
+- **Completed**: PostgreSQL 16 on AWS RDS, ECS Fargate backend API, S3 card asset bucket with read-through caching and batch sync worker, and 24/7 passive Celery worker with Redis broker on ECS Fargate are fully deployed and operational.
+- **Pending CloudFront Custom Domain**: Complete AWS Support verification to deploy CloudFront CDN distribution in front of S3 bucket `cardboarddex-card-assets-349558247779` for global edge caching and custom domain HTTPS.
+- **Custom API Domain**: Add DNS CNAME record in Cloudflare DNS for `api.cardboarddex.com` pointing to `ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws`.
 
 ### 4. Product-quality pass
 
