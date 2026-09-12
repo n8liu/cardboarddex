@@ -1073,8 +1073,35 @@ def get_card_image(
             media_type="image/svg+xml",
             headers={"Cache-Control": "public, max-age=86400"},
         )
+    settings = get_settings()
+    if settings.s3_bucket_name:
+        s3_url = f"https://{settings.s3_bucket_name}.s3.{settings.aws_region}.amazonaws.com/cards/{card_id}.png"
+        try:
+            s3_resp = httpx.get(s3_url, timeout=2.0)
+            if s3_resp.status_code == 200:
+                return Response(
+                    content=s3_resp.content,
+                    media_type=s3_resp.headers.get("content-type", "image/png"),
+                    headers={"Cache-Control": "public, max-age=31536000, immutable"},
+                )
+        except Exception as exc:
+            logger.debug("S3 image check skipped card_id=%s: %s", card_id, exc)
+
     try:
         content, content_type = client.get_image(card.image_url)
+        if settings.s3_bucket_name:
+            try:
+                import boto3
+                _s3 = boto3.client("s3", region_name=settings.aws_region)
+                _s3.put_object(
+                    Bucket=settings.s3_bucket_name,
+                    Key=f"cards/{card_id}.png",
+                    Body=content,
+                    ContentType=content_type or "image/png",
+                    CacheControl="public, max-age=31536000, immutable",
+                )
+            except Exception as s3_err:
+                logger.debug("Background S3 cache upload skipped card_id=%s: %s", card_id, s3_err)
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:
             if _img_redis is not None:
