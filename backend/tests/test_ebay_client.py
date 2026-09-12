@@ -90,7 +90,7 @@ def test_search_retries_on_rate_limit_and_server_error(dummy_client: EbayClient)
 
 @respx.mock
 def test_redis_token_sharing_reuses_redis_cached_token() -> None:
-    fake_redis_store: dict[str, str] = {"tcgterminal:ebay:oauth_access_token": "redis_cached_token_999"}
+    fake_redis_store: dict[str, str] = {"cardboarddex:ebay:oauth_access_token": "redis_cached_token_999"}
 
     class FakeRedis:
         def get(self, key: str) -> str | None:

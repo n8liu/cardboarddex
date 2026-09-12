@@ -22,6 +22,9 @@ class RejectionReason(str, Enum):
     CARD_NUMBER_MISMATCH = "card_number_mismatch"
     SET_NAME_MISMATCH = "set_name_mismatch"
     INSUFFICIENT_EVIDENCE = "insufficient_evidence"
+    PRODUCT_TYPE_MISMATCH = "product_type_mismatch"
+    CASE_MISMATCH = "case_mismatch"
+    EMPTY_OR_OPENED = "empty_or_opened"
 
 
 # Negative keyword pattern definitions
@@ -47,6 +50,20 @@ RE_MERCHANDISE = re.compile(
     re.IGNORECASE,
 )
 
+# Sealed product noise patterns (empty boxes, opened items, packs removed)
+RE_SEALED_EMPTY_OPENED = re.compile(
+    r"\b(empty\s*box|empty\s*tin|empty\s*pack|empty\s*case|display\s*only|stand\s*only|"
+    r"box\s*only|open\s*box|opened|unsealed|no\s*packs|packs\s*removed|without\s*packs|"
+    r"cards\s*only|binder\s*only|no\s*cards|empty)\b",
+    re.IGNORECASE,
+)
+
+# Single promo card indicators when matching a sealed product
+RE_SINGLE_CARD_PROMO = re.compile(
+    r"\b(promo\s*card|single\s*card|card\s*only|promo\s*only|single\s*promo)\b",
+    re.IGNORECASE,
+)
+
 RE_LOT_BUNDLE = re.compile(
     r"\b(lot\b|lots\b|bundle\b|bundles\b|bulk\b|mystery\s*box|"
     r"mystery\s*pack|set\s*of\s*\d+|\d+\s*card\s*lot|\d+\s*cards\b)",
@@ -61,6 +78,13 @@ RE_DIGITAL_CODE = re.compile(
 
 RE_FOREIGN = re.compile(
     r"\b(japanese|japan\b|jp\b|jpn\b|korean|kor\b|spanish|spa\b|german|ger\b|"
+    r"deutsch|french|fra\b|italian|ita\b|chinese|china\b|chn\b|traditional\s*chinese|"
+    r"simplified\s*chinese)\b",
+    re.IGNORECASE,
+)
+
+RE_NON_JAPANESE_FOREIGN = re.compile(
+    r"\b(korean|kor\b|spanish|spa\b|german|ger\b|"
     r"deutsch|french|fra\b|italian|ita\b|chinese|china\b|chn\b|traditional\s*chinese|"
     r"simplified\s*chinese)\b",
     re.IGNORECASE,
@@ -161,6 +185,20 @@ class TitleMatchResult:
 def normalize_tokens(text: str) -> str:
     """Normalize text into lower-case alphanumeric tokens with single whitespace."""
     return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+
+
+def extract_core_card_name(name: str) -> str:
+    """Strip card number suffixes and variant parentheticals to extract core name.
+    e.g. 'Ivysaur - 002/165 (Master Ball Pattern)' -> 'Ivysaur'
+         'Ivysaur - 002/165' -> 'Ivysaur'
+         'Ivysaur (Mirror Holofoil)' -> 'Ivysaur'
+         'Charizard ex' -> 'Charizard ex'
+         'Dark Charizard' -> 'Dark Charizard'
+         'Rocket\'s Moltres' -> 'Rocket\'s Moltres'
+    """
+    cleaned = re.sub(r"\s*-\s*\d+/\d+.*$", "", name)
+    cleaned = re.sub(r"\s*\([^)]*\)", "", cleaned)
+    return cleaned.strip() or name.strip()
 
 
 def normalize_card_number(number_str: str) -> str:
@@ -319,6 +357,233 @@ def extract_raw_condition_from_title(title: str) -> str:
     return "Raw"
 
 
+def parse_sealed_ebay_title(
+    clean_title: str,
+    target_card_name: str,
+    target_set_name: str,
+    *,
+    is_target_japanese: bool = False,
+) -> TitleMatchResult:
+    """
+    Parse an eBay listing title specifically for a sealed Pokémon merchandise item
+    (Booster Box, ETB, Booster Bundle, Binder Collection, Case, Tin, Blister).
+    """
+    if not clean_title:
+        return TitleMatchResult(
+            status="rejected",
+            rejection_reason=RejectionReason.INSUFFICIENT_EVIDENCE.value,
+        )
+
+    # 1. Universal Hard Rejections
+    if RE_ALTERED_AUTO.search(clean_title):
+        return TitleMatchResult(
+            status="rejected",
+            rejection_reason=RejectionReason.ALTERED_OR_AUTOGRAPH.value,
+            details={"title": clean_title},
+        )
+
+    if RE_PROXY_FAKE.search(clean_title):
+        return TitleMatchResult(
+            status="rejected",
+            rejection_reason=RejectionReason.PROXY_OR_FAKE.value,
+            details={"title": clean_title},
+        )
+
+    if RE_DIGITAL_CODE.search(clean_title):
+        return TitleMatchResult(
+            status="rejected",
+            rejection_reason=RejectionReason.DIGITAL_OR_CODE.value,
+            details={"title": clean_title},
+        )
+
+    if is_target_japanese:
+        if RE_NON_JAPANESE_FOREIGN.search(clean_title):
+            return TitleMatchResult(
+                status="rejected",
+                rejection_reason=RejectionReason.FOREIGN_LANGUAGE.value,
+                details={"title": clean_title, "reason": "non_japanese_foreign_language"},
+            )
+    else:
+        if RE_FOREIGN.search(clean_title):
+            return TitleMatchResult(
+                status="rejected",
+                rejection_reason=RejectionReason.FOREIGN_LANGUAGE.value,
+                details={"title": clean_title},
+            )
+
+    # 2. Sealed Noise / Empty / Opened / Removed Packs Rejections
+    if RE_SEALED_EMPTY_OPENED.search(clean_title):
+        return TitleMatchResult(
+            status="rejected",
+            rejection_reason=RejectionReason.EMPTY_OR_OPENED.value,
+            details={"title": clean_title},
+        )
+
+    # 3. Single Promo Card / Slab Extraction Rejection
+    if RE_SINGLE_CARD_PROMO.search(clean_title):
+        return TitleMatchResult(
+            status="rejected",
+            rejection_reason=RejectionReason.CARD_NAME_MISMATCH.value,
+            details={"reason": "single_card_promo_extraction", "title": clean_title},
+        )
+    if re.search(r"\b\d{1,3}/\d{2,3}\b", clean_title):
+        return TitleMatchResult(
+            status="rejected",
+            rejection_reason=RejectionReason.CARD_NAME_MISMATCH.value,
+            details={"reason": "fractional_card_number_in_sealed_title", "title": clean_title},
+        )
+    if extract_grade_from_title(clean_title) and "pack" not in target_card_name.lower():
+        return TitleMatchResult(
+            status="rejected",
+            rejection_reason=RejectionReason.CARD_NAME_MISMATCH.value,
+            details={"reason": "graded_slab_matched_to_sealed_box", "title": clean_title},
+        )
+
+    # 4. Case vs Single Unit Differentiation
+    target_is_case = bool(re.search(r"\bcases?\b", target_card_name, re.IGNORECASE))
+    title_has_case = bool(re.search(r"\bcases?\b", clean_title, re.IGNORECASE))
+    if target_is_case and not title_has_case:
+        return TitleMatchResult(
+            status="rejected",
+            rejection_reason=RejectionReason.CASE_MISMATCH.value,
+            details={"reason": "target_is_case_but_title_is_single", "target": target_card_name, "title": clean_title},
+        )
+    if not target_is_case and title_has_case:
+        return TitleMatchResult(
+            status="rejected",
+            rejection_reason=RejectionReason.CASE_MISMATCH.value,
+            details={"reason": "target_is_single_but_title_is_case", "target": target_card_name, "title": clean_title},
+        )
+
+    # 5. Product Form-Factor Matching
+    lower_target = target_card_name.lower()
+    lower_title = clean_title.lower()
+
+    if "booster box" in lower_target:
+        if not re.search(r"\b(booster\s*box|bb)\b", lower_title):
+            return TitleMatchResult(
+                status="rejected",
+                rejection_reason=RejectionReason.PRODUCT_TYPE_MISMATCH.value,
+                details={"expected": "booster_box", "title": clean_title},
+            )
+        if re.search(r"\b(single\s*pack|1\s*pack|booster\s*bundle|blister|tin|etb|elite\s*trainer\s*box)\b", lower_title) and not re.search(r"\bbooster\s*box\b", lower_title):
+            return TitleMatchResult(
+                status="rejected",
+                rejection_reason=RejectionReason.PRODUCT_TYPE_MISMATCH.value,
+                details={"expected": "booster_box", "title": clean_title},
+            )
+
+    elif "elite trainer box" in lower_target or "etb" in lower_target:
+        if not re.search(r"\b(elite\s*trainer\s*box|etb)\b", lower_title):
+            return TitleMatchResult(
+                status="rejected",
+                rejection_reason=RejectionReason.PRODUCT_TYPE_MISMATCH.value,
+                details={"expected": "etb", "title": clean_title},
+            )
+        target_is_pc = "pokemon center" in lower_target
+        title_is_pc = bool(re.search(r"\b(pokemon\s*center|pc\s*etb)\b", lower_title))
+        if target_is_pc and not title_is_pc:
+            return TitleMatchResult(
+                status="rejected",
+                rejection_reason=RejectionReason.PRODUCT_TYPE_MISMATCH.value,
+                details={"expected": "pokemon_center_etb", "title": clean_title},
+            )
+        if not target_is_pc and title_is_pc:
+            return TitleMatchResult(
+                status="rejected",
+                rejection_reason=RejectionReason.PRODUCT_TYPE_MISMATCH.value,
+                details={"expected": "standard_etb_not_pc", "title": clean_title},
+            )
+
+    elif "booster bundle" in lower_target or "bundle" in lower_target:
+        if not re.search(r"\b(booster\s*bundle|bundle)\b", lower_title):
+            return TitleMatchResult(
+                status="rejected",
+                rejection_reason=RejectionReason.PRODUCT_TYPE_MISMATCH.value,
+                details={"expected": "booster_bundle", "title": clean_title},
+            )
+        if re.search(r"\bbooster\s*box\b", lower_title) and "bundle" not in lower_title:
+            return TitleMatchResult(
+                status="rejected",
+                rejection_reason=RejectionReason.PRODUCT_TYPE_MISMATCH.value,
+                details={"expected": "booster_bundle", "title": clean_title},
+            )
+
+    elif "binder collection" in lower_target or "binder" in lower_target:
+        if not re.search(r"\bbinder\b", lower_title):
+            return TitleMatchResult(
+                status="rejected",
+                rejection_reason=RejectionReason.PRODUCT_TYPE_MISMATCH.value,
+                details={"expected": "binder", "title": clean_title},
+            )
+
+    elif "ultra premium" in lower_target or "upc" in lower_target:
+        if not re.search(r"\b(ultra\s*premium|upc)\b", lower_title):
+            return TitleMatchResult(
+                status="rejected",
+                rejection_reason=RejectionReason.PRODUCT_TYPE_MISMATCH.value,
+                details={"expected": "upc", "title": clean_title},
+            )
+
+    elif "tin" in lower_target:
+        if not re.search(r"\btin\b", lower_title):
+            return TitleMatchResult(
+                status="rejected",
+                rejection_reason=RejectionReason.PRODUCT_TYPE_MISMATCH.value,
+                details={"expected": "tin", "title": clean_title},
+            )
+
+    elif "blister" in lower_target:
+        if not re.search(r"\bblister\b", lower_title):
+            return TitleMatchResult(
+                status="rejected",
+                rejection_reason=RejectionReason.PRODUCT_TYPE_MISMATCH.value,
+                details={"expected": "blister", "title": clean_title},
+            )
+
+    # 6. Set Identifier & Core Token Verification
+    norm_title = normalize_tokens(clean_title)
+    norm_set = normalize_tokens(target_set_name)
+    generic_set_tokens = {"sv", "swsh", "sm", "xy", "bw", "dp", "series", "pokemon", "tcg", "set"}
+    significant_set_tokens = [t for t in norm_set.split() if t not in generic_set_tokens and len(t) > 1]
+
+    norm_target = normalize_tokens(target_card_name)
+    generic_name_tokens = {"case", "collection", "box", "sealed", "pack", "packs", "pokemon", "tcg", "new", "edition"}
+    significant_name_tokens = [t for t in norm_target.split() if t not in generic_name_tokens and len(t) > 1]
+
+    # Required numeric identifiers (e.g. '151') must be in title
+    all_significant = significant_name_tokens + significant_set_tokens
+    for token in all_significant:
+        if token.isdigit() and token not in norm_title.split():
+            return TitleMatchResult(
+                status="rejected",
+                rejection_reason=RejectionReason.SET_NAME_MISMATCH.value,
+                details={"missing_numeric_identifier": token, "title": clean_title},
+            )
+
+    has_name_overlap = any(t in norm_title.split() for t in significant_name_tokens) if significant_name_tokens else True
+    has_set_overlap = any(t in norm_title.split() for t in significant_set_tokens) if significant_set_tokens else True
+    if not (has_name_overlap or has_set_overlap):
+        return TitleMatchResult(
+            status="rejected",
+            rejection_reason=RejectionReason.SET_NAME_MISMATCH.value,
+            details={"target_name": target_card_name, "set_name": target_set_name, "title": clean_title},
+        )
+
+    return TitleMatchResult(
+        status="matched",
+        is_graded=False,
+        condition="Sealed",
+        printing="Sealed",
+        confidence=0.90,
+        details={
+            "product_type": "sealed",
+            "target_name": target_card_name,
+            "title": clean_title,
+        },
+    )
+
+
 def parse_ebay_title(
     title: str,
     target_card_name: str,
@@ -326,9 +591,10 @@ def parse_ebay_title(
     target_set_name: str,
     *,
     is_target_japanese: bool = False,
+    is_target_sealed: bool = False,
 ) -> TitleMatchResult:
     """
-    Parse an eBay listing title against a target canonical card.
+    Parse an eBay listing title against a target canonical card or sealed product.
     
     Returns a TitleMatchResult with status 'matched', 'rejected', or 'uncertain'
     and full diagnostic audit details.
@@ -338,6 +604,14 @@ def parse_ebay_title(
         return TitleMatchResult(
             status="rejected",
             rejection_reason=RejectionReason.INSUFFICIENT_EVIDENCE.value,
+        )
+
+    if is_target_sealed:
+        return parse_sealed_ebay_title(
+            clean_title,
+            target_card_name=target_card_name,
+            target_set_name=target_set_name,
+            is_target_japanese=is_target_japanese,
         )
 
     # 1. Hard Rejections on Negative Keywords
@@ -388,13 +662,21 @@ def parse_ebay_title(
             details={"title": clean_title},
         )
 
-    # F. Foreign language (for English targets)
-    if not is_target_japanese and RE_FOREIGN.search(clean_title):
-        return TitleMatchResult(
-            status="rejected",
-            rejection_reason=RejectionReason.FOREIGN_LANGUAGE.value,
-            details={"title": clean_title},
-        )
+    # F. Foreign language check
+    if is_target_japanese:
+        if RE_NON_JAPANESE_FOREIGN.search(clean_title):
+            return TitleMatchResult(
+                status="rejected",
+                rejection_reason=RejectionReason.FOREIGN_LANGUAGE.value,
+                details={"title": clean_title, "reason": "non_japanese_foreign_language"},
+            )
+    else:
+        if RE_FOREIGN.search(clean_title):
+            return TitleMatchResult(
+                status="rejected",
+                rejection_reason=RejectionReason.FOREIGN_LANGUAGE.value,
+                details={"title": clean_title},
+            )
 
     # 2. Reject aspirational / hype grade titles on raw cards
     if RE_GRADE_HYPE.search(clean_title):
@@ -406,16 +688,17 @@ def parse_ebay_title(
 
     # 3. Card Name Matching
     norm_title = normalize_tokens(clean_title)
-    norm_target_name = normalize_tokens(target_card_name)
+    core_target_name = extract_core_card_name(target_card_name)
+    norm_core_name = normalize_tokens(core_target_name)
 
-    # Target name tokens must all be present in title
-    target_tokens = norm_target_name.split()
+    # Core name tokens must all be present in title
+    target_tokens = norm_core_name.split()
     for token in target_tokens:
         if token not in norm_title.split():
             return TitleMatchResult(
                 status="rejected",
                 rejection_reason=RejectionReason.CARD_NAME_MISMATCH.value,
-                details={"target_name": target_card_name, "title": clean_title},
+                details={"target_name": target_card_name, "core_name": core_target_name, "title": clean_title},
             )
 
     # Check for character prefixes that create distinct card entities:
@@ -424,11 +707,37 @@ def parse_ebay_title(
     for prefix in entity_prefixes:
         # Check if the prefix appears immediately before or associated with the card name (not e.g. "lightly played")
         pattern = rf"\b{re.escape(prefix)}\s+{re.escape(target_tokens[0])}\b"
-        if re.search(pattern, norm_title) and not re.search(pattern, norm_target_name):
+        if re.search(pattern, norm_title) and not re.search(pattern, norm_core_name):
             return TitleMatchResult(
                 status="rejected",
                 rejection_reason=RejectionReason.CARD_NAME_MISMATCH.value,
                 details={"disallowed_prefix": prefix, "target_name": target_card_name, "title": clean_title},
+            )
+
+    # Variant specific constraints (Master Ball, Poke Ball, Mirror Holofoil)
+    lower_target = target_card_name.lower()
+    lower_title = clean_title.lower()
+    if "master ball" in lower_target:
+        if not re.search(r"\bmaster\s*ball\b", lower_title):
+            return TitleMatchResult(
+                status="rejected",
+                rejection_reason=RejectionReason.CARD_NAME_MISMATCH.value,
+                details={"expected_variant": "master_ball", "title": clean_title},
+            )
+    elif "poke ball" in lower_target:
+        if not re.search(r"\b(poke\s*ball|pokeball)\b", lower_title):
+            return TitleMatchResult(
+                status="rejected",
+                rejection_reason=RejectionReason.CARD_NAME_MISMATCH.value,
+                details={"expected_variant": "poke_ball", "title": clean_title},
+            )
+    else:
+        # Standard card: reject if the listing explicitly claims to be a Master Ball variant
+        if re.search(r"\bmaster\s*ball\b", lower_title):
+            return TitleMatchResult(
+                status="rejected",
+                rejection_reason=RejectionReason.CARD_NAME_MISMATCH.value,
+                details={"rejected_variant": "title_is_master_ball_but_target_is_standard", "title": clean_title},
             )
 
     # 4. Card Number Verification

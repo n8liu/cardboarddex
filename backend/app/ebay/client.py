@@ -18,7 +18,7 @@ DEFAULT_BASE_URL = "https://api.ebay.com"
 DEFAULT_AUTH_URL = "https://api.ebay.com/identity/v1/oauth2/token"
 MAX_ATTEMPTS = 3
 RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
-REDIS_TOKEN_KEY = "tcgterminal:ebay:oauth_access_token"
+REDIS_TOKEN_KEY = "cardboarddex:ebay:oauth_access_token"
 
 
 class EbayConfigurationError(RuntimeError):
@@ -114,7 +114,7 @@ class EbayClient:
                     self.auth_url,
                     headers=headers,
                     data=data,
-                    timeout=self.timeout,
+                    timeout=httpx.Timeout(connect=5.0, read=25.0, write=10.0, pool=5.0),
                 )
                 response.raise_for_status()
                 payload = response.json()
@@ -200,7 +200,7 @@ class EbayClient:
                     url,
                     headers=headers,
                     params=params,
-                    timeout=self.timeout,
+                    timeout=httpx.Timeout(connect=5.0, read=25.0, write=10.0, pool=5.0),
                 )
                 response.raise_for_status()
                 payload = response.json()

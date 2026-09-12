@@ -15,10 +15,13 @@ if str(BACKEND_ROOT) not in sys.path:
 
 import httpx
 from celery import shared_task
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, joinedload
-
+from app.common.formatters import (
+    parse_iso_datetime as _parse_datetime,
+    to_decimal as _decimal,
+)
 from app.config import get_settings
 from app.database import SessionLocal
 from app.ebay import EbayClient, EbayConfigurationError
@@ -28,29 +31,6 @@ from parsers.title_matcher import parse_ebay_title
 
 logger = logging.getLogger(__name__)
 POPULAR_NAMES = ("Charizard", "Blastoise", "Venusaur", "Pikachu", "Lugia", "Umbreon", "Gengar", "Mewtwo", "Rayquaza")
-
-
-def _parse_datetime(value: Any) -> datetime | None:
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(value, UTC)
-    if isinstance(value, str):
-        try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError as exc:
-            logger.warning("Provider timestamp invalid value=%s error=%s: %s", value, type(exc).__name__, exc)
-    return None
-
-
-def _decimal(value: Any) -> Decimal | None:
-    if value is None:
-        return None
-    try:
-        return Decimal(str(value)).quantize(Decimal("0.01"))
-    except (InvalidOperation, ValueError) as exc:
-        logger.warning("Provider price invalid value=%s error=%s: %s", value, type(exc).__name__, exc)
-        return None
 
 
 def _state(
@@ -208,14 +188,16 @@ def _collect_ebay_for_card(
     run title resolution, record raw listings, and generate price observations.
     """
     set_name = card.set.name if card.set else ""
+    is_japanese = bool(card.set and card.set.series == "Pokemon Japan")
     query = f"{clean_query_term(card.name)} {clean_query_term(card.number)} {clean_query_term(set_name)}".strip()
-    logger.info("Collecting eBay comps card_id=%s name=%s number=%s query=%s", card.id, card.name, card.number, query)
+    logger.info("Collecting eBay comps card_id=%s name=%s number=%s query=%s is_japanese=%s", card.id, card.name, card.number, query, is_japanese)
 
     raw_items = client.search_item_summaries(query, limit=30)
     matched_count = 0
     observations_created = 0
     all_results: list[dict[str, Any]] = []
 
+    is_sealed = (card.rarity is None or card.rarity == "") and "code card" not in card.name.lower()
     for item in raw_items:
         item_id = str(item.get("itemId") or "")
         if not item_id:
@@ -233,8 +215,10 @@ def _collect_ebay_for_card(
         match_result = parse_ebay_title(
             title,
             target_card_name=card.name,
-            target_card_number=card.number,
+            target_card_number=card.number or "",
             target_set_name=set_name,
+            is_target_sealed=is_sealed,
+            is_target_japanese=is_japanese,
         )
 
         all_results.append({
@@ -269,9 +253,21 @@ def _collect_ebay_for_card(
             if dry_run:
                 observations_created += 1
             elif price_val is not None:
-                slab_part = match_result.grading_company or "raw"
-                grade_part = str(match_result.grade) if match_result.grade is not None else (match_result.condition or "standard")
-                variant_id = f"ebay:{card.id}:{slab_part}:{grade_part}".lower()
+                if is_sealed:
+                    variant_id = f"ebay:{card.id}:sealed"
+                    condition = match_result.condition or "Sealed"
+                    printing = match_result.printing or "Sealed"
+                    grading_company = None
+                    grade = None
+                else:
+                    slab_part = match_result.grading_company or "raw"
+                    grade_part = str(match_result.grade) if match_result.grade is not None else (match_result.condition or "standard")
+                    variant_id = f"ebay:{card.id}:{slab_part}:{grade_part}".lower()
+                    condition = match_result.condition
+                    printing = match_result.printing
+                    grading_company = match_result.grading_company
+                    grade = match_result.grade
+
                 created = _observation(
                     session,
                     card_id=card.id,
@@ -279,10 +275,10 @@ def _collect_ebay_for_card(
                     provider_card_id=item_id,
                     variant_id=variant_id,
                     price=price_val,
-                    condition=match_result.condition,
-                    printing=match_result.printing,
-                    grading_company=match_result.grading_company,
-                    grade=match_result.grade,
+                    condition=condition,
+                    printing=printing,
+                    grading_company=grading_company,
+                    grade=grade,
                     currency=currency,
                     provider_updated_at=item_date,
                     payload=_json_safe({"item": item, "title": title, "match": match_result.__dict__}),
@@ -304,10 +300,25 @@ def _collect_ebay_for_card(
     return len(raw_items), observations_created
 
 
-def _cards_for_ebay_collection(session: Session, limit: int, specific_card_id: str | None = None) -> list[Card]:
+def _cards_for_ebay_collection(
+    session: Session,
+    limit: int,
+    specific_card_id: str | None = None,
+    card_ids: list[str] | None = None,
+) -> list[Card]:
     if specific_card_id:
         card = session.get(Card, specific_card_id, options=[joinedload(Card.set)])
         return [card] if card else []
+    if card_ids is not None:
+        if not card_ids:
+            return []
+        stmt = (
+            select(Card)
+            .options(joinedload(Card.set))
+            .where(Card.id.in_(card_ids))
+            .limit(limit)
+        )
+        return list(session.scalars(stmt).unique())
 
     latest_ebay = select(
         ProviderCardState.card_id,
@@ -320,11 +331,11 @@ def _cards_for_ebay_collection(session: Session, limit: int, specific_card_id: s
         .options(joinedload(Card.set))
         .outerjoin(latest_ebay, latest_ebay.c.card_id == Card.id)
         .where(
-            Card.number.is_not(None),
-            Card.number != "None",
             Card.name.not_ilike("%code card%"),
-            Card.rarity.is_not(None),
-            Card.rarity != "",
+            or_(
+                (Card.number.is_not(None) & (Card.number != "None") & Card.rarity.is_not(None) & (Card.rarity != "")),
+                (Card.rarity.is_(None) | (Card.rarity == "")),
+            ),
         )
         .order_by(latest_ebay.c.last_sync.asc().nullsfirst(), priority, Card.name, Card.id)
         .limit(limit)
@@ -335,14 +346,15 @@ def run_ebay_price_collection(
     session: Session,
     limit: int | None = None,
     card_id: str | None = None,
+    card_ids: list[str] | None = None,
     ebay_client: EbayClient | None = None,
     dry_run: bool = False,
 ) -> dict[str, int]:
-    configured_limit = limit if limit is not None else get_settings().price_collection_card_limit
+    configured_limit = limit if limit is not None else (len(card_ids) if card_ids is not None else get_settings().price_collection_card_limit)
     client = ebay_client or EbayClient()
     result = {"cards": 0, "raw_listings": 0, "ebay_observations": 0, "provider_errors": 0}
 
-    cards = _cards_for_ebay_collection(session, configured_limit, specific_card_id=card_id)
+    cards = _cards_for_ebay_collection(session, configured_limit, specific_card_id=card_id, card_ids=card_ids)
     for card in cards:
         result["cards"] += 1
         try:
@@ -397,8 +409,6 @@ def _find_cards_by_query(session: Session, query_text: str, limit: int = 10) -> 
         .join(Set, Card.set_id == Set.id)
         .where(
             Card.name.not_ilike("%code card%"),
-            Card.rarity.is_not(None),
-            Card.rarity != "",
         )
     )
     for token in tokens:

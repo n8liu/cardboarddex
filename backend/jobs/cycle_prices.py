@@ -19,6 +19,7 @@ from app.config import get_settings
 from app.database import SessionLocal
 from app.ebay import EbayClient, EbayConfigurationError
 from app.providers import ProviderRequestLimitExceeded
+from app.services.catalog_service import get_cards_for_pokemon
 from app.tcgapi import TCGAPIClient, TCGAPIConfigurationError
 from jobs.collect_ebay_prices import run_ebay_price_collection
 from jobs.collect_prices import run_price_collection
@@ -28,6 +29,9 @@ logger = logging.getLogger(__name__)
 
 def run_price_cycle(
     session: Session,
+    card_id: str | None = None,
+    card_ids: list[str] | None = None,
+    pokemon: str | None = None,
     tcg_limit: int | None = None,
     ebay_limit: int | None = None,
     tcgapi_client: TCGAPIClient | None = None,
@@ -35,23 +39,48 @@ def run_price_cycle(
 ) -> dict[str, Any]:
     """
     Run an automated price cycle across TCG API and eBay.
-    Selects least-recently-synced cards to ensure continuous round-robin price refreshing.
+    If pokemon is provided, updates all cards for that Pokémon character.
+    If card_ids or card_id is provided, updates those specific cards.
+    Otherwise selects least-recently-synced cards to ensure continuous round-robin price refreshing.
     """
     cycle_start = datetime.now(UTC)
+    target_ids: list[str] | None = None
+    if pokemon:
+        matched_cards = get_cards_for_pokemon(session, pokemon)
+        target_ids = [c.id for c in matched_cards]
+    elif card_ids:
+        target_ids = list(card_ids)
+    elif card_id:
+        target_ids = [card_id]
+
     results: dict[str, Any] = {
         "started_at": cycle_start.isoformat(),
+        "card_id": card_id,
+        "card_ids": target_ids,
+        "pokemon": pokemon,
         "tcgapi": None,
         "ebay": None,
         "status": "completed",
     }
 
+    effective_tcg_limit = (
+        len(target_ids) if (target_ids is not None and tcg_limit is None)
+        else (tcg_limit if tcg_limit is not None else (1 if card_id else None))
+    )
+    effective_ebay_limit = (
+        len(target_ids) if (target_ids is not None and ebay_limit is None)
+        else (ebay_limit if ebay_limit is not None else (1 if card_id else None))
+    )
+
     # 1. Cycle TCG API pricing
-    if tcg_limit is None or tcg_limit > 0:
+    if target_ids is not None or tcg_limit is None or tcg_limit > 0:
         try:
-            logger.info("Starting TCG API pricing cycle limit=%s", tcg_limit)
+            logger.info("Starting TCG API pricing cycle limit=%s card_ids=%s", effective_tcg_limit, target_ids)
             tcg_res = run_price_collection(
                 session,
-                limit=tcg_limit,
+                limit=effective_tcg_limit,
+                card_id=card_id if not target_ids or len(target_ids) == 1 else None,
+                card_ids=target_ids,
                 tcgapi=tcgapi_client,
             )
             results["tcgapi"] = tcg_res
@@ -69,12 +98,14 @@ def run_price_cycle(
             )
 
     # 2. Cycle eBay pricing
-    if ebay_limit is None or ebay_limit > 0:
+    if target_ids is not None or ebay_limit is None or ebay_limit > 0:
         try:
-            logger.info("Starting eBay pricing cycle limit=%s", ebay_limit)
+            logger.info("Starting eBay pricing cycle limit=%s card_ids=%s", effective_ebay_limit, target_ids)
             ebay_res = run_ebay_price_collection(
                 session,
-                limit=ebay_limit,
+                limit=effective_ebay_limit,
+                card_id=card_id if not target_ids or len(target_ids) == 1 else None,
+                card_ids=target_ids,
                 ebay_client=ebay_client,
             )
             results["ebay"] = ebay_res
@@ -146,6 +177,9 @@ def run_continuous_daemon(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Automated price cycling for TCG API and eBay")
+    parser.add_argument("query", nargs="*", help="Optional card ID or search query to update directly")
+    parser.add_argument("--card-id", type=str, help="Target a specific canonical card ID across both TCG API and eBay")
+    parser.add_argument("--pokemon", type=str, help="Target all cards for a specific Pokémon (e.g. 'Pikachu')")
     parser.add_argument("--tcg-limit", type=int, default=15, help="Number of cards to update via TCG API")
     parser.add_argument("--ebay-limit", type=int, default=5, help="Number of cards to update via eBay")
     parser.add_argument("--continuous", action="store_true", help="Run continuously in a loop")
@@ -165,8 +199,25 @@ def main() -> None:
         )
     else:
         with SessionLocal() as session:
+            target_id = args.card_id
+            if not target_id and args.query:
+                from jobs.collect_prices import _find_cards_by_query
+                query_str = " ".join(args.query).strip()
+                matching = _find_cards_by_query(session, query_str, limit=5)
+                if not matching:
+                    print(f"No cards found matching query: '{query_str}'")
+                    return
+                print(f"Found {len(matching)} matching card(s) for '{query_str}':")
+                for c in matching:
+                    print(f"\n--- Updating [{c.id}] {c.name} #{c.number} ({c.set.name if c.set else ''}) ---")
+                    res = run_price_cycle(session, card_id=c.id)
+                    print("Cycle result:", res)
+                return
+
             res = run_price_cycle(
                 session,
+                card_id=target_id,
+                pokemon=args.pokemon,
                 tcg_limit=args.tcg_limit,
                 ebay_limit=args.ebay_limit,
             )

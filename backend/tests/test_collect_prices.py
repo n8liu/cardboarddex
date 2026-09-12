@@ -220,3 +220,26 @@ def test_bulk_price_collection_403_falls_back_to_individual_collection() -> None
     assert len(observations) == 2
     assert collect_prices._BULK_PRICES_SUPPORTED is False
 
+
+def test_run_price_collection_targets_specific_card_id() -> None:
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(Set(id="1", name="Base Set"))
+        session.add(Card(id="101", name="Pikachu", set_id="1", number="1"))
+        session.add(Card(id="102", name="Raichu", set_id="1", number="2"))
+        session.commit()
+
+        client = FakeForbiddenBulkClient()
+        result = run_price_collection(session, card_id="101", tcgapi=client)  # type: ignore[arg-type]
+
+        observations = list(session.scalars(select(PriceObservation)))
+
+    assert result["cards"] == 1
+    assert result["tcgapi_observations"] == 1
+    assert len(observations) == 1
+    assert observations[0].card_id == "101"
+    assert observations[0].price == 50.00
+    collect_prices._BULK_PRICES_SUPPORTED = True
+
+

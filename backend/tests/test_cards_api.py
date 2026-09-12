@@ -12,6 +12,15 @@ from app.database import Base, get_db
 from app.main import app
 from app.models import Card, PriceObservation, ProviderCardState, Set
 from app.routers.cards import get_tcgapi_client
+from app.common.redis import get_redis
+from app.services.catalog_service import _pokemon_volume_cache
+from app.services.trending_service import (
+    _IN_MEMORY_CARD_CLICKS,
+    _IN_MEMORY_POKE_CLICKS,
+    _IN_MEMORY_SEARCHES,
+    _TRENDING_CACHE,
+    invalidate_trending_cache,
+)
 
 
 class FakeImageClient:
@@ -20,8 +29,27 @@ class FakeImageClient:
         return b"image-bytes", "image/jpeg"
 
 
+def _clean_test_caches() -> None:
+    _pokemon_volume_cache.clear()
+    _IN_MEMORY_CARD_CLICKS.clear()
+    _IN_MEMORY_POKE_CLICKS.clear()
+    _IN_MEMORY_SEARCHES.clear()
+    _TRENDING_CACHE.clear()
+    invalidate_trending_cache()
+    r = get_redis()
+    if r is not None:
+        try:
+            for prefix in ["cardboarddex:top_volume:*", "cardboarddex:trending:*", "cardboarddex:analytics:*"]:
+                keys = r.keys(prefix)
+                if keys:
+                    r.delete(*keys)
+        except Exception:
+            pass
+
+
 @pytest.fixture
 def client() -> Generator[TestClient, None, None]:
+    _clean_test_caches()
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -250,6 +278,7 @@ def test_get_card_prices_returns_provider_state_and_observations(client: TestCli
     assert payload["observations"][0]["price"] == 12.34
     assert payload["observations"][0]["condition"] == "Near Mint"
     assert len(payload["observations"]) == 1
+    assert "avg_listing_price" in payload
 
 
 class FakeMoverClient:
@@ -285,8 +314,14 @@ class FakeMoverClient:
 
 
 def test_get_market_movers_endpoint() -> None:
-    from app.routers.cards import _MOVERS_CACHE
-    _MOVERS_CACHE.clear()
+    from app.routers.cards import _MOVERS_LOCAL_FALLBACK, _get_redis
+    _MOVERS_LOCAL_FALLBACK.clear()
+    _r = _get_redis()
+    if _r is not None:
+        try:
+            _r.delete("cardboarddex:movers:pokemon:24h")
+        except Exception:
+            pass
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -330,7 +365,7 @@ def test_get_market_movers_endpoint() -> None:
             assert data["losers"][0]["direction"] == "down"
             assert data["losers"][0]["price_change_percentage"] == -50.0
     finally:
-        _MOVERS_CACHE.clear()
+        _MOVERS_LOCAL_FALLBACK.clear()
         app.dependency_overrides.clear()
 
 
@@ -575,13 +610,15 @@ def test_get_sealed_signals_endpoint() -> None:
 
 
 def test_get_top_pokemon_volume_endpoint(client: TestClient) -> None:
-    # 1. Default timeframe (2026_ytd) - aggregates real DB price observations
+    # 1. Default timeframe (7d) - aggregates real DB price observations
     res = client.get("/cards/top-pokemon-volume")
     assert res.status_code == 200
     data = res.json()
-    assert data["timeframe"] == "2026_ytd"
+    assert data["timeframe"] == "7d"
+    assert data["sort_by"] == "volume_desc"
     assert data["total_pokemon"] == 50
     assert data["total_volume_usd"] > 0
+    assert data["total_sales_count"] > 0
     assert len(data["items"]) == 50
 
     # In fixture: Pikachu has $12.34 + $999.99 = $1012.33, Venusaur has $150.00
@@ -592,12 +629,16 @@ def test_get_top_pokemon_volume_endpoint(client: TestClient) -> None:
     assert "25.png" in data["items"][0]["sprite_url"]
     assert data["items"][0]["volume_usd"] == 1012.33
     assert data["items"][0]["volume_formatted"] == "$1.0K"
+    assert data["items"][0]["sales_count"] == 2
     assert data["items"][0]["cards_count"] >= 1
+    assert "momentum_percentage" in data["items"][0]
+    assert "momentum_trend" in data["items"][0]
 
     assert data["items"][1]["rank"] == 2
     assert data["items"][1]["pokemon_name"] == "Venusaur"
     assert data["items"][1]["dex_number"] == 3
     assert data["items"][1]["volume_usd"] == 150.0
+    assert data["items"][1]["sales_count"] == 1
 
     # 2. Filter with search query
     res_q = client.get("/cards/top-pokemon-volume?q=pika")
@@ -613,6 +654,22 @@ def test_get_top_pokemon_volume_endpoint(client: TestClient) -> None:
     data_at = res_at.json()
     assert data_at["timeframe"] == "all_time"
     assert data_at["total_volume_usd"] >= data["total_volume_usd"]
+
+    # 4. 24h and 30d timeframes
+    res_24 = client.get("/cards/top-pokemon-volume?timeframe=24h")
+    assert res_24.status_code == 200
+    assert res_24.json()["timeframe"] == "24h"
+
+    res_30 = client.get("/cards/top-pokemon-volume?timeframe=30d")
+    assert res_30.status_code == 200
+    assert res_30.json()["timeframe"] == "30d"
+
+    # 5. Sorting by sales_desc
+    res_sales = client.get("/cards/top-pokemon-volume?sort_by=sales_desc")
+    assert res_sales.status_code == 200
+    data_sales = res_sales.json()
+    assert data_sales["sort_by"] == "sales_desc"
+    assert data_sales["items"][0]["sales_count"] >= data_sales["items"][1]["sales_count"]
 
 
 def test_get_live_updates_endpoint(client: TestClient) -> None:
@@ -705,4 +762,153 @@ def test_top_pokemon_volume_bulk_enrichment(client: TestClient) -> None:
     assert pika["top_card_price"] == 999.99
 
 
+def test_get_pokemon_cards_success(client: TestClient) -> None:
+    res = client.get("/cards/pokemon/Pikachu")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["pokemon_name"] == "Pikachu"
+    assert data["total_cards"] >= 1
+    assert len(data["cards"]) >= 1
+    assert data["cards"][0]["name"] == "Pikachu"
+    assert len(data["available_sets"]) >= 1
+    assert data["available_sets"][0]["name"] == "Base Set"
+    assert data["highest_price"] == 12.34
 
+
+def test_get_pokemon_cards_set_filter(client: TestClient) -> None:
+    # Set 1 has Pikachu, Set 2 (Jungle) does not
+    res_set1 = client.get("/cards/pokemon/Pikachu?set_id=1")
+    assert res_set1.status_code == 200
+    assert len(res_set1.json()["cards"]) >= 1
+
+    res_set2 = client.get("/cards/pokemon/Pikachu?set_id=2")
+    assert res_set2.status_code == 200
+    assert len(res_set2.json()["cards"]) == 0
+
+
+def test_get_pokemon_cards_nonexistent(client: TestClient) -> None:
+    res = client.get("/cards/pokemon/MissingNo")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["pokemon_name"] == "MissingNo"
+    assert data["total_cards"] == 0
+    assert data["highest_price"] is None
+    assert data["lowest_price"] is None
+    assert data["available_sets"] == []
+    assert data["cards"] == []
+
+
+def test_get_card_prices_computes_avg_listing_price() -> None:
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(Set(id="1", name="Base Set", series="Original", release_date=date(1999, 1, 9)))
+        session.add(Card(id="char-1", name="Charizard", set_id="1", number="4", image_url="https://tcgplayer-cdn.test/char.jpg"))
+
+        # Add two raw eBay listings: $200 and $300 -> avg should be $250.00
+        session.add(PriceObservation(
+            fingerprint="fp-ebay-1",
+            card_id="char-1",
+            provider="ebay",
+            provider_card_id="ebay-101",
+            variant_id="ebay:char-1:raw:standard",
+            price=Decimal("200.00"),
+            observed_at=datetime.now(UTC),
+        ))
+        session.add(PriceObservation(
+            fingerprint="fp-ebay-2",
+            card_id="char-1",
+            provider="ebay",
+            provider_card_id="ebay-102",
+            variant_id="ebay:char-1:raw:standard",
+            price=Decimal("300.00"),
+            observed_at=datetime.now(UTC),
+        ))
+        # Add a graded eBay listing: $1500 (should be excluded because raw comps exist)
+        session.add(PriceObservation(
+            fingerprint="fp-ebay-3",
+            card_id="char-1",
+            provider="ebay",
+            provider_card_id="ebay-103",
+            variant_id="ebay:char-1:psa:10",
+            grading_company="PSA",
+            grade=Decimal("10.0"),
+            price=Decimal("1500.00"),
+            observed_at=datetime.now(UTC),
+        ))
+        session.commit()
+
+    def override_db() -> Generator[Session, None, None]:
+        with Session(engine) as session:
+            yield session
+
+    app.dependency_overrides[get_db] = override_db
+    try:
+        with TestClient(app) as test_client:
+            res = test_client.get("/cards/char-1/prices")
+            assert res.status_code == 200
+            data = res.json()
+            assert data["avg_listing_price"] == 250.0
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_track_user_action_endpoint(client: TestClient) -> None:
+    # 1. Track card click
+    res = client.post("/cards/track-action", json={"entity_type": "card", "entity_id": "pikachu-1", "action": "click"})
+    assert res.status_code == 200
+    assert res.json() == {"status": "ok"}
+
+    # 2. Track pokemon search
+    res2 = client.post("/cards/track-action", json={"entity_type": "pokemon", "entity_id": "Charizard", "action": "search"})
+    assert res2.status_code == 200
+    assert res2.json() == {"status": "ok"}
+
+
+def test_get_trending_dashboard_endpoint(client: TestClient) -> None:
+    # First record some clicks
+    client.post("/cards/track-action", json={"entity_type": "card", "entity_id": "pikachu-1", "action": "click"})
+    client.post("/cards/track-action", json={"entity_type": "pokemon", "entity_id": "Pikachu", "action": "click"})
+
+    # Fetch trending dashboard
+    res = client.get("/cards/trending?timeframe=7d")
+    assert res.status_code == 200
+    data = res.json()
+
+    assert data["timeframe"] == "7d"
+    assert "trending_cards" in data
+    assert "trending_pokemon" in data
+    assert "volume_pokemon" in data
+    assert len(data["trending_cards"]) >= 1
+    assert len(data["trending_pokemon"]) >= 1
+    assert len(data["volume_pokemon"]) >= 1
+
+    # Check trending card structure
+    top_card = data["trending_cards"][0]
+    assert top_card["rank"] == 1
+    assert "name" in top_card
+    assert "set_name" in top_card
+    assert "image_url" in top_card
+    assert "trend_score" in top_card
+
+    # Check trending pokemon structure
+    top_poke = data["trending_pokemon"][0]
+    assert "pokemon_name" in top_poke
+    assert "sprite_url" in top_poke
+    assert "trend_score" in top_poke
+
+    # Check volume pokemon structure
+    top_vol = data["volume_pokemon"][0]
+    assert "volume_usd" in top_vol
+    assert "sales_count" in top_vol
+
+    # Test search filtering
+    res_q = client.get("/cards/trending?q=pika")
+    assert res_q.status_code == 200
+    data_q = res_q.json()
+    assert len(data_q["trending_pokemon"]) >= 1
+    assert "Pikachu" in [p["pokemon_name"] for p in data_q["trending_pokemon"]]

@@ -18,24 +18,20 @@ from celery import shared_task
 from sqlalchemy import case, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, joinedload
-
+from app.common.formatters import (
+    normalize_card_number as normalize_number,
+    normalize_text,
+    parse_iso_datetime as _parse_datetime,
+    to_decimal as _decimal,
+)
 from app.config import get_settings
 from app.database import SessionLocal
-from app.models import Card, PriceObservation, ProviderCardState
+from app.models import Card, PriceObservation, ProviderCardState, Set
 from app.providers import ProviderRequestLimitExceeded
 from app.tcgapi import TCGAPIClient, TCGAPIConfigurationError
 
 logger = logging.getLogger(__name__)
 POPULAR_NAMES = ("Charizard", "Blastoise", "Venusaur", "Pikachu", "Lugia", "Umbreon")
-
-
-def normalize_text(value: Any) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
-
-
-def normalize_number(value: Any) -> str:
-    first = str(value or "").split("/", 1)[0].strip().lower()
-    return first.lstrip("0") or "0"
 
 
 def select_exact_candidates(
@@ -55,29 +51,6 @@ def select_exact_candidates(
         if actual == expected:
             results.append(item)
     return results
-
-
-def _parse_datetime(value: Any) -> datetime | None:
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(value, UTC)
-    if isinstance(value, str):
-        try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError as exc:
-            logger.warning("Provider timestamp invalid value=%s error=%s: %s", value, type(exc).__name__, exc)
-    return None
-
-
-def _decimal(value: Any) -> Decimal | None:
-    if value is None:
-        return None
-    try:
-        return Decimal(str(value)).quantize(Decimal("0.01"))
-    except (InvalidOperation, ValueError) as exc:
-        logger.warning("Provider price invalid value=%s error=%s: %s", value, type(exc).__name__, exc)
-        return None
 
 
 def _state(session: Session, card_id: str, provider: str, status: str,
@@ -247,7 +220,52 @@ def _collect_tcgapi(session: Session, card: Card, set_name: str, client: TCGAPIC
     return inserted
 
 
-def _cards_for_collection(session: Session, limit: int) -> list[Card]:
+def _find_cards_by_query(session: Session, query_text: str, limit: int = 10) -> list[Card]:
+    clean = query_text.strip()
+    if not clean:
+        return []
+    # 1. Exact ID
+    card = session.get(Card, clean, options=[joinedload(Card.set)])
+    if card:
+        return [card]
+    # 2. Match all tokens across Card.name, Set.name, or Card.number
+    tokens = clean.split()
+    stmt = (
+        select(Card)
+        .options(joinedload(Card.set))
+        .join(Set, Card.set_id == Set.id)
+        .where(
+            Card.name.not_ilike("%code card%"),
+        )
+    )
+    for token in tokens:
+        pat = f"%{token}%"
+        stmt = stmt.where((Card.name.ilike(pat)) | (Set.name.ilike(pat)) | (Card.number == token))
+    return list(session.scalars(stmt.order_by(Card.name, Card.id).limit(limit)))
+
+
+def _cards_for_collection(
+    session: Session,
+    limit: int,
+    specific_card_id: str | None = None,
+    card_ids: list[str] | None = None,
+) -> list[Card]:
+    if specific_card_id:
+        card = session.scalar(
+            select(Card).options(joinedload(Card.set)).where(Card.id == specific_card_id)
+        )
+        return [card] if card else []
+    if card_ids is not None:
+        if not card_ids:
+            return []
+        stmt = (
+            select(Card)
+            .options(joinedload(Card.set))
+            .where(Card.id.in_(card_ids))
+            .limit(limit)
+        )
+        return list(session.scalars(stmt).unique())
+
     latest = select(
         ProviderCardState.card_id, func.max(ProviderCardState.last_synced_at).label("last_sync")
     ).group_by(ProviderCardState.card_id).subquery()
@@ -266,12 +284,14 @@ def run_price_collection(
     session: Session,
     limit: int | None = None,
     tcgapi: TCGAPIClient | None = None,
+    card_id: str | None = None,
+    card_ids: list[str] | None = None,
 ) -> dict[str, int]:
     global _BULK_PRICES_SUPPORTED
-    configured_limit = limit if limit is not None else get_settings().price_collection_card_limit
+    configured_limit = limit if limit is not None else (len(card_ids) if card_ids is not None else get_settings().price_collection_card_limit)
     tcgapi_client = tcgapi or TCGAPIClient()
     result = {"cards": 0, "tcgapi_observations": 0, "provider_errors": 0}
-    candidates = _cards_for_collection(session, configured_limit)
+    candidates = _cards_for_collection(session, configured_limit, specific_card_id=card_id, card_ids=card_ids)
     if not candidates:
         return result
 
@@ -435,12 +455,33 @@ def collect_prices() -> dict[str, int]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--limit", type=int)
+    parser = argparse.ArgumentParser(description="Collect TCG API prices for cards")
+    parser.add_argument("query", nargs="*", help="Optional card ID or name search (e.g. '29919' or 'Charizard Base Set')")
+    parser.add_argument("--card-id", type=str, help="Target a specific canonical card ID")
+    parser.add_argument("--limit", type=int, help="Maximum number of cards to process")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     with SessionLocal() as session:
-        print(run_price_collection(session, limit=args.limit))
+        target_id = args.card_id
+        if not target_id and args.query:
+            query_str = " ".join(args.query).strip()
+            matching = _find_cards_by_query(session, query_str, limit=args.limit or 5)
+            if not matching:
+                print(f"No cards found matching query: '{query_str}'")
+                return
+            print(f"Found {len(matching)} matching card(s) for '{query_str}':")
+            total_res = {"cards": 0, "tcgapi_observations": 0, "provider_errors": 0}
+            tcg_client = TCGAPIClient()
+            for c in matching:
+                print(f"  - [{c.id}] {c.name} #{c.number} ({c.set.name if c.set else ''})")
+                res = run_price_collection(session, tcgapi=tcg_client, card_id=c.id)
+                total_res["cards"] += res["cards"]
+                total_res["tcgapi_observations"] += res["tcgapi_observations"]
+                total_res["provider_errors"] += res["provider_errors"]
+            print("Result:", total_res)
+            return
+
+        print(run_price_collection(session, limit=args.limit, card_id=target_id))
 
 
 if __name__ == "__main__":

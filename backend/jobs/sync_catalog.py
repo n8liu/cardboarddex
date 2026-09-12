@@ -19,6 +19,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.common.formatters import (
+    normalize_text,
+    parse_iso_datetime as _parse_datetime,
+    to_decimal as _decimal,
+)
 from app.config import get_settings
 from app.database import SessionLocal
 from app.models import Card, PriceObservation, ProviderCardState, Set
@@ -31,33 +36,6 @@ from app.tcgapi.client import (
 
 logger = logging.getLogger(__name__)
 BATCH_SIZE = 250
-
-
-def normalize_text(value: Any) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
-
-
-def _decimal(value: Any) -> Decimal | None:
-    if value is None:
-        return None
-    try:
-        return Decimal(str(value)).quantize(Decimal("0.01"))
-    except (InvalidOperation, ValueError) as exc:
-        logger.warning("Provider price invalid value=%s error=%s: %s", value, type(exc).__name__, exc)
-        return None
-
-
-def _parse_datetime(value: Any) -> datetime | None:
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(value, UTC)
-    if isinstance(value, str):
-        try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError as exc:
-            logger.warning("Provider timestamp invalid value=%s error=%s: %s", value, type(exc).__name__, exc)
-    return None
 
 
 def _chunks(items: Iterable[dict[str, Any]]) -> Iterable[list[dict[str, Any]]]:

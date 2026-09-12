@@ -33,13 +33,13 @@ class DailyRequestLimiter:
     def acquire(self) -> None:
         current_time = self.now()
         day_bucket = int(current_time // 86400)
-        daily_key = f"tcgterminal:{self.provider}:requests:{day_bucket}"
+        daily_key = f"cardboarddex:{self.provider}:requests:{day_bucket}"
 
         # 1. Burst rate limiter (per-second bucket pacing)
         if self.max_per_second > 0:
             for _ in range(3):
                 second_bucket = int(current_time)
-                burst_key = f"tcgterminal:{self.provider}:burst:{second_bucket}"
+                burst_key = f"cardboarddex:{self.provider}:burst:{second_bucket}"
                 try:
                     burst_count = int(self.redis.incr(burst_key))
                     if burst_count == 1:

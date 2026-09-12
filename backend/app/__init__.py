@@ -1,1 +1,1 @@
-"""TCGTerminal backend application."""
+"""CardboardDex backend application."""

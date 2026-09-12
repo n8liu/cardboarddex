@@ -58,6 +58,22 @@ class CardSetOption(BaseModel):
     name: str
     series: str | None
     release_date: date | None = None
+    image_url: str | None = None
+
+
+class PokemonSetCount(BaseModel):
+    id: str
+    name: str
+    count: int
+
+
+class PokemonCardsResponse(BaseModel):
+    pokemon_name: str
+    total_cards: int
+    highest_price: float | None = None
+    lowest_price: float | None = None
+    available_sets: list[PokemonSetCount] = []
+    cards: list[CardSummary] = []
 
 
 class ProviderPricingState(BaseModel):
@@ -92,6 +108,7 @@ class CardPricingResponse(BaseModel):
     card_id: str
     provider_states: list[ProviderPricingState]
     observations: list[PriceObservationItem]
+    avg_listing_price: float | None = None
 
 
 class GradingProfitItem(BaseModel):
@@ -180,8 +197,11 @@ class PokemonVolumeItem(BaseModel):
     sprite_url: str
     volume_usd: float
     volume_formatted: str
-    yoy_percentage: float
-    yoy_trend: Literal["up", "down", "flat"]
+    sales_count: int = 0
+    momentum_percentage: float = 0.0
+    momentum_trend: Literal["up", "down", "flat"] = "flat"
+    yoy_percentage: float = 0.0
+    yoy_trend: Literal["up", "down", "flat"] = "flat"
     cards_count: int
     avg_card_price: float | None = None
     top_card_name: str | None = None
@@ -191,10 +211,59 @@ class PokemonVolumeItem(BaseModel):
 
 class PokemonVolumeResponse(BaseModel):
     timeframe: str
+    sort_by: str = "volume_desc"
     total_volume_usd: float
+    total_sales_count: int = 0
     total_pokemon: int
     items: list[PokemonVolumeItem]
     updated_at: datetime
+
+
+class TrendingCardItem(BaseModel):
+    rank: int
+    card_id: str
+    name: str
+    set_name: str
+    set_id: str | None = None
+    number: str | None = None
+    rarity: str | None = None
+    image_url: str
+    market_price: float | None = None
+    price_change_7d: float | None = None
+    clicks_count: int = 0
+    trend_score: float = 0.0
+    trend_direction: Literal["up", "down", "flat"] = "flat"
+
+
+class TrendingPokemonItem(BaseModel):
+    rank: int
+    pokemon_name: str
+    dex_number: int
+    sprite_url: str
+    clicks_count: int = 0
+    searches_count: int = 0
+    cards_count: int = 0
+    trend_score: float = 0.0
+    trend_direction: Literal["up", "down", "flat"] = "flat"
+    top_card_name: str | None = None
+    top_card_price: float | None = None
+    top_card_id: str | None = None
+
+
+class TrendingDashboardResponse(BaseModel):
+    timeframe: str
+    trending_cards: list[TrendingCardItem]
+    trending_pokemon: list[TrendingPokemonItem]
+    volume_pokemon: list[PokemonVolumeItem]
+    total_volume_usd: float = 0.0
+    total_sales_count: int = 0
+    updated_at: datetime
+
+
+class TrackActionRequest(BaseModel):
+    entity_type: Literal["card", "pokemon", "search"]
+    entity_id: str
+    action: Literal["click", "search", "view"] = "click"
 
 
 class LiveUpdateItem(BaseModel):

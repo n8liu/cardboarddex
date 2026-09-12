@@ -97,7 +97,7 @@ class TCGAPIClient:
                     url,
                     headers=headers,
                     params=request_params,
-                    timeout=self.timeout,
+                    timeout=httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0),
                 )
                 response.raise_for_status()
                 try:
@@ -265,7 +265,7 @@ class TCGAPIClient:
                 response = httpx.get(
                     source_url,
                     headers={"Accept": "image/avif,image/webp,image/*"},
-                    timeout=self.timeout,
+                    timeout=httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0),
                     follow_redirects=True,
                 )
                 response.raise_for_status()

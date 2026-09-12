@@ -261,3 +261,250 @@ class TestHelperUtilities:
         assert "4" in extract_numbers_from_title("Charizard #004 Base Set")
         assert "swsh050" in extract_numbers_from_title("Charizard V Promo SWSH050 Sealed")
         assert "gg36" in extract_numbers_from_title("Entei V GG36/GG70 Crown Zenith")
+
+
+class TestSealedProductTitleMatching:
+    """Test sealed product title parsing, case isolation, and noise rejections."""
+
+    def test_matches_valid_sealed_binder_collection(self) -> None:
+        title = "Pokémon Scarlet & Violet 151 Binder Collection Factory Sealed"
+        result = parse_ebay_title(
+            title,
+            target_card_name="151 Binder Collection",
+            target_card_number="",
+            target_set_name="SV: Scarlet & Violet 151",
+            is_target_sealed=True,
+        )
+        assert result.status == "matched"
+        assert result.condition == "Sealed"
+        assert result.printing == "Sealed"
+        assert result.is_graded is False
+
+    def test_matches_valid_sealed_case(self) -> None:
+        title = "Pokémon Scarlet & Violet 151 Binder Collection Case Factory Sealed 6ct"
+        result = parse_ebay_title(
+            title,
+            target_card_name="151 Binder Collection Case",
+            target_card_number="",
+            target_set_name="SV: Scarlet & Violet 151",
+            is_target_sealed=True,
+        )
+        assert result.status == "matched"
+        assert result.condition == "Sealed"
+
+    def test_case_mismatch_rejections(self) -> None:
+        # 1. Target is a Case, but title is a single unit
+        single_title = "Pokémon Scarlet & Violet 151 Binder Collection Factory Sealed"
+        res1 = parse_ebay_title(
+            single_title,
+            target_card_name="151 Binder Collection Case",
+            target_card_number="",
+            target_set_name="SV: Scarlet & Violet 151",
+            is_target_sealed=True,
+        )
+        assert res1.status == "rejected"
+        assert res1.rejection_reason == RejectionReason.CASE_MISMATCH.value
+
+        # 2. Target is a single unit, but title is a Case
+        case_title = "Pokémon Scarlet & Violet 151 Binder Collection 6 Box Case Sealed"
+        res2 = parse_ebay_title(
+            case_title,
+            target_card_name="151 Binder Collection",
+            target_card_number="",
+            target_set_name="SV: Scarlet & Violet 151",
+            is_target_sealed=True,
+        )
+        assert res2.status == "rejected"
+        assert res2.rejection_reason == RejectionReason.CASE_MISMATCH.value
+
+    def test_empty_and_opened_sealed_rejections(self) -> None:
+        noise_titles = [
+            "Pokémon Scarlet & Violet 151 binder collection EMPTY BOX",
+            "151 Binder Collection Open Box No Boosters",
+            "151 Binder Collection Binder Only No Packs",
+            "Pokemon 151 Booster Bundle Empty Box Display Only",
+            "Scarlet & Violet 151 Elite Trainer Box ETB Box Only",
+        ]
+        for title in noise_titles:
+            result = parse_ebay_title(
+                title,
+                target_card_name="151 Binder Collection",
+                target_card_number="",
+                target_set_name="SV: Scarlet & Violet 151",
+                is_target_sealed=True,
+            )
+            assert result.status == "rejected", f"Failed to reject empty/opened title: {title}"
+            assert result.rejection_reason == RejectionReason.EMPTY_OR_OPENED.value
+
+    def test_foreign_language_rejection_for_sealed(self) -> None:
+        title = "Pokemon 151 Binder Collection Brand New Sealed Box Scarlet & Violet *Spanish*"
+        result = parse_ebay_title(
+            title,
+            target_card_name="151 Binder Collection",
+            target_card_number="",
+            target_set_name="SV: Scarlet & Violet 151",
+            is_target_sealed=True,
+        )
+        assert result.status == "rejected"
+        assert result.rejection_reason == RejectionReason.FOREIGN_LANGUAGE.value
+
+    def test_single_promo_card_extraction_rejection(self) -> None:
+        titles = [
+            "Pokemon 151 Binder Collection Snorlax Promo Card Holo #051",
+            "Mew ex 199/165 Ultra Premium Collection 151",
+            "Charizard ex 151 UPC Promo Card Only Sealed",
+        ]
+        for title in titles:
+            result = parse_ebay_title(
+                title,
+                target_card_name="151 Binder Collection",
+                target_card_number="",
+                target_set_name="SV: Scarlet & Violet 151",
+                is_target_sealed=True,
+            )
+            assert result.status == "rejected", f"Failed to reject promo card title: {title}"
+            assert result.rejection_reason == RejectionReason.CARD_NAME_MISMATCH.value
+
+    def test_booster_box_and_bundle_matching(self) -> None:
+        # Bundle match
+        bundle_title = "Pokemon Scarlet & Violet 151 Booster Bundle New Sealed"
+        res_bundle = parse_ebay_title(
+            bundle_title,
+            target_card_name="151 Booster Bundle",
+            target_card_number="",
+            target_set_name="SV: Scarlet & Violet 151",
+            is_target_sealed=True,
+        )
+        assert res_bundle.status == "matched"
+
+        # Pack mismatch
+        pack_title = "Pokemon Scarlet & Violet 151 Single Booster Pack"
+        res_pack = parse_ebay_title(
+            pack_title,
+            target_card_name="151 Booster Bundle",
+            target_card_number="",
+            target_set_name="SV: Scarlet & Violet 151",
+            is_target_sealed=True,
+        )
+        assert res_pack.status == "rejected"
+        assert res_pack.rejection_reason == RejectionReason.PRODUCT_TYPE_MISMATCH.value
+
+    def test_etb_pc_differentiation(self) -> None:
+        # Standard ETB target matching standard ETB title
+        standard_title = "Pokemon Scarlet & Violet 151 Elite Trainer Box ETB Sealed"
+        res_std = parse_ebay_title(
+            standard_title,
+            target_card_name="151 Elite Trainer Box",
+            target_card_number="",
+            target_set_name="SV: Scarlet & Violet 151",
+            is_target_sealed=True,
+        )
+        assert res_std.status == "matched"
+
+        # Standard ETB target rejecting Pokemon Center ETB title
+        pc_title = "Pokemon Scarlet & Violet 151 Pokemon Center Elite Trainer Box Sealed"
+        res_pc_reject = parse_ebay_title(
+            pc_title,
+            target_card_name="151 Elite Trainer Box",
+            target_card_number="",
+            target_set_name="SV: Scarlet & Violet 151",
+            is_target_sealed=True,
+        )
+        assert res_pc_reject.status == "rejected"
+        assert res_pc_reject.rejection_reason == RejectionReason.PRODUCT_TYPE_MISMATCH.value
+
+        # PC ETB target matching Pokemon Center ETB title
+        res_pc_match = parse_ebay_title(
+            pc_title,
+            target_card_name="151 Pokemon Center Elite Trainer Box",
+            target_card_number="",
+            target_set_name="SV: Scarlet & Violet 151",
+            is_target_sealed=True,
+        )
+        assert res_pc_match.status == "matched"
+
+    def test_japanese_card_matching_permits_japanese_keywords(self) -> None:
+        titles = [
+            "Pokemon Card 151 Ivysaur AR 167/165 Japanese PSA 10",
+            "Japanese 2023 Pokemon 151 Ivysaur 167/165 AR NM",
+            "Pokemon Card Ivysaur AR 167/165 SV2a JPN Mint",
+            "Ivysaur 167/165 SV2a Japan Pokemon Card 151",
+        ]
+        for title in titles:
+            result = parse_ebay_title(
+                title,
+                target_card_name="Ivysaur - 167/165",
+                target_card_number="167",
+                target_set_name="SV2a: Pokemon Card 151",
+                is_target_japanese=True,
+            )
+            assert result.status == "matched", f"Failed to match Japanese title: {title}, reason: {result.rejection_reason}"
+
+    def test_japanese_card_rejects_other_foreign_languages(self) -> None:
+        titles = [
+            "Pokemon Ivysaur 167/165 German Bisaknosp PSA 9",
+            "French Herbizarre 167/165 SV2a Holo",
+            "Korean Ivysaur 167/165 Pokemon Card",
+            "Pokemon Ivysaur Chinese 167/165 AR",
+        ]
+        for title in titles:
+            result = parse_ebay_title(
+                title,
+                target_card_name="Ivysaur - 167/165",
+                target_card_number="167",
+                target_set_name="SV2a: Pokemon Card 151",
+                is_target_japanese=True,
+            )
+            assert result.status == "rejected", f"Expected foreign rejection for: {title}"
+            assert result.rejection_reason == RejectionReason.FOREIGN_LANGUAGE.value
+
+    def test_master_ball_pattern_variant_matching(self) -> None:
+        # Title without word "pattern" should match Master Ball target
+        mb_title = "Pokemon Card 151 Ivysaur 002/165 Master Ball Reverse Holo PSA 10"
+        res_mb = parse_ebay_title(
+            mb_title,
+            target_card_name="Ivysaur - 002/165 (Master Ball Pattern)",
+            target_card_number="002",
+            target_set_name="SV2a: Pokemon Card 151",
+            is_target_japanese=True,
+        )
+        assert res_mb.status == "matched"
+        assert res_mb.is_graded is True
+        assert res_mb.grade == Decimal("10.0")
+
+        # Standard card target should reject Master Ball title to prevent comp pollution
+        res_std = parse_ebay_title(
+            mb_title,
+            target_card_name="Ivysaur - 002/165",
+            target_card_number="002",
+            target_set_name="SV2a: Pokemon Card 151",
+            is_target_japanese=True,
+        )
+        assert res_std.status == "rejected"
+        assert res_std.rejection_reason == RejectionReason.CARD_NAME_MISMATCH.value
+
+    def test_japanese_sealed_product_matching(self) -> None:
+        jp_box_title = "Pokemon Card 151 Japanese Booster Box SV2a Factory Sealed"
+        res_box = parse_ebay_title(
+            jp_box_title,
+            target_card_name="151 Booster Box",
+            target_card_number="",
+            target_set_name="Pokemon Card 151",
+            is_target_sealed=True,
+            is_target_japanese=True,
+        )
+        assert res_box.status == "matched"
+        assert res_box.condition == "Sealed"
+
+        korean_box_title = "Pokemon Card 151 Korean Booster Box Factory Sealed"
+        res_kor = parse_ebay_title(
+            korean_box_title,
+            target_card_name="151 Booster Box",
+            target_card_number="",
+            target_set_name="Pokemon Card 151",
+            is_target_sealed=True,
+            is_target_japanese=True,
+        )
+        assert res_kor.status == "rejected"
+        assert res_kor.rejection_reason == RejectionReason.FOREIGN_LANGUAGE.value
+

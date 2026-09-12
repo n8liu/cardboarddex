@@ -13,7 +13,7 @@ logging.basicConfig(
 
 settings = get_settings()
 
-app = FastAPI(title="TCGTerminal API", version="0.1.0")
+app = FastAPI(title="CardboardDex API", version="0.1.0")
 
 
 @app.middleware("http")

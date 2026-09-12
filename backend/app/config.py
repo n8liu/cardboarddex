@@ -9,7 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=PROJECT_ROOT / ".env", extra="ignore")
 
-    database_url: str = "sqlite:///./tcgterminal.db"
+    database_url: str = "sqlite:///./cardboarddex.db"
     redis_url: str = "redis://localhost:6379/0"
     tcgapi_api_key: str | None = None
     tcgapi_base_url: str = "https://api.tcgapi.dev/v1"
