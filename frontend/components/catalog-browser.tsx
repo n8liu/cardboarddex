@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { CardGrid } from "@/components/card-grid";
 import { SearchForm } from "@/components/search-form";
+import { BackToTop } from "@/components/ui/back-to-top";
 import { CARD_PAGE_SIZE, getCardSets, searchCards } from "@/lib/api";
 import type { CardSetOption, CardSort, CardSummary, GameLanguage } from "@/types/card";
 
@@ -89,12 +90,15 @@ export function CatalogBrowser({
   }, [sets]);
 
   useEffect(() => {
-    void getCardSets().then((latestSets) => {
-      if (latestSets && latestSets.length > 0) {
-        setSetsList(latestSets);
-      }
-    }).catch(() => {});
-  }, []);
+    if (!sets || sets.length === 0) {
+      void getCardSets().then((latestSets) => {
+        if (latestSets && latestSets.length > 0) {
+          setSetsList(latestSets);
+        }
+      }).catch(() => {});
+    }
+  }, [sets]);
+
 
   useEffect(() => {
     if (!isInitialized.current) return;
@@ -229,7 +233,7 @@ export function CatalogBrowser({
                   game === "all" ? "bg-white text-slate-950 shadow-xs" : "text-slate-600 hover:text-slate-900"
                 }`}
               >
-                🌐 All
+                ALL
               </button>
               <button
                 type="button"
@@ -241,7 +245,7 @@ export function CatalogBrowser({
                   game === "pokemon" ? "bg-white text-slate-950 shadow-xs" : "text-slate-600 hover:text-slate-900"
                 }`}
               >
-                🇺🇸 EN
+                EN
               </button>
               <button
                 type="button"
@@ -253,7 +257,7 @@ export function CatalogBrowser({
                   game === "pokemon-japan" ? "bg-white text-red-950 shadow-xs font-black" : "text-slate-600 hover:text-slate-900"
                 }`}
               >
-                🇯🇵 JA
+                JA
               </button>
             </div>
           </div>
@@ -300,10 +304,7 @@ export function CatalogBrowser({
               }`}
               aria-pressed={!hideSealed}
             >
-              <span className="flex items-center gap-2">
-                <span>{game === "pokemon-japan" ? "🏷️" : "📦"}</span>
-                <span>{game === "pokemon-japan" ? "None" : "Sealed Products"}</span>
-              </span>
+              <span>{game === "pokemon-japan" ? "None" : "Sealed Products"}</span>
               <span
                 className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
                   hideSealed ? "bg-slate-200 text-slate-600" : "bg-emerald-600 text-white"
@@ -365,6 +366,8 @@ export function CatalogBrowser({
           </div>
         </div>
       </div>
+
+      <BackToTop />
     </section>
   );
 }

@@ -3,6 +3,10 @@
 .env.*
 *.env
 !.env.example
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 *.pem
 *.key
 *.cert
@@ -34,6 +38,7 @@ coverage/
 htmlcov/
 .ruff_cache/
 .mypy_cache/
+.uv_cache/
 pip-wheel-metadata/
 
 # Celery & Background Jobs
@@ -66,6 +71,11 @@ pnpm-debug.log*
 .turbo/
 .vercel/
 
+# Testing & Browser Reports
+playwright-report/
+test-results/
+.playwright/
+
 # Logs & Temporary Files
 *.log
 logs/
@@ -82,4 +92,4 @@ logs/
 .agents/
 .gemini/
 scratch/
-
+.system_generated/

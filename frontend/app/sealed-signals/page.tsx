@@ -6,16 +6,17 @@ import { getSealedSignals } from "@/lib/api";
 import type { SealedSignalsResponse } from "@/types/card";
 
 export const dynamic = "force-dynamic";
+export const runtime = "edge";
 
 export const metadata: Metadata = {
-  title: "Invest With Data - Sealed Pokémon TCG Buy Signals | TCGTerminal",
+  title: "Sealed Investment Signals - 4-Factor Quantitative Model | CardboardDex",
   description: "Quantitative buy signals for sealed Pokémon TCG booster boxes, ETBs, bundles, and cases based on supply float, buylist liquidity, and momentum.",
 };
 
 export default async function SealedSignalsPage() {
   let initialData: SealedSignalsResponse = {
     page: 1,
-    per_page: 12,
+    per_page: 24,
     total_items: 0,
     total_pages: 1,
     signal_filter: "all",
@@ -35,7 +36,7 @@ export default async function SealedSignalsPage() {
       productType: "all",
       sortBy: "score_desc",
       page: 1,
-      perPage: 12,
+      perPage: 24,
     });
   } catch (err) {
     console.error("Failed fetching initial sealed investment signals:", err);

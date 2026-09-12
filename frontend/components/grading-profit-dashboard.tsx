@@ -2,10 +2,16 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { cardImageUrl, getGradingProfit } from "@/lib/api";
+import { BackToTop } from "@/components/ui/back-to-top";
+import { EmptyState } from "@/components/ui/empty-state";
+import { InfiniteScrollSentinel } from "@/components/ui/infinite-scroll-sentinel";
+import { SearchInput } from "@/components/ui/search-input";
 import type {
+  GradingProfitItem,
   GradingProfitResponse,
   GradingSortOption,
 } from "@/types/card";
@@ -17,26 +23,84 @@ type GradingProfitDashboardProps = {
 };
 
 export function GradingProfitDashboard({ initialData }: GradingProfitDashboardProps) {
+  const searchParams = useSearchParams();
+
+  const getUrlParams = useCallback(() => {
+    const params = typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search)
+      : searchParams;
+    const pf = (params.get("preset") as PresetFilter) || "all";
+    const validPresets: PresetFilter[] = ["all", "safe", "high_profit", "high_roi", "budget", "high_spread"];
+    const presetFilter = validPresets.includes(pf) ? pf : "all";
+
+    const sb = (params.get("sort") as GradingSortOption) || (initialData.sort_by as GradingSortOption) || "psa10_profit_desc";
+    const validSorts: GradingSortOption[] = ["psa10_profit_desc", "psa10_roi_desc", "psa9_profit_desc", "psa9_roi_desc", "ev_desc", "spread_desc", "raw_price_asc", "raw_price_desc"];
+    const sortBy = validSorts.includes(sb) ? sb : "psa10_profit_desc";
+
+    const tg = (params.get("grade") as "all" | "psa10" | "psa9") || "all";
+    const validGrades = ["all", "psa10", "psa9"];
+    const targetGrade = validGrades.includes(tg) ? tg : "all";
+
+    const feeRaw = params.get("fee");
+    const gradingFee = feeRaw && !isNaN(Number(feeRaw)) ? Number(feeRaw) : (initialData.grading_fee || 24.99);
+
+    const q = params.get("q")?.trim() ?? "";
+    return { presetFilter, sortBy, targetGrade, gradingFee, q };
+  }, [initialData.grading_fee, initialData.sort_by, searchParams]);
+
+  const initialParams = getUrlParams();
   const [data, setData] = useState<GradingProfitResponse>(initialData);
+  const [items, setItems] = useState<GradingProfitItem[]>(initialData.items);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   // Filter & State controls
-  const [gradingFee, setGradingFee] = useState<number>(initialData.grading_fee || 24.99);
-  const [sortBy, setSortBy] = useState<GradingSortOption>(
-    (initialData.sort_by as GradingSortOption) || "psa10_profit_desc"
-  );
-  const [targetGrade, setTargetGrade] = useState<"all" | "psa10" | "psa9">("all");
-  const [presetFilter, setPresetFilter] = useState<PresetFilter>("all");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [gradingFee, setGradingFee] = useState<number>(initialParams.gradingFee);
+  const [sortBy, setSortBy] = useState<GradingSortOption>(initialParams.sortBy);
+  const [targetGrade, setTargetGrade] = useState<"all" | "psa10" | "psa9">(initialParams.targetGrade);
+  const [presetFilter, setPresetFilter] = useState<PresetFilter>(initialParams.presetFilter);
+  const [searchQuery, setSearchQuery] = useState(initialParams.q);
+  const [debouncedQuery, setDebouncedQuery] = useState(initialParams.q);
   const [page, setPage] = useState(initialData.page || 1);
-  const [perPage] = useState(initialData.per_page || 12);
+  const [perPage] = useState(initialData.per_page || 24);
+  const isFirstMount = useRef(true);
+
+  // Sync browser back/forward buttons
+  useEffect(() => {
+    const handlePopState = () => {
+      const params = getUrlParams();
+      setPresetFilter(params.presetFilter);
+      setSortBy(params.sortBy);
+      setTargetGrade(params.targetGrade);
+      setGradingFee(params.gradingFee);
+      setSearchQuery(params.q);
+      setDebouncedQuery(params.q);
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [getUrlParams]);
+
+  // Keep URL in sync with active filters
+  useEffect(() => {
+    if (isFirstMount.current) return;
+
+    const timer = window.setTimeout(() => {
+      const url = new URL(window.location.href);
+      presetFilter !== "all" ? url.searchParams.set("preset", presetFilter) : url.searchParams.delete("preset");
+      sortBy !== "psa10_profit_desc" ? url.searchParams.set("sort", sortBy) : url.searchParams.delete("sort");
+      targetGrade !== "all" ? url.searchParams.set("grade", targetGrade) : url.searchParams.delete("grade");
+      gradingFee !== 24.99 ? url.searchParams.set("fee", String(gradingFee)) : url.searchParams.delete("fee");
+      debouncedQuery.trim() ? url.searchParams.set("q", debouncedQuery.trim()) : url.searchParams.delete("q");
+      window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+    }, 150);
+
+    return () => window.clearTimeout(timer);
+  }, [presetFilter, sortBy, targetGrade, gradingFee, debouncedQuery]);
 
   // Debounce search query
   useEffect(() => {
     const handler = setTimeout(() => {
       setDebouncedQuery(searchQuery);
-      setPage(1);
     }, 250);
     return () => clearTimeout(handler);
   }, [searchQuery]);
@@ -55,9 +119,10 @@ export function GradingProfitDashboard({ initialData }: GradingProfitDashboardPr
     return { minProfit: minP, psa9SafeOnly: safeOnly };
   }, [presetFilter]);
 
-  // Fetch data
-  const fetchData = useCallback(async () => {
+  // Fetch fresh data when filters change
+  const fetchFresh = useCallback(async () => {
     setLoading(true);
+    setPage(1);
     try {
       const res = await getGradingProfit({
         gradingFee,
@@ -68,20 +133,58 @@ export function GradingProfitDashboard({ initialData }: GradingProfitDashboardPr
         minSpread: presetFilter === "high_spread" ? 10 : undefined,
         psa9SafeOnly,
         query: debouncedQuery.trim() || undefined,
-        page,
+        page: 1,
         perPage,
       });
       setData(res);
+      setItems(res.items);
     } catch (err) {
       console.error("Failed fetching grading profit opportunities:", err);
     } finally {
       setLoading(false);
     }
-  }, [gradingFee, sortBy, targetGrade, minProfit, presetFilter, psa9SafeOnly, debouncedQuery, page, perPage]);
+  }, [gradingFee, sortBy, targetGrade, minProfit, presetFilter, psa9SafeOnly, debouncedQuery, perPage]);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    if (isFirstMount.current) {
+      isFirstMount.current = false;
+      return;
+    }
+    fetchFresh();
+  }, [fetchFresh]);
+
+  const hasMore = page < data.total_pages;
+
+  const loadMore = useCallback(async () => {
+    if (!hasMore || loading || loadingMore) return;
+    const nextPage = page + 1;
+    setLoadingMore(true);
+    try {
+      const res = await getGradingProfit({
+        gradingFee,
+        sortBy,
+        targetGrade,
+        minProfit,
+        maxRawPrice: presetFilter === "budget" ? 25 : undefined,
+        minSpread: presetFilter === "high_spread" ? 10 : undefined,
+        psa9SafeOnly,
+        query: debouncedQuery.trim() || undefined,
+        page: nextPage,
+        perPage,
+      });
+      setItems((prev) => {
+        const seen = new Set(prev.map((i) => i.card_id));
+        const newItems = res.items.filter((i) => !seen.has(i.card_id));
+        return [...prev, ...newItems];
+      });
+      setData(res);
+      setPage(nextPage);
+    } catch (err) {
+      console.error("Failed loading more grading opportunities:", err);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [hasMore, loading, loadingMore, page, gradingFee, sortBy, targetGrade, minProfit, presetFilter, psa9SafeOnly, debouncedQuery, perPage]);
 
   // Local preset quick-filters apply
   const handlePresetClick = (preset: PresetFilter) => {
@@ -111,7 +214,6 @@ export function GradingProfitDashboard({ initialData }: GradingProfitDashboardPr
 
   // Stats calculation
   const stats = useMemo(() => {
-    const items = data.items;
     if (!items.length) return { avgSpread: "0.0x", safeCount: 0, topProfit: "$0", topRoi: "0%" };
 
     const spreads = items
@@ -129,34 +231,36 @@ export function GradingProfitDashboard({ initialData }: GradingProfitDashboardPr
       topProfit: maxProfit > 0 ? `+$${maxProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "$0",
       topRoi: maxRoi > 0 ? `+${maxRoi.toFixed(0)}%` : "0%",
     };
-  }, [data.items]);
+  }, [items]);
 
   return (
-    <div className="mx-auto min-w-0 max-w-[1600px] px-4 pb-20 pt-8 sm:px-6 lg:px-8">
-      {/* Header */}
-      <div className="flex flex-col justify-between gap-4 border-b border-slate-200 pb-8 sm:flex-row sm:items-end">
+    <div className="mx-auto min-w-0 max-w-[1600px] px-4 pb-20 pt-8 sm:px-6 lg:px-8 font-mono">
+      {/* Header & Simulator Bar */}
+      <div className="flex flex-col justify-between gap-6 border-b border-slate-200/80 pb-6 lg:flex-row lg:items-end">
         <div>
-          <div className="flex items-center gap-2">
-            <span className="flex h-2 w-2 rounded-full bg-indigo-500" />
-            <span className="text-xs font-bold uppercase tracking-[0.16em] text-indigo-700">
-              Real-Time Grading Arbitrage
+          <div className="flex items-center gap-2 mb-3">
+            <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3.5 py-1.5 text-[11px] font-semibold text-slate-700 shadow-2xs">
+              <span className="h-2 w-2 rounded-full bg-indigo-500 animate-pulse" />
+              <span>ARBITRAGE CALCULATOR</span>
+              <span className="text-slate-300">|</span>
+              <span className="text-slate-500">PSA 10 &amp; 9 COMP ENGINE</span>
             </span>
           </div>
-          <h1 className="mt-2 text-3xl font-extrabold tracking-tight text-slate-950 sm:text-4xl">
-            Expected Grading Profitability
+          <h1 className="text-2xl sm:text-4xl font-black tracking-tight text-slate-950 uppercase">
+            Grading Profitability
           </h1>
-          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-600">
-            Find the most profitable Pokémon cards to submit for grading. Calculate exact net dollar spreads and ROIs between raw market prices and verified PSA 10 &amp; PSA 9 comps.
+          <p className="mt-2 max-w-2xl text-xs sm:text-sm text-slate-600 leading-relaxed">
+            Calculated net dollar spreads and expected returns between raw cards and graded slabs.
           </p>
         </div>
 
         {/* Interactive Fee Simulator Inline */}
-        <div className="flex flex-col gap-2 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm sm:min-w-[300px]">
+        <div className="flex flex-col gap-2 rounded-xl border border-slate-200/80 bg-white p-3.5 shadow-2xs sm:min-w-[320px]">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
               Grading Fee Simulator
             </span>
-            <span className="rounded-lg bg-indigo-50 px-2 py-0.5 text-xs font-black text-indigo-700 border border-indigo-200">
+            <span className="rounded-md bg-indigo-50 px-2 py-0.5 text-xs font-black text-indigo-700 border border-indigo-200/60 font-mono">
               ${gradingFee.toFixed(2)} / card
             </span>
           </div>
@@ -170,7 +274,7 @@ export function GradingProfitDashboard({ initialData }: GradingProfitDashboardPr
               step="1"
               value={gradingFee}
               onChange={(e) => setGradingFee(parseFloat(e.target.value))}
-              className="h-1.5 w-full cursor-pointer appearance-none rounded-lg bg-slate-200 accent-indigo-600"
+              className="h-1.5 w-full cursor-pointer appearance-none rounded-lg bg-slate-200 accent-slate-900"
               aria-label="Grading Fee Slider"
             />
             <span className="text-[10px] font-bold text-slate-400">$100</span>
@@ -184,7 +288,7 @@ export function GradingProfitDashboard({ initialData }: GradingProfitDashboardPr
                 onClick={() => setGradingFee(preset.fee)}
                 className={`flex-1 rounded-md px-1.5 py-0.5 text-[10px] font-bold transition ${
                   Math.abs(gradingFee - preset.fee) < 0.01
-                    ? "bg-indigo-600 text-white shadow-sm"
+                    ? "bg-slate-900 text-white shadow-xs"
                     : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                 }`}
               >
@@ -195,102 +299,136 @@ export function GradingProfitDashboard({ initialData }: GradingProfitDashboardPr
         </div>
       </div>
 
+      {/* Telemetry Stats Grid */}
+      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="rounded-xl border border-slate-200/80 bg-white p-4 shadow-2xs">
+          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+            Top PSA 10 Profit
+          </div>
+          <div className="mt-1 text-xl font-black tracking-tight text-emerald-600">
+            {stats.topProfit}
+          </div>
+          <div className="mt-0.5 text-[11px] text-slate-500">
+            Net after ${gradingFee.toFixed(0)} fee
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200/80 bg-white p-4 shadow-2xs">
+          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+            Top Expected ROI
+          </div>
+          <div className="mt-1 text-xl font-black tracking-tight text-emerald-600">
+            {stats.topRoi}
+          </div>
+          <div className="mt-0.5 text-[11px] text-slate-500">
+            Highest return percentage
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200/80 bg-white p-4 shadow-2xs">
+          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+            Average Multiplier
+          </div>
+          <div className="mt-1 text-xl font-black tracking-tight text-slate-950">
+            {stats.avgSpread}
+          </div>
+          <div className="mt-0.5 text-[11px] text-slate-500">
+            PSA 10 vs. Raw Price
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200/80 bg-white p-4 shadow-2xs">
+          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+            PSA 9 Safe Floor
+          </div>
+          <div className="mt-1 text-xl font-black tracking-tight text-indigo-600">
+            {stats.safeCount} Cards
+          </div>
+          <div className="mt-0.5 text-[11px] text-slate-500">
+            Profit even at PSA 9 grade
+          </div>
+        </div>
+      </div>
+
       {/* Filter and Control Bar */}
-      <div className="mb-6 space-y-4">
+      <div className="mt-6 space-y-3 rounded-2xl border border-slate-200/90 bg-white p-3.5 shadow-2xs">
         {/* Preset Quick-Filter Tabs */}
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
             onClick={() => handlePresetClick("all")}
-            className={`rounded-xl px-3.5 py-2 text-xs font-bold transition shadow-sm ${
+            className={`rounded-lg px-3 py-1.5 text-xs font-bold transition shadow-xs ${
               presetFilter === "all"
-                ? "bg-indigo-600 text-white"
-                : "bg-white text-slate-700 hover:bg-slate-100 border border-slate-200"
+                ? "bg-slate-900 text-white"
+                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
             }`}
           >
-            🔥 All Opportunities
+            All Opportunities
           </button>
           <button
             type="button"
             onClick={() => handlePresetClick("safe")}
-            className={`rounded-xl px-3.5 py-2 text-xs font-bold transition shadow-sm ${
+            className={`rounded-lg px-3 py-1.5 text-xs font-bold transition shadow-xs ${
               presetFilter === "safe"
                 ? "bg-emerald-600 text-white"
-                : "bg-white text-slate-700 hover:bg-slate-100 border border-slate-200"
+                : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
             }`}
           >
-            🛡️ PSA 9 Safe Floor (No Loss)
+            PSA 9 Safe Floor
           </button>
           <button
             type="button"
             onClick={() => handlePresetClick("high_profit")}
-            className={`rounded-xl px-3.5 py-2 text-xs font-bold transition shadow-sm ${
+            className={`rounded-lg px-3 py-1.5 text-xs font-bold transition shadow-xs ${
               presetFilter === "high_profit"
-                ? "bg-indigo-600 text-white"
-                : "bg-white text-slate-700 hover:bg-slate-100 border border-slate-200"
+                ? "bg-slate-900 text-white"
+                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
             }`}
           >
-            💰 $100+ Net Profit
+            $100+ Net Profit
           </button>
           <button
             type="button"
             onClick={() => handlePresetClick("high_roi")}
-            className={`rounded-xl px-3.5 py-2 text-xs font-bold transition shadow-sm ${
+            className={`rounded-lg px-3 py-1.5 text-xs font-bold transition shadow-xs ${
               presetFilter === "high_roi"
-                ? "bg-indigo-600 text-white"
-                : "bg-white text-slate-700 hover:bg-slate-100 border border-slate-200"
+                ? "bg-slate-900 text-white"
+                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
             }`}
           >
-            🚀 Highest ROI %
+            Highest ROI %
           </button>
           <button
             type="button"
             onClick={() => handlePresetClick("budget")}
-            className={`rounded-xl px-3.5 py-2 text-xs font-bold transition shadow-sm ${
+            className={`rounded-lg px-3 py-1.5 text-xs font-bold transition shadow-xs ${
               presetFilter === "budget"
-                ? "bg-indigo-600 text-white"
-                : "bg-white text-slate-700 hover:bg-slate-100 border border-slate-200"
+                ? "bg-slate-900 text-white"
+                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
             }`}
           >
-            ⚡ Budget Raw (&lt; $25)
+            Budget Raw (&lt;$25)
           </button>
           <button
             type="button"
             onClick={() => handlePresetClick("high_spread")}
-            className={`rounded-xl px-3.5 py-2 text-xs font-bold transition shadow-sm ${
+            className={`rounded-lg px-3 py-1.5 text-xs font-bold transition shadow-xs ${
               presetFilter === "high_spread"
-                ? "bg-indigo-600 text-white"
-                : "bg-white text-slate-700 hover:bg-slate-100 border border-slate-200"
+                ? "bg-slate-900 text-white"
+                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
             }`}
           >
-            📈 Highest Multiplier (10x+)
+            10x+ Multiplier
           </button>
         </div>
 
         {/* Detailed Controls Grid */}
         <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-          {/* Search Box */}
-          <div className="relative flex-1">
-            <span className="absolute inset-y-0 left-3 flex items-center text-slate-400 text-sm">
-              🔍
-            </span>
-            <input
-              type="text"
-              placeholder="Search card name or set..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50/50 py-2 pl-9 pr-4 text-xs font-medium text-slate-900 placeholder-slate-400 transition focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery("")}
-                className="absolute inset-y-0 right-3 flex items-center text-slate-400 hover:text-slate-600 text-xs"
-              >
-                ✕
-              </button>
-            )}
-          </div>
+          <SearchInput
+            value={searchQuery}
+            onChange={setSearchQuery}
+            placeholder="Search card name or set..."
+          />
 
           <div className="flex flex-wrap items-center gap-3">
             {/* Target Grade Selector */}
@@ -345,29 +483,20 @@ export function GradingProfitDashboard({ initialData }: GradingProfitDashboardPr
             <span className="text-xs font-semibold text-slate-500">Calculating grading profit margins...</span>
           </div>
         </div>
-      ) : data.items.length === 0 ? (
-        <div className="flex min-h-[360px] flex-col items-center justify-center rounded-3xl border border-dashed border-slate-300 bg-white p-12 text-center">
-          <span className="text-4xl">🔍</span>
-          <h3 className="mt-3 text-base font-bold text-slate-900">No grading opportunities found</h3>
-          <p className="mt-1 text-xs text-slate-500 max-w-sm">
-            Try adjusting your search query, grading fee, or switching the filter to &ldquo;All Opportunities&rdquo;.
-          </p>
-          <button
-            type="button"
-            onClick={() => {
-              setSearchQuery("");
-              setPresetFilter("all");
-              setTargetGrade("all");
-              setSortBy("psa10_profit_desc");
-            }}
-            className="mt-4 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-indigo-700 shadow-sm"
-          >
-            Reset Filters
-          </button>
-        </div>
+      ) : items.length === 0 ? (
+        <EmptyState
+          title="No grading opportunities found"
+          description="Try adjusting your search query, grading fee, or switching the filter to 'All Opportunities'."
+          onReset={() => {
+            setSearchQuery("");
+            setPresetFilter("all");
+            setTargetGrade("all");
+            setSortBy("psa10_profit_desc");
+          }}
+        />
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {data.items.map((item) => {
+          {items.map((item) => {
             const rawCost = item.raw_price;
             const fee = item.grading_fee;
             const totalBuyIn = rawCost + fee;
@@ -375,91 +504,81 @@ export function GradingProfitDashboard({ initialData }: GradingProfitDashboardPr
             return (
               <div
                 key={item.card_id}
-                className="group relative flex flex-col justify-between overflow-hidden rounded-3xl border border-slate-200/90 bg-white p-4 shadow-sm transition duration-200 hover:-translate-y-1 hover:border-indigo-300 hover:shadow-xl"
+                className="group relative flex flex-col justify-between rounded-2xl border border-slate-200/90 bg-white p-4 shadow-2xs transition duration-150 hover:border-slate-400 hover:shadow-md"
               >
-                {/* PSA 9 Safe Banner Badge */}
-                {item.psa9_safe && (
-                  <div className="absolute -right-12 top-6 rotate-45 bg-emerald-600 px-12 py-0.5 text-center text-[10px] font-black uppercase tracking-wider text-white shadow-md">
-                    PSA 9 Safe 🛡️
-                  </div>
-                )}
-
                 <div>
-                  {/* Card Thumbnail & Core Info */}
-                  <div className="flex gap-4">
-                    <div className="relative h-28 w-20 flex-shrink-0 overflow-hidden rounded-xl border border-slate-100 bg-slate-100">
+                  {/* Top Bar: Safe Tag & Spread Multiplier */}
+                  <div className="flex items-center justify-between gap-2 mb-3">
+                    <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-700">
+                      {item.rarity || "Standard"}
+                    </span>
+
+                    <div className="flex items-center gap-1.5">
+                      {item.psa9_safe && (
+                        <span className="rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200/60 px-2 py-0.5 text-[10px] font-bold">
+                          PSA 9 Safe
+                        </span>
+                      )}
+                      {item.spread_multiplier && (
+                        <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-black text-slate-800">
+                          {item.spread_multiplier}x Spread
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Thumbnail & Core Info */}
+                  <div className="flex gap-3.5">
+                    <div className="relative h-24 w-18 shrink-0 overflow-hidden rounded-xl border border-slate-100 bg-slate-50 p-1">
                       <Image
                         src={cardImageUrl(item.image_url)}
                         alt={item.name}
                         fill
                         sizes="80px"
-                        className="object-contain p-1 transition duration-300 group-hover:scale-105"
+                        className="object-contain transition duration-200 group-hover:scale-105"
                       />
                     </div>
 
                     <div className="flex flex-1 flex-col justify-between overflow-hidden">
                       <div>
-                        <div className="text-[11px] font-semibold text-indigo-600 truncate">
+                        <div className="text-[11px] font-semibold text-slate-400 truncate">
                           {item.set_name} {item.number ? `#${item.number}` : ""}
                         </div>
-                        <h2 className="text-sm font-bold text-slate-950 line-clamp-2 leading-tight">
-                          <Link href={`/cards/${encodeURIComponent(item.card_id)}`} className="hover:underline">
+                        <h2 className="text-xs sm:text-sm font-bold text-slate-950 line-clamp-2 leading-snug">
+                          <Link href={`/cards/${encodeURIComponent(item.card_id)}`} className="hover:underline group-hover:text-slate-900">
                             {item.name}
                           </Link>
                         </h2>
-                        {item.rarity && (
-                          <span className="mt-1 inline-block text-[10px] font-medium text-slate-500">
-                            {item.rarity}
-                          </span>
-                        )}
                       </div>
 
-                      {item.spread_multiplier && (
-                        <div className="inline-flex items-center gap-1 text-[11px] font-black text-indigo-700">
-                          <span>🚀</span>
-                          <span>{item.spread_multiplier}x PSA 10 Spread</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Cost & Spread Breakdown Spectrum */}
-                  <div className="mt-4 space-y-2 rounded-2xl bg-slate-50/80 p-3 text-xs border border-slate-100">
-                    {/* Buy-In Summary */}
-                    <div className="flex items-center justify-between text-slate-600">
-                      <span className="text-[11px] font-medium">Raw Buy-In:</span>
-                      <span className="font-bold text-slate-900">${item.raw_price.toFixed(2)}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-slate-500 text-[11px]">
-                      <span>+ Grading Fee:</span>
-                      <span>${item.grading_fee.toFixed(2)}</span>
-                    </div>
-                    <div className="flex items-center justify-between border-t border-slate-200/80 pt-1.5 text-[11px] font-bold text-slate-800">
-                      <span>Total Cost:</span>
-                      <span>${totalBuyIn.toFixed(2)}</span>
+                      {/* Compact Raw + Fee summary */}
+                      <div className="mt-2 text-[10px] text-slate-500 font-mono">
+                        <span>Raw: ${item.raw_price.toFixed(2)}</span>
+                        <span className="text-slate-300"> · </span>
+                        <span>Total: ${totalBuyIn.toFixed(2)}</span>
+                      </div>
                     </div>
                   </div>
 
                   {/* Grade Targets: PSA 10 & PSA 9 comparison */}
-                  <div className="mt-3 space-y-2.5">
+                  <div className="mt-3.5 space-y-2">
                     {/* PSA 10 Target */}
                     {typeof item.psa10_price === "number" && typeof item.psa10_profit === "number" && (
-                      <div className="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50/60 to-purple-50/40 p-2.5">
+                      <div className="rounded-xl border border-slate-200/80 bg-slate-50/60 p-2.5 font-mono">
                         <div className="flex items-center justify-between">
-                          <span className="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-1.5 py-0.5 text-[10px] font-black text-white">
+                          <span className="rounded-md bg-slate-900 px-1.5 py-0.5 text-[10px] font-black text-white">
                             PSA 10
                           </span>
-                          <span className="text-xs font-extrabold text-slate-900">
+                          <span className="text-xs font-bold text-slate-900">
                             ${item.psa10_price.toFixed(2)}
                           </span>
                         </div>
                         <div className="mt-1 flex items-center justify-between text-[11px]">
                           <span className="font-semibold text-emerald-700">
-                            {item.psa10_profit >= 0 ? "+" : ""}
-                            ${item.psa10_profit.toFixed(2)} Net Profit
+                            {item.psa10_profit >= 0 ? "+" : ""}${item.psa10_profit.toFixed(2)} Net
                           </span>
                           {typeof item.psa10_roi === "number" && (
-                            <span className="rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-black text-emerald-800">
+                            <span className="rounded-md bg-emerald-50 border border-emerald-200/60 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800">
                               +{item.psa10_roi.toFixed(0)}% ROI
                             </span>
                           )}
@@ -469,9 +588,9 @@ export function GradingProfitDashboard({ initialData }: GradingProfitDashboardPr
 
                     {/* PSA 9 Target / Floor */}
                     {typeof item.psa9_price === "number" && typeof item.psa9_profit === "number" && (
-                      <div className="rounded-2xl border border-slate-200 bg-white p-2.5">
+                      <div className="rounded-xl border border-slate-200/80 bg-white p-2.5 font-mono">
                         <div className="flex items-center justify-between">
-                          <span className="inline-flex items-center gap-1 rounded-md bg-slate-700 px-1.5 py-0.5 text-[10px] font-black text-white">
+                          <span className="rounded-md bg-slate-700 px-1.5 py-0.5 text-[10px] font-black text-white">
                             PSA 9
                           </span>
                           <span className="text-xs font-bold text-slate-900">
@@ -481,22 +600,20 @@ export function GradingProfitDashboard({ initialData }: GradingProfitDashboardPr
                         <div className="mt-1 flex items-center justify-between text-[11px]">
                           <span
                             className={`font-semibold ${
-                              item.psa9_profit >= 0 ? "text-emerald-600" : "text-rose-600"
+                              item.psa9_profit >= 0 ? "text-emerald-700" : "text-rose-600"
                             }`}
                           >
-                            {item.psa9_profit >= 0 ? "+" : ""}
-                            ${item.psa9_profit.toFixed(2)} Net Profit
+                            {item.psa9_profit >= 0 ? "+" : ""}${item.psa9_profit.toFixed(2)} Net
                           </span>
                           {typeof item.psa9_roi === "number" && (
                             <span
                               className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${
                                 item.psa9_roi >= 0
-                                  ? "bg-emerald-50 text-emerald-700"
-                                  : "bg-rose-50 text-rose-700"
+                                  ? "bg-slate-100 text-slate-700"
+                                  : "bg-rose-50 text-rose-700 border border-rose-200/60"
                               }`}
                             >
-                              {item.psa9_roi >= 0 ? "+" : ""}
-                              {item.psa9_roi.toFixed(0)}% ROI
+                              {item.psa9_roi >= 0 ? "+" : ""}{item.psa9_roi.toFixed(0)}% ROI
                             </span>
                           )}
                         </div>
@@ -506,12 +623,12 @@ export function GradingProfitDashboard({ initialData }: GradingProfitDashboardPr
                 </div>
 
                 {/* Footer Link */}
-                <div className="mt-4 border-t border-slate-100 pt-3">
+                <div className="mt-3 border-t border-slate-100 pt-2.5">
                   <Link
                     href={`/cards/${encodeURIComponent(item.card_id)}`}
-                    className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-slate-100 py-2 text-xs font-bold text-slate-800 transition hover:bg-indigo-600 hover:text-white"
+                    className="flex w-full items-center justify-between text-xs font-bold text-slate-700 transition hover:text-slate-950"
                   >
-                    <span>View Price History &amp; Comps</span>
+                    <span>View Comps &amp; History</span>
                     <span>→</span>
                   </Link>
                 </div>
@@ -521,37 +638,18 @@ export function GradingProfitDashboard({ initialData }: GradingProfitDashboardPr
         </div>
       )}
 
-      {/* Pagination Bar */}
-      {data.total_pages > 1 && (
-        <div className="mt-8 flex flex-col items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row">
-          <div className="text-xs font-medium text-slate-500">
-            Showing Page <span className="font-bold text-slate-900">{data.page}</span> of{" "}
-            <span className="font-bold text-slate-900">{data.total_pages}</span> ({data.total_cards} total opportunities)
-          </div>
+      {/* Infinite Scroll Sentinel */}
+      <InfiniteScrollSentinel
+        hasMore={hasMore}
+        isLoading={loadingMore}
+        onLoadMore={() => void loadMore()}
+        itemName="opportunities"
+        totalLoaded={items.length}
+        totalItems={data.total_cards}
+      />
 
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              disabled={data.page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 transition hover:bg-slate-100 disabled:opacity-40 disabled:hover:bg-white shadow-sm"
-            >
-              ← Previous
-            </button>
-            <div className="text-xs font-bold text-indigo-600 px-2">
-              {data.page} / {data.total_pages}
-            </div>
-            <button
-              type="button"
-              disabled={data.page >= data.total_pages}
-              onClick={() => setPage((p) => Math.min(data.total_pages, p + 1))}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 transition hover:bg-slate-100 disabled:opacity-40 disabled:hover:bg-white shadow-sm"
-            >
-              Next →
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Floating Back To Top Button */}
+      <BackToTop />
     </div>
   );
 }

@@ -1,6 +1,6 @@
-# TCGTerminal Architecture
+# CardboardDex Architecture
 
-TCGTerminal is a Pokémon card catalog and price tracker built around two external sources: TCG API for canonical catalog and market pricing, and eBay for future verified sold listings.
+CardboardDex is a Pokémon card catalog and price tracker built around two external sources: TCG API for canonical catalog and market pricing, and eBay for future verified sold listings.
 
 ## System boundaries
 

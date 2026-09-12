@@ -6,9 +6,10 @@ import { getMarketMovers } from "@/lib/api";
 import type { MarketMoversResponse } from "@/types/card";
 
 export const dynamic = "force-dynamic";
+export const runtime = "edge";
 
 export const metadata: Metadata = {
-  title: "Market Movers - Pokémon Card Price Gainers & Drops | TCGTerminal",
+  title: "Market Movers - Pokémon Card Price Gainers & Drops | CardboardDex",
   description: "Track live Pokémon card price gainers and price drops across 24-hour, 7-day, and 30-day timeframes.",
 };
 
@@ -17,7 +18,7 @@ export default async function MarketMoversPage() {
     period: "24h",
     direction: "all",
     page: 1,
-    per_page: 12,
+    per_page: 24,
     total_gainers: 0,
     total_losers: 0,
     total_pages: 1,
@@ -31,7 +32,7 @@ export default async function MarketMoversPage() {
       direction: "all",
       period: "24h",
       page: 1,
-      perPage: 12,
+      perPage: 24,
     });
   } catch (err) {
     console.error("Failed fetching initial market movers:", err);

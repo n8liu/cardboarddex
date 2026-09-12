@@ -2,9 +2,14 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { cardImageUrl, getLiveUpdates } from "@/lib/api";
+import { BackToTop } from "@/components/ui/back-to-top";
+import { EmptyState } from "@/components/ui/empty-state";
+import { InfiniteScrollSentinel } from "@/components/ui/infinite-scroll-sentinel";
+import { SearchInput } from "@/components/ui/search-input";
 import type {
   LiveUpdateGradeFilter,
   LiveUpdateItem,
@@ -47,21 +52,21 @@ function GradeBadge({ item }: { item: LiveUpdateItem }) {
     const gradeStr = `${item.grading_company} ${item.grade}`;
     if (gradeStr.includes("PSA 10") || gradeStr.includes("10")) {
       return (
-        <span className="inline-flex items-center gap-1 rounded-md bg-purple-600 px-2 py-0.5 text-[10px] font-black text-white shadow-xs">
-          💎 {gradeStr}
+        <span className="inline-flex items-center rounded-md bg-purple-600 px-2 py-0.5 text-[10px] font-black text-white shadow-xs">
+          {gradeStr}
         </span>
       );
     }
     if (gradeStr.includes("PSA 9") || gradeStr.includes("9")) {
       return (
-        <span className="inline-flex items-center gap-1 rounded-md bg-slate-800 px-2 py-0.5 text-[10px] font-bold text-white shadow-xs">
-          🛡️ {gradeStr}
+        <span className="inline-flex items-center rounded-md bg-slate-800 px-2 py-0.5 text-[10px] font-bold text-white shadow-xs">
+          {gradeStr}
         </span>
       );
     }
     return (
-      <span className="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-2 py-0.5 text-[10px] font-bold text-white shadow-xs">
-        🏷️ {gradeStr}
+      <span className="inline-flex items-center rounded-md bg-indigo-600 px-2 py-0.5 text-[10px] font-bold text-white shadow-xs">
+        {gradeStr}
       </span>
     );
   }
@@ -181,30 +186,90 @@ function LiveUpdateRow({ item }: { item: LiveUpdateItem }) {
 }
 
 export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps) {
+  const searchParams = useSearchParams();
+
+  const getUrlParams = useCallback(() => {
+    const params = typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search)
+      : searchParams;
+    const p = (params.get("provider") as LiveUpdateProviderFilter) || "all";
+    const validProviders: LiveUpdateProviderFilter[] = ["all", "ebay", "tcgapi"];
+    const provider = validProviders.includes(p) ? p : "all";
+
+    const gf = (params.get("grade") as LiveUpdateGradeFilter) || "all";
+    const validGrades: LiveUpdateGradeFilter[] = ["all", "psa10", "psa9", "graded", "raw"];
+    const gradeFilter = validGrades.includes(gf) ? gf : "all";
+
+    const vm = params.get("view");
+    const viewMode: "side-by-side" | "stacked" = vm === "stacked" ? "stacked" : "side-by-side";
+
+    const q = params.get("q")?.trim() ?? "";
+    return { provider, gradeFilter, viewMode, q };
+  }, [searchParams]);
+
+  const initialParams = getUrlParams();
   const [data, setData] = useState<LiveUpdatesResponse>(initialData);
-  const [provider, setProvider] = useState<LiveUpdateProviderFilter>("all");
-  const [gradeFilter, setGradeFilter] = useState<LiveUpdateGradeFilter>("all");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [items, setItems] = useState<LiveUpdateItem[]>(initialData.items);
+  const [provider, setProvider] = useState<LiveUpdateProviderFilter>(initialParams.provider);
+  const [gradeFilter, setGradeFilter] = useState<LiveUpdateGradeFilter>(initialParams.gradeFilter);
+  const [searchQuery, setSearchQuery] = useState(initialParams.q);
   const [page, setPage] = useState(1);
   const [autoRefreshInterval, setAutoRefreshInterval] = useState<number | null>(15);
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [secondsUntilRefresh, setSecondsUntilRefresh] = useState<number>(15);
+  const [viewMode, setViewMode] = useState<"side-by-side" | "stacked">(initialParams.viewMode);
+  const isFirstMount = useRef(true);
+
+  // Sync browser back/forward buttons
+  useEffect(() => {
+    const handlePopState = () => {
+      const params = getUrlParams();
+      setProvider(params.provider);
+      setGradeFilter(params.gradeFilter);
+      setViewMode(params.viewMode);
+      setSearchQuery(params.q);
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [getUrlParams]);
+
+  // Keep URL in sync with active filters
+  useEffect(() => {
+    if (isFirstMount.current) {
+      isFirstMount.current = false;
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      const url = new URL(window.location.href);
+      provider !== "all" ? url.searchParams.set("provider", provider) : url.searchParams.delete("provider");
+      gradeFilter !== "all" ? url.searchParams.set("grade", gradeFilter) : url.searchParams.delete("grade");
+      viewMode !== "side-by-side" ? url.searchParams.set("view", viewMode) : url.searchParams.delete("view");
+      searchQuery.trim() ? url.searchParams.set("q", searchQuery.trim()) : url.searchParams.delete("q");
+      window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+    }, 150);
+
+    return () => window.clearTimeout(timer);
+  }, [provider, gradeFilter, viewMode, searchQuery]);
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Fetch updates
-  const fetchData = useCallback(
-    async (p: number, prov: LiveUpdateProviderFilter, gf: LiveUpdateGradeFilter, q: string) => {
+  // Fetch fresh updates on filter change
+  const fetchFresh = useCallback(
+    async (prov: LiveUpdateProviderFilter, gf: LiveUpdateGradeFilter, q: string) => {
       setIsLoading(true);
+      setPage(1);
       try {
         const res = await getLiveUpdates({
           provider: prov,
           gradeFilter: gf,
           query: q.trim() || undefined,
-          page: p,
+          page: 1,
           perPage: 24,
         });
         setData(res);
+        setItems(res.items);
       } catch (err) {
         console.error("Failed fetching live updates:", err);
       } finally {
@@ -213,6 +278,34 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
     },
     []
   );
+
+  const hasMore = page < data.total_pages;
+
+  const loadMore = useCallback(async () => {
+    if (!hasMore || isLoading || isLoadingMore) return;
+    const nextPage = page + 1;
+    setIsLoadingMore(true);
+    try {
+      const res = await getLiveUpdates({
+        provider,
+        gradeFilter,
+        query: searchQuery.trim() || undefined,
+        page: nextPage,
+        perPage: 24,
+      });
+      setItems((prev) => {
+        const seen = new Set(prev.map((i) => i.id));
+        const newItems = res.items.filter((i) => !seen.has(i.id));
+        return [...prev, ...newItems];
+      });
+      setData(res);
+      setPage(nextPage);
+    } catch (err) {
+      console.error("Failed loading more live updates:", err);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [hasMore, isLoading, isLoadingMore, page, provider, gradeFilter, searchQuery]);
 
   // Auto-refresh countdown
   useEffect(() => {
@@ -225,7 +318,30 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
     const interval = setInterval(() => {
       setSecondsUntilRefresh((prev) => {
         if (prev <= 1) {
-          fetchData(page, provider, gradeFilter, searchQuery);
+          // Refresh latest entries in background without wiping scroll history
+          void (async () => {
+            try {
+              const res = await getLiveUpdates({
+                provider,
+                gradeFilter,
+                query: searchQuery.trim() || undefined,
+                page: 1,
+                perPage: 24,
+              });
+              setItems((existing) => {
+                const existingIds = new Set(existing.map((i) => i.id));
+                const fresh = res.items.filter((i) => !existingIds.has(i.id));
+                if (fresh.length === 0) return existing;
+                return [...fresh, ...existing];
+              });
+              setData((prevData) => ({
+                ...res,
+                total_items: Math.max(prevData.total_items, res.total_items),
+              }));
+            } catch (err) {
+              console.error("Auto-refresh live updates error:", err);
+            }
+          })();
           return autoRefreshInterval;
         }
         return prev - 1;
@@ -234,30 +350,21 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
 
     timerRef.current = interval;
     return () => clearInterval(interval);
-  }, [autoRefreshInterval, page, provider, gradeFilter, searchQuery, fetchData]);
+  }, [autoRefreshInterval, provider, gradeFilter, searchQuery]);
 
   const handleProviderChange = (newProv: LiveUpdateProviderFilter) => {
     setProvider(newProv);
-    setPage(1);
-    fetchData(1, newProv, gradeFilter, searchQuery);
+    fetchFresh(newProv, gradeFilter, searchQuery);
   };
 
   const handleGradeChange = (newGf: LiveUpdateGradeFilter) => {
     setGradeFilter(newGf);
-    setPage(1);
-    fetchData(1, provider, newGf, searchQuery);
+    fetchFresh(provider, newGf, searchQuery);
   };
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setPage(1);
-    fetchData(1, provider, gradeFilter, searchQuery);
-  };
-
-  const handlePageChange = (newPage: number) => {
-    setPage(newPage);
-    fetchData(newPage, provider, gradeFilter, searchQuery);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    fetchFresh(provider, gradeFilter, searchQuery);
   };
 
   return (
@@ -282,8 +389,8 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
         {/* Top KPI Stats */}
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-3 rounded-xl border border-sky-500/20 bg-sky-50/70 px-3.5 py-2">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-600 text-xs font-bold text-white shadow-xs">
-              ⚡
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-600 text-xs font-mono font-bold text-white shadow-xs">
+              OBS
             </span>
             <div>
               <p className="text-[10px] font-bold uppercase tracking-wider text-sky-800">Total Observations</p>
@@ -292,8 +399,8 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
           </div>
 
           <div className="flex items-center gap-3 rounded-xl border border-purple-500/20 bg-purple-50/70 px-3.5 py-2">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-purple-600 text-xs font-bold text-white shadow-xs">
-              💎
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-purple-600 text-xs font-mono font-bold text-white shadow-xs">
+              SLAB
             </span>
             <div>
               <p className="text-[10px] font-bold uppercase tracking-wider text-purple-800">Graded Slabs</p>
@@ -328,7 +435,7 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
                   : "text-slate-600 hover:text-slate-900"
               }`}
             >
-              eBay Comps 🛒
+              eBay Comps
             </button>
             <button
               type="button"
@@ -339,12 +446,48 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
                   : "text-slate-600 hover:text-slate-900"
               }`}
             >
-              TCG API Prices 📊
+              TCG API Prices
             </button>
           </div>
 
-          {/* Search Bar & Auto-Refresh */}
+          {/* Search Bar, View Mode & Auto-Refresh */}
           <div className="flex flex-wrap items-center gap-3">
+            {/* View Mode Toggle: Side-by-Side vs Stacked */}
+            <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1 text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => setViewMode("side-by-side")}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 transition ${
+                  viewMode === "side-by-side"
+                    ? "bg-white font-bold text-slate-950 shadow-xs"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+                title="Side-by-side (2 columns)"
+              >
+                <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="currentColor">
+                  <rect x="1" y="2" width="6" height="12" rx="1.5" />
+                  <rect x="9" y="2" width="6" height="12" rx="1.5" />
+                </svg>
+                <span>Side by Side</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("stacked")}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 transition ${
+                  viewMode === "stacked"
+                    ? "bg-white font-bold text-slate-950 shadow-xs"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+                title="Full-width list (1 column)"
+              >
+                <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="currentColor">
+                  <rect x="1" y="2" width="14" height="5" rx="1" />
+                  <rect x="1" y="9" width="14" height="5" rx="1" />
+                </svg>
+                <span>Full Width</span>
+              </button>
+            </div>
+
             {/* Auto-Refresh Ticker */}
             <div className="flex items-center gap-2 rounded-xl bg-slate-50 border border-slate-200 px-3 py-1.5 text-xs text-slate-600">
               <span className="relative flex h-2 w-2">
@@ -370,27 +513,17 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
             </div>
 
             {/* Search Input */}
-            <form onSubmit={handleSearchSubmit} className="relative flex-1 sm:w-64 sm:flex-none">
-              <input
-                type="text"
-                placeholder="Search card, set, or comp..."
+            <div className="w-full sm:w-64">
+              <SearchInput
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50/80 px-3.5 text-xs text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-sky-500 focus:bg-white focus:ring-2 focus:ring-sky-500/20"
+                onChange={(val) => {
+                  setSearchQuery(val);
+                  if (val === "") fetchFresh(provider, gradeFilter, "");
+                }}
+                onSubmit={() => fetchFresh(provider, gradeFilter, searchQuery)}
+                placeholder="Search card, set, or comp..."
               />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSearchQuery("");
-                    fetchData(1, provider, gradeFilter, "");
-                  }}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 hover:text-slate-600"
-                >
-                  ✕
-                </button>
-              )}
-            </form>
+            </div>
           </div>
         </div>
 
@@ -400,8 +533,8 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
           {(
             [
               { id: "all", label: "All Items" },
-              { id: "psa10", label: "PSA 10 Gem Mint 💎" },
-              { id: "psa9", label: "PSA 9 Mint 🛡️" },
+              { id: "psa10", label: "PSA 10 Gem Mint" },
+              { id: "psa9", label: "PSA 9 Mint" },
               { id: "graded", label: "All Graded Slabs" },
               { id: "raw", label: "Raw / Ungraded" },
             ] as { id: LiveUpdateGradeFilter; label: string }[]
@@ -422,88 +555,54 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
         </div>
       </div>
 
-      {/* Live Stream List */}
-      <div className="mt-6 space-y-2.5">
+      {/* Live Stream List / Side-by-Side Grid */}
+      <div
+        className={
+          viewMode === "side-by-side"
+            ? "mt-6 grid grid-cols-1 gap-3.5 lg:grid-cols-2"
+            : "mt-6 space-y-2.5"
+        }
+      >
         {isLoading ? (
-          <div className="space-y-3">
-            {Array.from({ length: 8 }).map((_, i) => (
+          viewMode === "side-by-side" ? (
+            Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="h-24 w-full animate-pulse rounded-2xl bg-slate-200/70" />
+            ))
+          ) : (
+            Array.from({ length: 8 }).map((_, i) => (
               <div key={i} className="h-20 w-full animate-pulse rounded-2xl bg-slate-200/70" />
-            ))}
-          </div>
-        ) : data.items.length === 0 ? (
-          <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center">
-            <p className="text-base font-bold text-slate-800">No live updates found matching your filters</p>
-            <p className="mt-1 text-xs text-slate-500">Try switching the source to &ldquo;All Sources&rdquo; or clearing the search.</p>
-            <button
-              type="button"
-              onClick={() => {
+            ))
+          )
+        ) : items.length === 0 ? (
+          <div className={viewMode === "side-by-side" ? "col-span-full" : ""}>
+            <EmptyState
+              title="No live updates found matching your filters"
+              description="Try switching the source to 'All Sources' or clearing the search query."
+              onReset={() => {
                 setProvider("all");
                 setGradeFilter("all");
                 setSearchQuery("");
-                fetchData(1, "all", "all", "");
+                fetchFresh("all", "all", "");
               }}
-              className="mt-4 rounded-xl bg-sky-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-sky-700"
-            >
-              Reset Filters
-            </button>
+            />
           </div>
         ) : (
-          data.items.map((item) => <LiveUpdateRow key={item.id} item={item} />)
+          items.map((item) => <LiveUpdateRow key={item.id} item={item} />)
         )}
       </div>
 
-      {/* Pagination Controls */}
-      {data.total_pages > 1 && (
-        <div className="mt-8 flex flex-col items-center justify-between gap-4 border-t border-slate-200 pt-6 sm:flex-row">
-          <div className="text-xs font-medium text-slate-500">
-            Showing page <span className="font-bold text-slate-900">{data.page}</span> of{" "}
-            <span className="font-bold text-slate-900">{data.total_pages}</span> ({data.total_items.toLocaleString()} total items)
-          </div>
+      {/* Infinite Scroll Sentinel */}
+      <InfiniteScrollSentinel
+        hasMore={hasMore}
+        isLoading={isLoadingMore}
+        onLoadMore={() => void loadMore()}
+        itemName="records"
+        totalLoaded={items.length}
+        totalItems={data.total_items}
+      />
 
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              disabled={data.page <= 1}
-              onClick={() => handlePageChange(data.page - 1)}
-              className="rounded-xl border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 disabled:opacity-40"
-            >
-              ← Previous
-            </button>
-
-            {Array.from({ length: Math.min(5, data.total_pages) }).map((_, i) => {
-              let pNum = i + 1;
-              if (data.total_pages > 5 && data.page > 3) {
-                pNum = data.page - 2 + i;
-                if (pNum > data.total_pages) pNum = data.total_pages - 4 + i;
-              }
-              if (pNum < 1 || pNum > data.total_pages) return null;
-              return (
-                <button
-                  key={pNum}
-                  type="button"
-                  onClick={() => handlePageChange(pNum)}
-                  className={`h-8 w-8 rounded-xl text-xs font-bold transition ${
-                    data.page === pNum
-                      ? "bg-slate-900 text-white shadow-xs"
-                      : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                  }`}
-                >
-                  {pNum}
-                </button>
-              );
-            })}
-
-            <button
-              type="button"
-              disabled={data.page >= data.total_pages}
-              onClick={() => handlePageChange(data.page + 1)}
-              className="rounded-xl border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 disabled:opacity-40"
-            >
-              Next →
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Floating Back To Top Button */}
+      <BackToTop />
     </div>
   );
 }

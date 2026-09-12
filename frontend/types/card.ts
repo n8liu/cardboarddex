@@ -55,6 +55,7 @@ export type CardSetOption = {
   name: string;
   series: string | null;
   release_date?: string | null;
+  image_url?: string | null;
 };
 
 export type CardSort = "price_desc" | "price_asc" | "number_asc" | "number_desc" | "name" | "set";
@@ -91,6 +92,7 @@ export type CardPricing = {
   card_id: string;
   provider_states: ProviderPricingState[];
   observations: PriceObservation[];
+  avg_listing_price?: number | null;
 };
 
 export type GradingProfitItem = {
@@ -201,7 +203,8 @@ export type SealedSignalsResponse = {
   updated_at: string;
 };
 
-export type VolumeTimeframe = "2026_ytd" | "all_time" | "30d";
+export type VolumeTimeframe = "24h" | "7d" | "30d" | "all_time" | "2026_ytd";
+export type VolumeSortMetric = "volume_desc" | "sales_desc" | "growth_desc" | "avg_price_desc";
 
 export type PokemonVolumeItem = {
   rank: number;
@@ -210,6 +213,9 @@ export type PokemonVolumeItem = {
   sprite_url: string;
   volume_usd: number;
   volume_formatted: string;
+  sales_count: number;
+  momentum_percentage: number;
+  momentum_trend: "up" | "down" | "flat";
   yoy_percentage: number;
   yoy_trend: "up" | "down" | "flat";
   cards_count: number;
@@ -221,10 +227,59 @@ export type PokemonVolumeItem = {
 
 export type PokemonVolumeResponse = {
   timeframe: string;
+  sort_by?: string;
   total_volume_usd: number;
+  total_sales_count?: number;
   total_pokemon: number;
   items: PokemonVolumeItem[];
   updated_at: string;
+};
+
+export type TrendingCardItem = {
+  rank: number;
+  card_id: string;
+  name: string;
+  set_name: string;
+  set_id?: string | null;
+  number?: string | null;
+  rarity?: string | null;
+  image_url: string;
+  market_price?: number | null;
+  price_change_7d?: number | null;
+  clicks_count: number;
+  trend_score: number;
+  trend_direction: "up" | "down" | "flat";
+};
+
+export type TrendingPokemonItem = {
+  rank: number;
+  pokemon_name: string;
+  dex_number: number;
+  sprite_url: string;
+  clicks_count: number;
+  searches_count: number;
+  cards_count: number;
+  trend_score: number;
+  trend_direction: "up" | "down" | "flat";
+  top_card_name?: string | null;
+  top_card_price?: number | null;
+  top_card_id?: string | null;
+};
+
+export type TrendingDashboardResponse = {
+  timeframe: string;
+  trending_cards: TrendingCardItem[];
+  trending_pokemon: TrendingPokemonItem[];
+  volume_pokemon: PokemonVolumeItem[];
+  total_volume_usd: number;
+  total_sales_count: number;
+  updated_at: string;
+};
+
+export type TrackActionPayload = {
+  entityType: "card" | "pokemon" | "search";
+  entityId: string;
+  action?: "click" | "search" | "view";
 };
 
 export type LiveUpdateProviderFilter = "all" | "ebay" | "tcgapi";

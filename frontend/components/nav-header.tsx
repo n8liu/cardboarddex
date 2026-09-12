@@ -1,107 +1,128 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 export function NavHeader() {
   const pathname = usePathname();
+  const [isScrolled, setIsScrolled] = useState(false);
 
-  const isCatalog = pathname === "/" || (pathname.startsWith("/cards") && !pathname.startsWith("/cards/"));
+  useEffect(() => {
+    const handleScroll = () => {
+      setIsScrolled(window.scrollY > 10);
+    };
+    handleScroll();
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  const isPokedex = pathname.startsWith("/pokedex") || pathname.startsWith("/pokemon");
+  const isCatalog =
+    pathname.startsWith("/catalog") ||
+    (pathname.startsWith("/cards") && !pathname.startsWith("/cards/"));
   const isMovers = pathname.startsWith("/market-movers");
   const isLiveUpdates = pathname.startsWith("/live-updates");
   const isTopVolume = pathname.startsWith("/top-volume");
   const isGrading = pathname.startsWith("/grading-profit");
   const isSealed = pathname.startsWith("/sealed-signals");
 
-  return (
-    <header className="sticky top-0 z-50 border-b border-slate-200/80 bg-white/90 backdrop-blur-xl">
-      <div className="mx-auto flex h-16 max-w-[1600px] items-center justify-between px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center gap-6 lg:gap-8">
-          <Link className="flex items-center gap-2.5 text-base font-bold tracking-tight text-slate-950 transition hover:opacity-90" href="/">
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-600 font-mono text-sm font-black text-white shadow-sm">
-              T
-            </span>
-            <span className="hidden sm:inline">TCGTerminal</span>
-          </Link>
+  const navLinks = [
+    { href: "/pokedex", label: "Pokédex", active: isPokedex },
+    { href: "/catalog", label: "Catalog", active: isCatalog },
+    { href: "/market-movers", label: "Movers", active: isMovers },
+    { href: "/sealed-signals", label: "Sealed", active: isSealed },
+    { href: "/grading-profit", label: "Grading", active: isGrading },
+    { href: "/top-volume", label: "Trending", active: isTopVolume },
+    { href: "/live-updates", label: "Live Comps", active: isLiveUpdates },
+  ];
 
-          <nav className="flex items-center gap-1 rounded-xl bg-slate-100/80 p-1 text-xs font-semibold text-slate-600" aria-label="Main Navigation">
-            <Link
-              href="/"
-              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition ${
-                pathname === "/" || (pathname.startsWith("/cards") && !isMovers && !isLiveUpdates && !isTopVolume && !isGrading && !isSealed)
-                  ? "bg-white text-slate-950 shadow-sm font-bold"
-                  : "text-slate-500 hover:text-slate-900"
-              }`}
-            >
-              <span>🔍</span>
-              <span>Catalog</span>
-            </Link>
-            <Link
-              href="/market-movers"
-              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition ${
-                isMovers
-                  ? "bg-white text-emerald-950 shadow-sm font-bold"
-                  : "text-slate-500 hover:text-slate-900"
-              }`}
-            >
-              <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-              </span>
-              <span>Movers</span>
-            </Link>
-            <Link
-              href="/sealed-signals"
-              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition ${
-                isSealed
-                  ? "bg-white text-amber-950 shadow-sm font-bold"
-                  : "text-slate-500 hover:text-slate-900"
-              }`}
-            >
-              <span className="text-amber-600">📦</span>
-              <span>Sealed Signals</span>
-            </Link>
-            <Link
-              href="/grading-profit"
-              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition ${
-                isGrading
-                  ? "bg-white text-indigo-950 shadow-sm font-bold"
-                  : "text-slate-500 hover:text-slate-900"
-              }`}
-            >
-              <span className="text-indigo-600">💎</span>
-              <span>Grading Profit</span>
-            </Link>
-            <Link
-              href="/top-volume"
-              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition ${
-                isTopVolume
-                  ? "bg-white text-amber-950 shadow-sm font-bold"
-                  : "text-slate-500 hover:text-slate-900"
-              }`}
-            >
-              <span className="text-amber-500">🏆</span>
-              <span>Top 50 Volume</span>
-            </Link>
-            <Link
-              href="/live-updates"
-              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition ${
-                isLiveUpdates
-                  ? "bg-white text-sky-950 shadow-sm font-bold"
-                  : "text-slate-500 hover:text-slate-900"
-              }`}
-            >
-              <span className="text-sky-500">⚡</span>
-              <span>Live Updates</span>
-            </Link>
-          </nav>
+  const handleNavClick = (linkHref: string) => {
+    try {
+      sessionStorage.removeItem("cardboarddex_pokedex_last_viewed");
+      sessionStorage.removeItem("cardboarddex_pokedex_scroll");
+      sessionStorage.removeItem("cardboarddex_pokedex_in_profile");
+      sessionStorage.removeItem("cardboarddex_pokedex_return_from_profile");
+      sessionStorage.setItem("cardboarddex_pokedex_nav_reset", "true");
+    } catch {}
+    if (linkHref === "/pokedex") {
+      if (typeof window !== "undefined") {
+        window.scrollTo({ top: 0, behavior: pathname === "/pokedex" ? "smooth" : "instant" });
+      }
+    }
+  };
+
+  return (
+    <header
+      className={`sticky top-0 z-40 transition-all duration-200 border-b ${
+        isScrolled
+          ? "border-slate-200 bg-white/92 shadow-2xs backdrop-blur-md"
+          : "border-slate-200/80 bg-white"
+      }`}
+    >
+      <div className="mx-auto flex h-16 max-w-[1600px] items-center justify-between px-4 sm:px-6 lg:px-8">
+        {/* Left: Logo */}
+        <div className="flex shrink-0 items-center">
+          <Link
+            className="flex items-center gap-2.5 text-sm font-bold tracking-tight text-slate-950 transition hover:opacity-90"
+            href="/"
+            onClick={() => handleNavClick("/")}
+          >
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-900 font-mono text-[11px] font-black text-white shadow-xs tracking-tighter">
+              CD
+            </span>
+            <span className="font-mono tracking-tight font-bold">CardboardDex</span>
+          </Link>
         </div>
 
-        <div className="hidden items-center gap-3 sm:flex">
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-50/60 px-2.5 py-1 text-xs font-medium text-emerald-800">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> TCG API & eBay Live Comps
+        {/* Center: Navigation Bar (Centered, no emojis, renamed, IBM Plex Mono theme) */}
+        <nav
+          className="hidden md:flex items-center gap-1 rounded-xl bg-slate-100/90 p-1 text-xs font-mono"
+          aria-label="Main Navigation"
+        >
+          {navLinks.map((link) => (
+            <Link
+              key={link.href}
+              href={link.href}
+              onClick={() => handleNavClick(link.href)}
+              className={`rounded-lg px-3 py-1.5 transition uppercase tracking-wider font-semibold ${
+                link.active
+                  ? "bg-slate-900 text-white shadow-xs font-bold"
+                  : "text-slate-600 hover:text-slate-950 hover:bg-slate-200/60"
+              }`}
+            >
+              {link.label}
+            </Link>
+          ))}
+        </nav>
+
+        {/* Right: Live Market Tag */}
+        <div className="flex shrink-0 items-center gap-3">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-mono text-slate-700">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            TCG & eBay Comps
           </span>
         </div>
+      </div>
+
+      {/* Mobile Navigation Row (Centered on small screens) */}
+      <div className="flex md:hidden overflow-x-auto border-t border-slate-200/60 bg-slate-50/90 backdrop-blur-md p-2 scrollbar-none justify-start sm:justify-center">
+        <nav className="flex items-center gap-1 text-xs font-mono" aria-label="Mobile Navigation">
+          {navLinks.map((link) => (
+            <Link
+              key={link.href}
+              href={link.href}
+              onClick={() => handleNavClick(link.href)}
+              className={`rounded-lg px-2.5 py-1 text-[11px] whitespace-nowrap transition uppercase tracking-wider font-semibold ${
+                link.active
+                  ? "bg-slate-900 text-white font-bold"
+                  : "text-slate-600 hover:text-slate-950"
+              }`}
+            >
+              {link.label}
+            </Link>
+          ))}
+        </nav>
       </div>
     </header>
   );

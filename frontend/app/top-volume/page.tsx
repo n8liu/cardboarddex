@@ -1,19 +1,20 @@
 import type { Metadata } from "next";
-import { getTopPokemonVolume } from "@/lib/api";
+import { getTrendingDashboard } from "@/lib/api";
 import { TopVolumeDashboard } from "@/components/top-volume-dashboard";
 
 export const metadata: Metadata = {
-  title: "Top 50 Pokémon Sales by Volume | TCGTerminal",
-  description: "Rankings of the top 50 Pokémon characters by total market sales volume, transaction liquidity, and year-over-year market momentum.",
+  title: "Top 50 Trending Cards & Pokémon | CardboardDex",
+  description: "Live rankings across three core market pillars: trending & most clicked cards, most searched Pokémon characters, and market leaders by sales dollar volume.",
 };
 
 export const dynamic = "force-dynamic";
+export const runtime = "edge";
 
 export default async function TopVolumePage() {
-  const initialData = await getTopPokemonVolume({ timeframe: "2026_ytd" });
+  const initialData = await getTrendingDashboard({ timeframe: "7d" });
 
   return (
-    <main className="min-h-[calc(100vh-65px)] bg-[#f7f8f6] text-slate-950">
+    <main className="min-h-[calc(100vh-65px)] bg-white text-slate-950">
       <TopVolumeDashboard initialData={initialData} />
     </main>
   );

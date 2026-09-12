@@ -15,21 +15,38 @@ import type {
   SealedSortOption,
   PokemonVolumeResponse,
   VolumeTimeframe,
+  VolumeSortMetric,
+  TrendingDashboardResponse,
+  TrackActionPayload,
   LiveUpdatesResponse,
   LiveUpdateProviderFilter,
   LiveUpdateGradeFilter,
   GameLanguage,
 } from "@/types/card";
+import type { PokemonCardsResponse } from "@/types/pokemon";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 export const CARD_PAGE_SIZE = 24;
+
+export function buildQueryString(
+  params: Record<string, string | number | boolean | undefined | null>,
+): string {
+  const searchParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") {
+      searchParams.set(key, String(value));
+    }
+  }
+  const str = searchParams.toString();
+  return str ? `?${str}` : "";
+}
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
     ...options,
   });
   if (!response.ok) {
-    throw new Error(`TCGTerminal API ${path} returned ${response.status}`);
+    throw new Error(`CardboardDex API ${path} returned ${response.status}`);
   }
   return response.json() as Promise<T>;
 }
@@ -45,26 +62,52 @@ type SearchCardOptions = {
 };
 
 export function searchCards(query: string, options: SearchCardOptions = {}): Promise<CardSummary[]> {
-  const params = new URLSearchParams({
+  const qs = buildQueryString({
     q: query,
-    limit: String(options.limit ?? CARD_PAGE_SIZE),
-    offset: String(options.offset ?? 0),
+    limit: options.limit ?? CARD_PAGE_SIZE,
+    offset: options.offset ?? 0,
     sort_by: options.sortBy ?? "price_desc",
     hide_sealed: options.hideSealed === false ? "false" : "true",
+    set_id: options.setId,
+    sealed_only: options.sealedOnly ? "true" : undefined,
+    game: options.game && options.game !== "all" ? options.game : undefined,
   });
-  if (options.setId) params.set("set_id", options.setId);
-  if (options.sealedOnly) params.set("sealed_only", "true");
-  if (options.game && options.game !== "all") params.set("game", options.game);
-  return request<CardSummary[]>(`/cards/search?${params.toString()}`, { cache: "no-store" });
+  return request<CardSummary[]>(`/cards/search${qs}`, { cache: "no-store" });
+}
+
+export function getPokemonCards(
+  pokemonName: string,
+  options: {
+    setId?: string;
+    sortBy?: CardSort;
+    game?: GameLanguage;
+    limit?: number;
+    offset?: number;
+    ref?: string;
+  } = {}
+): Promise<PokemonCardsResponse> {
+  const qs = buildQueryString({
+    limit: options.limit ?? CARD_PAGE_SIZE,
+    offset: options.offset ?? 0,
+    sort_by: options.sortBy ?? "price_desc",
+    set_id: options.setId,
+    game: options.game && options.game !== "all" ? options.game : undefined,
+    ref: options.ref,
+  });
+  return request<PokemonCardsResponse>(
+    `/cards/pokemon/${encodeURIComponent(pokemonName)}${qs}`,
+    { cache: "no-store" }
+  );
 }
 
 export function getCardSets(game?: GameLanguage): Promise<CardSetOption[]> {
-  const params = new URLSearchParams();
-  if (game && game !== "all") params.set("game", game);
-  const qStr = params.toString();
-  return request<CardSetOption[]>(`/cards/sets${qStr ? `?${qStr}` : ""}`, {
-    cache: "no-store",
+  const qs = buildQueryString({
+    game: game && game !== "all" ? game : undefined,
   });
+  return request<CardSetOption[]>(`/cards/sets${qs}`, {
+    next: { revalidate: 86400 },
+  });
+
 }
 
 export function getMarketMovers(options: {
@@ -74,25 +117,29 @@ export function getMarketMovers(options: {
   page?: number;
   perPage?: number;
 } = {}): Promise<MarketMoversResponse> {
-  const params = new URLSearchParams({
+  const qs = buildQueryString({
     direction: options.direction ?? "all",
     period: options.period ?? "24h",
     game: options.game ?? "pokemon",
-    page: String(options.page ?? 1),
-    per_page: String(options.perPage ?? 12),
+    page: options.page ?? 1,
+    per_page: options.perPage ?? 24,
   });
-  return request<MarketMoversResponse>(`/cards/market-movers?${params.toString()}`, {
+  return request<MarketMoversResponse>(`/cards/market-movers${qs}`, {
     next: { revalidate: 300 },
   });
 }
 
-export async function getCard(cardId: string): Promise<CardDetail | null> {
-  const response = await fetch(`${API_URL}/cards/${encodeURIComponent(cardId)}`, {
-    next: { revalidate: 3600 },
+export async function getCard(
+  cardId: string,
+  options?: { ref?: string }
+): Promise<CardDetail | null> {
+  const qs = options?.ref ? `?ref=${encodeURIComponent(options.ref)}` : "";
+  const response = await fetch(`${API_URL}/cards/${encodeURIComponent(cardId)}${qs}`, {
+    cache: "no-store",
   });
   if (response.status === 404) return null;
   if (!response.ok) {
-    throw new Error(`TCGTerminal card request returned ${response.status}`);
+    throw new Error(`CardboardDex card request returned ${response.status}`);
   }
   return response.json() as Promise<CardDetail>;
 }
@@ -100,11 +147,11 @@ export async function getCard(cardId: string): Promise<CardDetail | null> {
 export async function getCardPricing(cardId: string): Promise<CardPricing | null> {
   const response = await fetch(
     `${API_URL}/cards/${encodeURIComponent(cardId)}/prices?days=365`,
-    { next: { revalidate: 600 } },
+    { cache: "no-store" },
   );
   if (response.status === 404) return null;
   if (!response.ok) {
-    throw new Error(`TCGTerminal pricing request returned ${response.status}`);
+    throw new Error(`CardboardDex pricing request returned ${response.status}`);
   }
   return response.json() as Promise<CardPricing>;
 }
@@ -122,20 +169,20 @@ export function getGradingProfit(options: {
   page?: number;
   perPage?: number;
 } = {}): Promise<GradingProfitResponse> {
-  const params = new URLSearchParams({
-    page: String(options.page ?? 1),
-    per_page: String(options.perPage ?? 12),
+  const qs = buildQueryString({
+    page: options.page ?? 1,
+    per_page: options.perPage ?? 24,
     sort_by: options.sortBy ?? "psa10_profit_desc",
     target_grade: options.targetGrade ?? "all",
+    grading_fee: options.gradingFee,
+    min_profit: options.minProfit,
+    max_raw_price: options.maxRawPrice,
+    min_spread: options.minSpread,
+    psa9_safe_only: options.psa9SafeOnly ? "true" : undefined,
+    set_id: options.setId,
+    q: options.query,
   });
-  if (options.gradingFee !== undefined) params.set("grading_fee", String(options.gradingFee));
-  if (options.minProfit !== undefined) params.set("min_profit", String(options.minProfit));
-  if (options.maxRawPrice !== undefined) params.set("max_raw_price", String(options.maxRawPrice));
-  if (options.minSpread !== undefined) params.set("min_spread", String(options.minSpread));
-  if (options.psa9SafeOnly) params.set("psa9_safe_only", "true");
-  if (options.setId) params.set("set_id", options.setId);
-  if (options.query) params.set("q", options.query);
-  return request<GradingProfitResponse>(`/cards/grading-profit?${params.toString()}`, {
+  return request<GradingProfitResponse>(`/cards/grading-profit${qs}`, {
     next: { revalidate: 300 },
   });
 }
@@ -149,31 +196,62 @@ export function getSealedSignals(options: {
   page?: number;
   perPage?: number;
 } = {}): Promise<SealedSignalsResponse> {
-  const params = new URLSearchParams({
+  const qs = buildQueryString({
     signal: options.signal ?? "all",
     product_type: options.productType ?? "all",
     sort_by: options.sortBy ?? "score_desc",
-    page: String(options.page ?? 1),
-    per_page: String(options.perPage ?? 12),
+    page: options.page ?? 1,
+    per_page: options.perPage ?? 24,
+    set_id: options.setId,
+    q: options.query,
   });
-  if (options.setId) params.set("set_id", options.setId);
-  if (options.query) params.set("q", options.query);
-  return request<SealedSignalsResponse>(`/cards/sealed-signals?${params.toString()}`, {
+  return request<SealedSignalsResponse>(`/cards/sealed-signals${qs}`, {
     next: { revalidate: 300 },
   });
 }
 
 export function getTopPokemonVolume(options: {
   timeframe?: VolumeTimeframe;
+  sortBy?: VolumeSortMetric;
   query?: string;
 } = {}): Promise<PokemonVolumeResponse> {
-  const params = new URLSearchParams();
-  if (options.timeframe) params.set("timeframe", options.timeframe);
-  if (options.query) params.set("q", options.query);
-  const queryStr = params.toString();
-  return request<PokemonVolumeResponse>(`/cards/top-pokemon-volume${queryStr ? `?${queryStr}` : ""}`, {
+  const qs = buildQueryString({
+    timeframe: options.timeframe,
+    sort_by: options.sortBy,
+    q: options.query,
+  });
+  return request<PokemonVolumeResponse>(`/cards/top-pokemon-volume${qs}`, {
     next: { revalidate: 600 },
   });
+}
+
+export function getTrendingDashboard(options: {
+  timeframe?: VolumeTimeframe;
+  query?: string;
+} = {}): Promise<TrendingDashboardResponse> {
+  const qs = buildQueryString({
+    timeframe: options.timeframe,
+    q: options.query,
+  });
+  return request<TrendingDashboardResponse>(`/cards/trending${qs}`, {
+    cache: "no-store",
+  });
+}
+
+export function trackUserAction(data: TrackActionPayload): void {
+  const body = {
+    entity_type: data.entityType,
+    entity_id: data.entityId,
+    action: data.action ?? "click",
+  };
+  try {
+    fetch(`${API_URL}/cards/track-action`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      keepalive: true,
+    }).catch(() => {});
+  } catch {}
 }
 
 export function getLiveUpdates(options: {
@@ -184,15 +262,15 @@ export function getLiveUpdates(options: {
   page?: number;
   perPage?: number;
 } = {}): Promise<LiveUpdatesResponse> {
-  const params = new URLSearchParams({
+  const qs = buildQueryString({
     provider: options.provider ?? "all",
     grade_filter: options.gradeFilter ?? "all",
-    page: String(options.page ?? 1),
-    per_page: String(options.perPage ?? 24),
+    page: options.page ?? 1,
+    per_page: options.perPage ?? 24,
+    set_id: options.setId,
+    q: options.query,
   });
-  if (options.setId) params.set("set_id", options.setId);
-  if (options.query) params.set("q", options.query);
-  return request<LiveUpdatesResponse>(`/cards/live-updates?${params.toString()}`, {
+  return request<LiveUpdatesResponse>(`/cards/live-updates${qs}`, {
     cache: "no-store",
   });
 }
@@ -200,4 +278,3 @@ export function getLiveUpdates(options: {
 export function cardImageUrl(path: string): string {
   return `${API_URL}${path}`;
 }
-

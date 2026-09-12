@@ -1,4 +1,4 @@
-# TCGTerminal
+# CardboardDex
 
 A full-stack Pokémon trading card price tracker and market analytics tool. It ingests catalog data and market pricing from TCG API, matching them with verified eBay sold listings and graded slab comps (PSA, BGS, CGC, SGC).
 
@@ -38,6 +38,8 @@ A full-stack Pokémon trading card price tracker and market analytics tool. It i
 - **Database & Cache**: PostgreSQL 16, Redis 7 (rate limiting + shared token caching)
 - **Data Sources**: [TCG API](https://tcgapi.dev) (Catalog & Pricing), eBay Browse API (Comps)
 
+
+### start
 docker compose up -d
 
 cd backend
@@ -46,3 +48,21 @@ uvicorn app.main:app --reload --port 8000
 
 cd frontend
 npm run dev
+
+### update 1 card (TCG API + eBay)
+cd backend
+.venv/bin/python jobs/update_card.py <card_id>
+
+### update all cards for 1 pokemon (TCG API + eBay)
+cd backend
+.venv/bin/python jobs/update_pokemon.py "Pikachu"
+# or with limit
+.venv/bin/python jobs/update_pokemon.py "Charizard" --limit 20
+
+### update 10 sealed products
+cd backend
+.venv/bin/python jobs/sync_catalog.py --limit 10
+
+### update ebay prices for 10 cards
+cd backend
+.venv/bin/python jobs/collect_ebay_prices.py --limit 10

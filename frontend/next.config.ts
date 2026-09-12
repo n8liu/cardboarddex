@@ -8,6 +8,9 @@ const apiIsLocal = ["127.0.0.1", "localhost"].includes(apiOrigin.hostname);
 const nextConfig: NextConfig = {
   images: {
     dangerouslyAllowLocalIP: apiIsLocal,
+    dangerouslyAllowSVG: true,
+    contentDispositionType: "attachment",
+    contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;",
     formats: ["image/avif", "image/webp"],
     minimumCacheTTL: 2_678_400,
     remotePatterns: [
@@ -16,6 +19,11 @@ const nextConfig: NextConfig = {
         hostname: apiOrigin.hostname,
         port: apiOrigin.port,
         pathname: "/cards/**",
+      },
+      {
+        protocol: "https",
+        hostname: "raw.githubusercontent.com",
+        pathname: "/**",
       },
     ],
   },
