@@ -43,10 +43,12 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
 - **Automated CI/CD & Hybrid Cloud Deployment Architecture (Cloudflare + AWS)**:
   - Containerized backend using multi-stage [`backend/Dockerfile`](backend/Dockerfile) and [`backend/.dockerignore`](backend/.dockerignore) supporting FastAPI (`uvicorn`), Celery Worker, Celery Beat scheduler, and Alembic database migrations.
   - Implemented GitHub Actions CI/CD workflows with monorepo path-filtering:
-    1. [`.github/workflows/backend-ci-cd.yml`](.github/workflows/backend-ci-cd.yml): Bytecode compilation checks and 125 `pytest` unit tests (100% pass rate); on `main`, authenticates to AWS via keyless OIDC, builds & pushes to Amazon ECR with GHA build caching, executes Alembic migrations, and deploys zero-downtime rolling updates across ECS Fargate services (`cardboarddex-api-service`, `cardboarddex-worker-service`, `cardboarddex-beat-service`).
-    2. [`.github/workflows/frontend-ci-cd.yml`](.github/workflows/frontend-ci-cd.yml): TypeScript typechecking (`tsc --noEmit`) and Next.js build; on PRs, creates preview deployments via Cloudflare Pages; on `main`, deploys production build to Cloudflare Pages.
-  - Created [`frontend/wrangler.json`](frontend/wrangler.json) for Cloudflare Pages runtime and compatibility settings.
-  - Authored comprehensive setup guide [`docs/ci-cd-setup-guide.md`](docs/ci-cd-setup-guide.md) detailing IAM OIDC trust policy, ECR repository, ECS Fargate cluster, Secrets Manager, and Cloudflare API token setup.
+    1. [`.github/workflows/backend-ci-cd.yml`](.github/workflows/backend-ci-cd.yml): Bytecode compilation checks and 125 `pytest` unit tests (100% pass rate); on `main`, authenticates to AWS via keyless OIDC (`sts:AssumeRoleWithWebIdentity`), builds & pushes to Amazon ECR (`cardboarddex-backend`) with GHA build caching, executes Alembic migrations, and deploys zero-downtime rolling updates across ECS Fargate services (`cardboarddex-api-service`, `cardboarddex-worker-service`, `cardboarddex-beat-service`).
+    2. [`.github/workflows/frontend-ci-cd.yml`](.github/workflows/frontend-ci-cd.yml): Node 22 environment running TypeScript typechecking (`tsc --noEmit`) and Next.js build validation on PRs and pushes to `main`.
+  - Configured Cloudflare Pages Git integration with Next.js edge adapter (`npx @cloudflare/next-on-pages` with build output `.vercel/output/static` and `nodejs_compat`).
+  - Added [`frontend/.npmrc`](frontend/.npmrc) (`legacy-peer-deps=true`) and explicit `react-is` in [`frontend/package.json`](frontend/package.json) ensuring clean Webpack module resolution for `recharts`.
+  - Added `respx` and `pytest-cov` in [`backend/requirements.txt`](backend/requirements.txt) for robust HTTP mocking across eBay and TCG API unit tests.
+  - Authored comprehensive setup guide [`docs/ci-cd-setup-guide.md`](docs/ci-cd-setup-guide.md) detailing IAM OIDC trust policy, ECR repository, ECS Fargate cluster, Secrets Manager, and Cloudflare Pages setup.
 
 - **Japanese eBay Comp Ingestion & Title Parser Suffix Normalization**:
   - Resolved parameter pass-through in [`backend/jobs/collect_ebay_prices.py`](backend/jobs/collect_ebay_prices.py) passing `is_target_japanese=bool(card.set and card.set.series == "Pokemon Japan")` to `parse_ebay_title`.
