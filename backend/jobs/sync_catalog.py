@@ -196,10 +196,20 @@ def _upsert_cards(
                 )
 
         if candidate_observations:
+            fps = [fp for fp, _ in candidate_observations]
+            existing_fps = set(
+                session.scalars(
+                    select(PriceObservation.fingerprint).where(
+                        PriceObservation.fingerprint.in_(fps)
+                    )
+                ).all()
+            )
             inserted = 0
             for fp, obs in candidate_observations:
-                session.add(obs)
-                inserted += 1
+                if fp not in existing_fps:
+                    session.add(obs)
+                    existing_fps.add(fp)
+                    inserted += 1
             price_count += inserted
 
         if batch_card_states:
