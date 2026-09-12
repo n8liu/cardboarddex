@@ -68,8 +68,8 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME || 'arn:aws:iam::349558247779:role/github-actions-cardboarddex-deploy' }}
+          aws-region: ${{ vars.AWS_REGION || 'us-west-2' }}
           audience: sts.amazonaws.com
 
       - name: Login to Amazon ECR
@@ -98,19 +98,19 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME || 'arn:aws:iam::349558247779:role/github-actions-cardboarddex-deploy' }}
+          aws-region: ${{ vars.AWS_REGION || 'us-west-2' }}
           audience: sts.amazonaws.com
 
       - name: Run Alembic migration task on ECS
         run: |
-          CLUSTER="${{ vars.ECS_CLUSTER }}"
+          CLUSTER="${{ vars.ECS_CLUSTER || 'default' }}"
           MIGRATION_TASK_FAMILY="${{ vars.ECS_MIGRATION_TASK_FAMILY || 'cardboarddex-migration' }}"
           SUBNETS="${{ vars.ECS_SUBNET_IDS }}"
           SECURITY_GROUPS="${{ vars.ECS_SECURITY_GROUP_IDS }}"
 
-          if [ -z "$CLUSTER" ] || [ -z "$SUBNETS" ]; then
-            echo "Notice: ECS_CLUSTER or ECS_SUBNET_IDS not configured. Skipping automated migration task run."
+          if [ -z "$SUBNETS" ]; then
+            echo "Notice: ECS_SUBNET_IDS not configured. Skipping automated migration task run."
             echo "Run migrations manually or configure repository variables."
             exit 0
           fi
@@ -133,14 +133,14 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME || 'arn:aws:iam::349558247779:role/github-actions-cardboarddex-deploy' }}
+          aws-region: ${{ vars.AWS_REGION || 'us-west-2' }}
           audience: sts.amazonaws.com
 
       - name: Trigger Rolling Update on ECS Services
         run: |
-          CLUSTER="${{ vars.ECS_CLUSTER }}"
-          API_SERVICE="${{ vars.ECS_API_SERVICE || 'cardboarddex-api-service' }}"
+          CLUSTER="${{ vars.ECS_CLUSTER || 'default' }}"
+          API_SERVICE="${{ vars.ECS_API_SERVICE || 'cardboarddex-backend-205a' }}"
           WORKER_SERVICE="${{ vars.ECS_WORKER_SERVICE || 'cardboarddex-worker-service' }}"
           BEAT_SERVICE="${{ vars.ECS_BEAT_SERVICE || 'cardboarddex-beat-service' }}"
 

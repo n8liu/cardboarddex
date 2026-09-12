@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const apiOrigin = new URL(
-  process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000",
+  process.env.NEXT_PUBLIC_API_URL ||
+    "https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws",
 );
 const apiIsLocal = ["127.0.0.1", "localhost"].includes(apiOrigin.hostname);
 
@@ -18,6 +19,11 @@ const nextConfig: NextConfig = {
         protocol: apiOrigin.protocol.replace(":", "") as "http" | "https",
         hostname: apiOrigin.hostname,
         port: apiOrigin.port,
+        pathname: "/cards/**",
+      },
+      {
+        protocol: "https",
+        hostname: "ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws",
         pathname: "/cards/**",
       },
       {

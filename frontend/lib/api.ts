@@ -25,7 +25,9 @@ import type {
 } from "@/types/card";
 import type { PokemonCardsResponse } from "@/types/pokemon";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL ||
+  "https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws";
 export const CARD_PAGE_SIZE = 24;
 
 export function buildQueryString(
