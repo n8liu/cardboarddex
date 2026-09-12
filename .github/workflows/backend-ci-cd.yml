@@ -1,0 +1,166 @@
+name: Backend CI/CD
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci-cd.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci-cd.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # Required for AWS OIDC authentication
+
+jobs:
+  test:
+    name: Test & Lint Backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Check bytecode compilation
+        run: |
+          python -m compileall -q app jobs tests parsers
+
+      - name: Run Pytest test suite
+        run: |
+          pytest -v
+
+  build-and-push:
+    name: Build & Push Docker Image to Amazon ECR
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ github.sha }}
+      ecr_registry: ${{ steps.login-ecr.outputs.registry }}
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+          audience: sts.amazonaws.com
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push backend Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY || 'cardboarddex-backend' }}:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY || 'cardboarddex-backend' }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  run-migrations:
+    name: Run Database Migrations (Alembic)
+    needs: build-and-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+          audience: sts.amazonaws.com
+
+      - name: Run Alembic migration task on ECS
+        run: |
+          CLUSTER="${{ vars.ECS_CLUSTER }}"
+          MIGRATION_TASK_FAMILY="${{ vars.ECS_MIGRATION_TASK_FAMILY || 'cardboarddex-migration' }}"
+          SUBNETS="${{ vars.ECS_SUBNET_IDS }}"
+          SECURITY_GROUPS="${{ vars.ECS_SECURITY_GROUP_IDS }}"
+
+          if [ -z "$CLUSTER" ] || [ -z "$SUBNETS" ]; then
+            echo "Notice: ECS_CLUSTER or ECS_SUBNET_IDS not configured. Skipping automated migration task run."
+            echo "Run migrations manually or configure repository variables."
+            exit 0
+          fi
+
+          echo "Triggering one-off ECS Fargate migration task..."
+          aws ecs run-task \
+            --cluster "$CLUSTER" \
+            --task-definition "$MIGRATION_TASK_FAMILY" \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SECURITY_GROUPS],assignPublicIp=ENABLED}" \
+            --overrides "{\"containerOverrides\": [{\"name\": \"migration\", \"command\": [\"alembic\", \"upgrade\", \"head\"]}]}"
+
+  deploy:
+    name: Deploy to Amazon ECS Fargate
+    needs: [build-and-push, run-migrations]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+          audience: sts.amazonaws.com
+
+      - name: Trigger Rolling Update on ECS Services
+        run: |
+          CLUSTER="${{ vars.ECS_CLUSTER }}"
+          API_SERVICE="${{ vars.ECS_API_SERVICE || 'cardboarddex-api-service' }}"
+          WORKER_SERVICE="${{ vars.ECS_WORKER_SERVICE || 'cardboarddex-worker-service' }}"
+          BEAT_SERVICE="${{ vars.ECS_BEAT_SERVICE || 'cardboarddex-beat-service' }}"
+
+          if [ -z "$CLUSTER" ]; then
+            echo "Notice: ECS_CLUSTER variable is not defined. Skipping ECS service deployment."
+            echo "ECR image has been pushed successfully: ${{ needs.build-and-push.outputs.ecr_registry }}/${{ vars.ECR_REPOSITORY || 'cardboarddex-backend' }}:${{ needs.build-and-push.outputs.image_tag }}"
+            exit 0
+          fi
+
+          echo "Updating FastAPI Web Service: $API_SERVICE..."
+          aws ecs update-service --cluster "$CLUSTER" --service "$API_SERVICE" --force-new-deployment
+
+          if aws ecs describe-services --cluster "$CLUSTER" --services "$WORKER_SERVICE" | grep -q "ACTIVE"; then
+            echo "Updating Celery Worker Service: $WORKER_SERVICE..."
+            aws ecs update-service --cluster "$CLUSTER" --service "$WORKER_SERVICE" --force-new-deployment
+          fi
+
+          if aws ecs describe-services --cluster "$CLUSTER" --services "$BEAT_SERVICE" | grep -q "ACTIVE"; then
+            echo "Updating Celery Beat Service: $BEAT_SERVICE..."
+            aws ecs update-service --cluster "$CLUSTER" --service "$BEAT_SERVICE" --force-new-deployment
+          fi
+
+          echo "Deployment initiated successfully!"
