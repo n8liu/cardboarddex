@@ -68,9 +68,8 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME || 'arn:aws:iam::349558247779:role/github-actions-cardboarddex-deploy' }}
-          aws-region: ${{ vars.AWS_REGION || 'us-west-2' }}
-          audience: sts.amazonaws.com
+          role-to-assume: arn:aws:iam::349558247779:role/github-actions-cardboarddex-deploy
+          aws-region: us-west-2
 
       - name: Login to Amazon ECR
         id: login-ecr
@@ -83,8 +82,8 @@ jobs:
           file: ./backend/Dockerfile
           push: true
           tags: |
-            ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY || 'cardboarddex-backend' }}:${{ github.sha }}
-            ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY || 'cardboarddex-backend' }}:latest
+            ${{ steps.login-ecr.outputs.registry }}/cardboarddex-backend:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/cardboarddex-backend:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -98,14 +97,13 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME || 'arn:aws:iam::349558247779:role/github-actions-cardboarddex-deploy' }}
-          aws-region: ${{ vars.AWS_REGION || 'us-west-2' }}
-          audience: sts.amazonaws.com
+          role-to-assume: arn:aws:iam::349558247779:role/github-actions-cardboarddex-deploy
+          aws-region: us-west-2
 
       - name: Run Alembic migration task on ECS
         run: |
-          CLUSTER="${{ vars.ECS_CLUSTER || 'default' }}"
-          MIGRATION_TASK_FAMILY="${{ vars.ECS_MIGRATION_TASK_FAMILY || 'cardboarddex-migration' }}"
+          CLUSTER="default"
+          MIGRATION_TASK_FAMILY="cardboarddex-migration"
           SUBNETS="${{ vars.ECS_SUBNET_IDS }}"
           SECURITY_GROUPS="${{ vars.ECS_SECURITY_GROUP_IDS }}"
 
@@ -133,14 +131,13 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME || 'arn:aws:iam::349558247779:role/github-actions-cardboarddex-deploy' }}
-          aws-region: ${{ vars.AWS_REGION || 'us-west-2' }}
-          audience: sts.amazonaws.com
+          role-to-assume: arn:aws:iam::349558247779:role/github-actions-cardboarddex-deploy
+          aws-region: us-west-2
 
       - name: Trigger Rolling Update on ECS Services
         run: |
-          CLUSTER="${{ vars.ECS_CLUSTER || 'default' }}"
-          API_SERVICE="${{ vars.ECS_API_SERVICE || 'cardboarddex-backend-205a' }}"
+          CLUSTER="default"
+          API_SERVICE="cardboarddex-backend-205a"
           WORKER_SERVICE="${{ vars.ECS_WORKER_SERVICE || 'cardboarddex-worker-service' }}"
           BEAT_SERVICE="${{ vars.ECS_BEAT_SERVICE || 'cardboarddex-beat-service' }}"
 
