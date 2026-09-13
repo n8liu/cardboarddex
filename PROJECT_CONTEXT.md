@@ -30,7 +30,7 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
 
 - Repository: [https://github.com/n8liu/cardboarddex.git](https://github.com/n8liu/cardboarddex.git)
 - Frontend: Next.js 16 App Router, Tailwind CSS, Recharts, dynamic client/server cache synchronization, IBM Plex Mono typography. Deployed to **Cloudflare Pages** ([https://cardboarddex.pages.dev](https://cardboarddex.pages.dev)).
-- Backend: Python 3.11+, FastAPI, SQLAlchemy 2, Alembic. Deployed to **AWS ECS Fargate** ([https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws](https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws)).
+- Backend: Python 3.11+, FastAPI, SQLAlchemy 2, Alembic. Deployed to **AWS ECS Fargate** (configured via `NEXT_PUBLIC_API_URL`).
 - Data: PostgreSQL 16 on **AWS RDS** (`cardboarddex-db.c7gc44wq4clr.us-west-2.rds.amazonaws.com:5432`, `db.t4g.micro`, 20GB gp3, `us-west-2`) and local development DB (`cardboarddex`).
 - Background work: Celery and Redis running 24/7 passively on **AWS ECS Fargate** (`cardboarddex-celery-worker` service) with dual-layer rate limiter (burst pacing + daily safety ceiling) and alternating 15-minute price cycling.
 - Media & Storage: **Amazon S3 Card Asset Bucket** (`cardboarddex-card-assets-349558247779`, `us-west-2`) with read-through caching in FastAPI (`/cards/:id/image`) and batch sync CLI (`jobs/sync_images_to_s3.py`).
@@ -53,7 +53,7 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
     - Deployed ECS Fargate service `cardboarddex-celery-worker` running 24/7 in ECS cluster `default` with CloudWatch logging (`/ecs/cardboarddex-celery-worker`).
     - Passively executes alternating 15-minute price updates (TCG API at :00, :30; eBay comps at :15, :45) and daily catalog synchronization at 02:00 UTC without manual intervention.
   - **AWS ECS Fargate Backend Service**:
-    - FastAPI app running on ECS Fargate at `https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws`.
+    - FastAPI app running on ECS Fargate (endpoint configured via environment variable `NEXT_PUBLIC_API_URL`).
     - Added global exception handler in [`backend/app/main.py`](backend/app/main.py) injecting CORS headers (`Access-Control-Allow-Origin: *`, `Access-Control-Allow-Methods: *`, `Access-Control-Allow-Headers: *`) into 500 internal server error responses, ensuring frontend error boundaries can inspect backend errors rather than being blocked by browser CORS restrictions.
   - **Idempotent Catalog Ingestion**:
     - Updated [`backend/jobs/sync_catalog.py`](backend/jobs/sync_catalog.py) to check existing price observation fingerprints before inserting, resolving `UniqueViolation: uq_price_observations_fingerprint` when re-syncing sets.
@@ -61,7 +61,7 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
 
 - **Cloudflare Pages Production Resilience & Error Isolation**:
   - Live production frontend deployed at `https://cardboarddex.pages.dev`.
-  - Added smart API endpoint fallback in [`frontend/lib/api.ts`](frontend/lib/api.ts) and [`frontend/next.config.ts`](frontend/next.config.ts) routing to the live AWS ECS URL (`https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws`) when `NEXT_PUBLIC_API_URL` points to unconfigured `api.cardboarddex.com`.
+  - Added smart API endpoint resolution in [`frontend/lib/api.ts`](frontend/lib/api.ts) and [`frontend/next.config.ts`](frontend/next.config.ts) strictly reading `NEXT_PUBLIC_API_URL` and `DEFAULT_API_URL` from `.env` (`http://localhost:8000` in dev), with `frontend/.env.local` symlink. Expanded backend CORS origin regex in [`backend/app/main.py`](backend/app/main.py) to allow localhost/127.0.0.1 on all ports. No API endpoints or internal URLs are hardcoded in the codebase.
   - Added client-side fallback fetching on mount in [`frontend/components/catalog-browser.tsx`](frontend/components/catalog-browser.tsx) and [`frontend/components/pokemon-cards-view.tsx`](frontend/components/pokemon-cards-view.tsx) if initial SSR payload is empty or errored.
   - Implemented comprehensive error boundary in [`frontend/app/error.tsx`](frontend/app/error.tsx) with technical details toggle, direct action buttons (`Retry Action`, `Reload Application`, `Return to Pokédex`), and API health status check.
   - Added graceful SSR error catching on `/catalog`, `/cards/[id]`, `/live-updates`, and `/top-volume` routes, rendering UI shells rather than 500 error pages on transient backend outages.
@@ -475,7 +475,7 @@ Never commit `.env` or API credentials.
 
 - **Completed**: PostgreSQL 16 on AWS RDS, ECS Fargate backend API, S3 card asset bucket with read-through caching and batch sync worker, and 24/7 passive Celery worker with Redis broker on ECS Fargate are fully deployed and operational.
 - **Pending CloudFront Custom Domain**: Complete AWS Support verification to deploy CloudFront CDN distribution in front of S3 bucket `cardboarddex-card-assets-349558247779` for global edge caching and custom domain HTTPS.
-- **Custom API Domain**: Add DNS CNAME record in Cloudflare DNS for `api.cardboarddex.com` pointing to `ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws`.
+- **Custom API Domain**: Add DNS CNAME record in Cloudflare DNS for `api.cardboarddex.com` pointing to the AWS ECS load balancer / service endpoint.
 
 ### 4. Product-quality pass
 

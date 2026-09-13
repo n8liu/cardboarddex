@@ -26,14 +26,16 @@ import type {
 import type { PokemonCardsResponse } from "@/types/pokemon";
 
 const DEFAULT_API_URL =
-  "https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws";
+  process.env.NEXT_PUBLIC_API_URL?.trim() ||
+  process.env.DEFAULT_API_URL?.trim() ||
+  "http://localhost:8000";
 
 function resolveApiUrl(): string {
-  const envUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
-  if (!envUrl || envUrl.includes("api.cardboarddex.com")) {
-    return DEFAULT_API_URL;
-  }
-  return envUrl;
+  return (
+    process.env.NEXT_PUBLIC_API_URL?.trim() ||
+    process.env.DEFAULT_API_URL?.trim() ||
+    DEFAULT_API_URL
+  );
 }
 
 const API_URL = resolveApiUrl();

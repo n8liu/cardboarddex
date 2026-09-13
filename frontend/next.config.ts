@@ -1,15 +1,41 @@
 import type { NextConfig } from "next";
+import fs from "node:fs";
+import path from "node:path";
 
-const DEFAULT_API_URL =
-  "https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws";
-const envApi = process.env.NEXT_PUBLIC_API_URL?.trim();
-const resolvedApi = (!envApi || envApi.includes("api.cardboarddex.com"))
-  ? DEFAULT_API_URL
-  : envApi;
+function loadRootEnvApi(): string | undefined {
+  if (process.env.NEXT_PUBLIC_API_URL?.trim()) {
+    return process.env.NEXT_PUBLIC_API_URL.trim();
+  }
+  if (process.env.DEFAULT_API_URL?.trim()) {
+    return process.env.DEFAULT_API_URL.trim();
+  }
+  try {
+    const rootEnv = path.resolve(process.cwd(), "../.env");
+    if (fs.existsSync(rootEnv)) {
+      const content = fs.readFileSync(rootEnv, "utf-8");
+      const match =
+        content.match(/^NEXT_PUBLIC_API_URL=(.*)$/m) ||
+        content.match(/^DEFAULT_API_URL=(.*)$/m);
+      if (match && match[1]?.trim()) {
+        const val = match[1].trim().replace(/^["']|["']$/g, "");
+        process.env.NEXT_PUBLIC_API_URL = val;
+        return val;
+      }
+    }
+  } catch {}
+  return undefined;
+}
+
+const envApi = loadRootEnvApi();
+const DEFAULT_API_URL = envApi || "http://localhost:8000";
+const resolvedApi = DEFAULT_API_URL;
 const apiOrigin = new URL(resolvedApi);
 const apiIsLocal = ["127.0.0.1", "localhost"].includes(apiOrigin.hostname);
 
 const nextConfig: NextConfig = {
+  env: {
+    NEXT_PUBLIC_API_URL: resolvedApi,
+  },
   images: {
     dangerouslyAllowLocalIP: apiIsLocal,
     dangerouslyAllowSVG: true,
@@ -26,12 +52,7 @@ const nextConfig: NextConfig = {
       },
       {
         protocol: "https",
-        hostname: "ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws",
-        pathname: "/cards/**",
-      },
-      {
-        protocol: "https",
-        hostname: "cardboarddex-card-assets-349558247779.s3.us-west-2.amazonaws.com",
+        hostname: "*.amazonaws.com",
         pathname: "/**",
       },
       {

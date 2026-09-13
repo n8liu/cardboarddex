@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     price_collection_card_limit: int = 5
     backend_cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"
     psa_value_fee: float = 24.99
-    s3_bucket_name: str = "cardboarddex-card-assets-349558247779"
+    s3_bucket_name: str | None = None
     aws_region: str = "us-west-2"
     cloudfront_domain: str | None = None
 
