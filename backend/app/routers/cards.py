@@ -4,10 +4,12 @@ import math
 import time
 from functools import lru_cache
 from datetime import UTC, datetime, timedelta
+import re
+from urllib.parse import urlparse
 from typing import Any, Literal
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from redis import Redis
 from redis.exceptions import RedisError
 from sqlalchemy import case, func, not_, or_, select
@@ -66,9 +68,43 @@ from app.services.trending_service import (
     reset_trending_analytics,
 )
 
+from app.common.rate_limiter import rate_limit
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/cards", tags=["cards"])
+
+ALLOWED_MARKETPLACE_DOMAINS = {"ebay.com", "tcgplayer.com"}
+RE_SAFE_CARD_ID = re.compile(r"^[a-zA-Z0-9_\-]+$")
+_S3_CLIENT = None
+
+
+def _get_s3_client(region_name: str) -> Any:
+    global _S3_CLIENT
+    if _S3_CLIENT is None:
+        try:
+            import boto3
+            _S3_CLIENT = boto3.client("s3", region_name=region_name)
+        except Exception as exc:
+            logger.warning("Failed initializing boto3 S3 client error=%s: %s", type(exc).__name__, exc)
+            return None
+    return _S3_CLIENT
+
+
+def verify_admin_token(x_admin_token: str | None = Header(default=None, alias="X-Admin-Token")) -> None:
+    settings = get_settings()
+    if not settings.admin_api_key:
+        logger.warning("Admin action attempted but ADMIN_API_KEY is not configured on server")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin functionality is not enabled",
+        )
+    if not x_admin_token or x_admin_token != settings.admin_api_key:
+        logger.warning("Unauthorized admin access attempt with token present=%s", bool(x_admin_token))
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized: invalid or missing admin token",
+        )
 
 
 @lru_cache
@@ -272,6 +308,7 @@ def _compute_db_market_movers(
 
 @router.get("/market-movers", response_model=MarketMoversResponse)
 def get_market_movers(
+    response: Response,
     direction: Literal["up", "down", "all"] = Query(default="all"),
     period: Literal["24h", "7d", "30d"] = Query(default="24h"),
     game: Literal["pokemon", "pokemon-japan"] = Query(default="pokemon"),
@@ -280,6 +317,7 @@ def get_market_movers(
     db: Session = Depends(get_db),
     client: TCGAPIClient = Depends(get_tcgapi_client),
 ) -> MarketMoversResponse:
+    response.headers["Cache-Control"] = "public, max-age=60, s-maxage=300, stale-while-revalidate=600"
     now = time.time()
     redis_cache_key = f"cardboarddex:movers:{game}:{period}"
 
@@ -430,6 +468,7 @@ def get_market_movers(
 
 @router.get("/search", response_model=list[CardSummary])
 def search_cards(
+    response: Response,
     q: str = Query(default="", max_length=120),
     limit: int = Query(default=24, ge=1, le=50),
     offset: int = Query(default=0, ge=0, le=100_000),
@@ -442,6 +481,7 @@ def search_cards(
     sealed_only: bool = Query(default=False),
     db: Session = Depends(get_db),
 ) -> list[CardSummary]:
+    response.headers["Cache-Control"] = "public, max-age=30, s-maxage=60, stale-while-revalidate=120"
     latest_price = (
         select(PriceObservation.price)
         .where(
@@ -571,6 +611,7 @@ def search_cards(
 @router.get("/pokemon/{name}", response_model=PokemonCardsResponse)
 def get_pokemon_cards(
     name: str,
+    response: Response,
     set_id: str | None = Query(default=None, max_length=64),
     game: Literal["all", "pokemon", "pokemon-japan"] = Query(default="all"),
     sort_by: Literal["price_desc", "price_asc", "number_asc", "number_desc", "name", "set"] = Query(
@@ -582,6 +623,7 @@ def get_pokemon_cards(
     db: Session = Depends(get_db),
 ) -> PokemonCardsResponse:
     """Retrieve all trading cards for a specific Pokémon character."""
+    response.headers["Cache-Control"] = "public, max-age=60, s-maxage=300, stale-while-revalidate=600"
     if ref != "trending":
         record_action("pokemon", name, "view")
     return query_pokemon_cards(
@@ -597,9 +639,11 @@ def get_pokemon_cards(
 
 @router.get("/sets", response_model=list[CardSetOption])
 def list_card_sets(
+    response: Response,
     game: Literal["all", "pokemon", "pokemon-japan"] = Query(default="all"),
     db: Session = Depends(get_db),
 ) -> list[CardSetOption]:
+    response.headers["Cache-Control"] = "public, max-age=300, s-maxage=86400, stale-while-revalidate=3600"
     stmt = select(Set).where(Set.id.in_(select(Card.set_id).distinct()))
     if game == "pokemon":
         stmt = stmt.where(or_(Set.series.is_(None), Set.series != "Pokemon Japan"))
@@ -647,6 +691,7 @@ def list_card_sets(
 @router.get("/sets/{set_id}/stats", response_model=SetStatsResponse)
 def get_set_stats(
     set_id: str,
+    response: Response,
     q: str = Query(default="", max_length=120),
     hide_sealed: bool = Query(default=True),
     sealed_only: bool = Query(default=False),
@@ -654,6 +699,7 @@ def get_set_stats(
     db: Session = Depends(get_db),
 ) -> SetStatsResponse:
     """Retrieve aggregate market price statistics for a card set."""
+    response.headers["Cache-Control"] = "public, max-age=60, s-maxage=300, stale-while-revalidate=600"
     return get_set_statistics(
         db,
         set_id=set_id,
@@ -666,6 +712,7 @@ def get_set_stats(
 
 @router.get("/grading-profit", response_model=GradingProfitResponse)
 def get_grading_profit(
+    response: Response,
     grading_fee: float | None = Query(default=None, ge=0.0, le=1000.0),
     sort_by: Literal[
         "psa10_profit_desc",
@@ -688,6 +735,7 @@ def get_grading_profit(
     per_page: int = Query(default=24, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> GradingProfitResponse:
+    response.headers["Cache-Control"] = "public, max-age=60, s-maxage=300, stale-while-revalidate=600"
     return calculate_grading_profit(
         db,
         grading_fee=grading_fee,
@@ -706,6 +754,7 @@ def get_grading_profit(
 
 @router.get("/sealed-signals", response_model=SealedSignalsResponse)
 def get_sealed_signals(
+    response: Response,
     signal: Literal["all", "strong_buy", "buy", "hold", "underperform"] = Query(default="all"),
     product_type: Literal[
         "all",
@@ -731,6 +780,7 @@ def get_sealed_signals(
     per_page: int = Query(default=24, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> SealedSignalsResponse:
+    response.headers["Cache-Control"] = "public, max-age=60, s-maxage=300, stale-while-revalidate=600"
     return calculate_sealed_signals(
         db,
         signal=signal,
@@ -745,39 +795,53 @@ def get_sealed_signals(
 
 @router.get("/top-pokemon-volume", response_model=PokemonVolumeResponse)
 def get_top_pokemon_volume(
+    response: Response,
     timeframe: Literal["24h", "7d", "30d", "all_time", "2026_ytd"] = Query(
         default="7d", description="Observed market value timeframe"
     ),
     sort_by: Literal["volume_desc", "sales_desc", "growth_desc", "avg_price_desc"] = Query(
         default="volume_desc", description="Rank sorting metric"
     ),
-    q: str | None = Query(default=None, description="Search Pokémon by name"),
+    q: str | None = Query(default=None, max_length=100, description="Search Pokémon by name"),
     db: Session = Depends(get_db),
 ) -> PokemonVolumeResponse:
     """Top 50 Pokémon ranked by aggregated observed market value — computed live from the database."""
+    response.headers["Cache-Control"] = "public, max-age=60, s-maxage=600, stale-while-revalidate=1200"
     return calculate_top_pokemon_volume(db, timeframe=timeframe, sort_by=sort_by, q=q)
 
 
 @router.get("/trending", response_model=TrendingDashboardResponse)
 def get_trending(
+    response: Response,
     timeframe: Literal["24h", "7d", "30d", "all_time", "2026_ytd"] = Query(
         default="7d", description="Timeframe for trending volume calculations"
     ),
-    q: str | None = Query(default=None, description="Search cards and Pokémon"),
+    q: str | None = Query(default=None, max_length=100, description="Search cards and Pokémon"),
     db: Session = Depends(get_db),
 ) -> TrendingDashboardResponse:
     """Returns the 3-column Trending Dashboard: Trending Cards, Popular Pokémon, and Volume Leaders."""
+    response.headers["Cache-Control"] = "public, max-age=30, s-maxage=60, stale-while-revalidate=120"
     return get_trending_dashboard(db, timeframe=timeframe, q=q)
 
 
-@router.post("/trending/reset")
+@router.post("/trending/reset", dependencies=[Depends(verify_admin_token)])
 def reset_trending() -> dict[str, str]:
     """Reset all click and search counters to zero and invalidate trending caches."""
     reset_trending_analytics()
     return {"status": "ok", "message": "Trending analytics reset to zero"}
 
 
-@router.post("/track-action")
+@router.post(
+    "/track-action",
+    dependencies=[
+        Depends(
+            rate_limit(
+                max_requests=get_settings().rate_limit_track_action_per_minute,
+                bucket="track_action",
+            )
+        )
+    ],
+)
 def track_user_action(payload: TrackActionRequest, db: Session = Depends(get_db)) -> dict[str, str]:
     """Track user clicks, searches, and views for real-time trending analytics."""
     record_action(entity_type=payload.entity_type, entity_id=payload.entity_id, action=payload.action)
@@ -793,17 +857,19 @@ def track_user_action(payload: TrackActionRequest, db: Session = Depends(get_db)
 
 @router.get("/live-updates", response_model=LiveUpdatesResponse)
 def get_live_updates(
+    response: Response,
     provider: Literal["all", "ebay", "tcgapi"] = Query(default="all", description="Source provider filter"),
     grade_filter: Literal["all", "graded", "psa10", "psa9", "raw"] = Query(
         default="all", description="Grading filter"
     ),
     set_id: str | None = Query(default=None, description="Filter by set ID"),
-    q: str | None = Query(default=None, description="Search card by name or number"),
+    q: str | None = Query(default=None, max_length=100, description="Search card by name or number"),
     page: int = Query(default=1, ge=1, description="Page number"),
     per_page: int = Query(default=24, ge=1, le=100, description="Items per page"),
     db: Session = Depends(get_db),
 ) -> LiveUpdatesResponse:
     """Returns chronologically ordered live price observations and comp updates."""
+    response.headers["Cache-Control"] = "public, max-age=5, s-maxage=10"
     stmt = (
         select(PriceObservation, Card, Set)
         .join(Card, PriceObservation.card_id == Card.id)
@@ -852,8 +918,27 @@ def get_live_updates(
             )
         )
 
-    # Total items count (depends on per-request filter params — must stay per-request)
-    total_items = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    # Total items count: cache default unfiltered count for 60s to prevent full table scans every 15s
+    is_unfiltered = (provider == "all" and grade_filter == "all" and not set_id and not (q and q.strip()))
+    _TOTAL_ITEMS_KEY = "cardboarddex:live_updates:total_items"
+    total_items: int | None = None
+    _count_redis = _get_redis()
+    if is_unfiltered and _count_redis is not None:
+        try:
+            cached_val = _count_redis.get(_TOTAL_ITEMS_KEY)
+            if cached_val is not None:
+                total_items = int(cached_val)
+        except (RedisError, ValueError, Exception) as exc:
+            logger.warning("Failed reading cached live-updates total_items: %s", exc)
+
+    if total_items is None:
+        total_items = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+        if is_unfiltered and _count_redis is not None:
+            try:
+                _count_redis.setex(_TOTAL_ITEMS_KEY, 60, str(total_items))
+            except (RedisError, Exception) as exc:
+                logger.warning("Failed caching live-updates total_items: %s", exc)
+
     total_pages = max(1, math.ceil(total_items / per_page))
 
     # Global KPI summary counts are unfiltered and change slowly, so we cache them in
@@ -965,9 +1050,11 @@ def get_live_updates(
 @router.get("/{card_id}", response_model=CardDetail)
 def get_card(
     card_id: str,
+    response: Response,
     ref: str | None = Query(default=None, description="Navigation referrer tag"),
     db: Session = Depends(get_db),
 ) -> CardDetail:
+    response.headers["Cache-Control"] = "public, max-age=60, s-maxage=300, stale-while-revalidate=600"
     row = db.execute(
         select(Card, Set).join(Set, Card.set_id == Set.id).where(Card.id == card_id)
     ).one_or_none()
@@ -991,25 +1078,40 @@ def get_card(
 
 
 def _extract_listing_url(item: PriceObservation) -> str | None:
+    candidate: str | None = None
     if isinstance(item.payload, dict):
         raw_item = item.payload.get("item")
         if isinstance(raw_item, dict) and raw_item.get("itemWebUrl"):
-            return str(raw_item["itemWebUrl"])
-        if item.payload.get("itemWebUrl"):
-            return str(item.payload["itemWebUrl"])
-    if item.provider == "ebay" and item.provider_card_id:
+            candidate = str(raw_item["itemWebUrl"])
+        elif item.payload.get("itemWebUrl"):
+            candidate = str(item.payload["itemWebUrl"])
+        elif item.payload.get("item_url"):
+            candidate = str(item.payload["item_url"])
+    if not candidate and item.provider == "ebay" and item.provider_card_id:
         clean_id = item.provider_card_id.replace("v1|", "").split("|")[0]
         if clean_id.isdigit():
-            return f"https://www.ebay.com/itm/{clean_id}"
+            candidate = f"https://www.ebay.com/itm/{clean_id}"
+
+    if candidate:
+        try:
+            parsed = urlparse(candidate)
+            if parsed.scheme in ("https", "http"):
+                host = (parsed.hostname or "").lower()
+                if any(host == d or host.endswith(f".{d}") for d in ALLOWED_MARKETPLACE_DOMAINS):
+                    return candidate
+        except Exception as exc:
+            logger.debug("Failed parsing listing URL candidate=%s: %s", candidate, exc)
     return None
 
 
 @router.get("/{card_id}/prices", response_model=CardPricingResponse)
 def get_card_prices(
     card_id: str,
+    response: Response,
     days: int = Query(default=365, ge=1, le=730),
     db: Session = Depends(get_db),
 ) -> CardPricingResponse:
+    response.headers["Cache-Control"] = "public, max-age=60, s-maxage=300, stale-while-revalidate=600"
     if db.get(Card, card_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Card not found")
     cutoff = datetime.now(UTC) - timedelta(days=days)
@@ -1184,6 +1286,13 @@ def get_card_image(
     db: Session = Depends(get_db),
     client: TCGAPIClient = Depends(get_tcgapi_client),
 ) -> Response:
+    # 1. Path traversal and injection protection
+    if not RE_SAFE_CARD_ID.match(card_id) or len(card_id) > 64:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid card ID format",
+        )
+
     # Check Redis-backed broken image registry before hitting the DB or CDN.
     # Each broken card ID is stored as a standalone key with a 24-hour TTL so
     # temporarily unavailable images self-heal after the TTL expires.
@@ -1217,13 +1326,17 @@ def get_card_image(
     settings = get_settings()
     if settings.s3_bucket_name:
         s3_url = f"https://{settings.s3_bucket_name}.s3.{settings.aws_region}.amazonaws.com/cards/{card_id}.png"
+        if settings.cloudfront_domain:
+            s3_url = f"https://{settings.cloudfront_domain}/cards/{card_id}.png"
         try:
-            s3_resp = httpx.get(s3_url, timeout=2.0)
+            s3_resp = httpx.head(s3_url, timeout=1.5)
             if s3_resp.status_code == 200:
                 return Response(
-                    content=s3_resp.content,
-                    media_type=s3_resp.headers.get("content-type", "image/png"),
-                    headers={"Cache-Control": "public, max-age=31536000, immutable"},
+                    status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+                    headers={
+                        "Location": s3_url,
+                        "Cache-Control": "public, max-age=31536000, immutable",
+                    },
                 )
         except Exception as exc:
             logger.debug("S3 image check skipped card_id=%s: %s", card_id, exc)
@@ -1232,15 +1345,15 @@ def get_card_image(
         content, content_type = client.get_image(card.image_url)
         if settings.s3_bucket_name:
             try:
-                import boto3
-                _s3 = boto3.client("s3", region_name=settings.aws_region)
-                _s3.put_object(
-                    Bucket=settings.s3_bucket_name,
-                    Key=f"cards/{card_id}.png",
-                    Body=content,
-                    ContentType=content_type or "image/png",
-                    CacheControl="public, max-age=31536000, immutable",
-                )
+                _s3 = _get_s3_client(settings.aws_region)
+                if _s3 is not None:
+                    _s3.put_object(
+                        Bucket=settings.s3_bucket_name,
+                        Key=f"cards/{card_id}.png",
+                        Body=content,
+                        ContentType=content_type or "image/png",
+                        CacheControl="public, max-age=31536000, immutable",
+                    )
             except Exception as s3_err:
                 logger.debug("Background S3 cache upload skipped card_id=%s: %s", card_id, s3_err)
     except httpx.HTTPStatusError as exc:

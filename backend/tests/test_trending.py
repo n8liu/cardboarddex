@@ -349,10 +349,21 @@ def test_reset_trending_endpoint(client: TestClient) -> None:
     assert _IN_MEMORY_CARD_CLICKS.get("pika-base", 0) >= 1
     assert _IN_MEMORY_POKE_CLICKS.get("Charizard", 0) >= 1
 
-    # Reset
-    res = client.post("/cards/trending/reset")
-    assert res.status_code == 200
-    assert res.json()["status"] == "ok"
+    # Reset without token should be rejected (401 or 403)
+    unauth_res = client.post("/cards/trending/reset")
+    assert unauth_res.status_code in (401, 403)
+
+    # Reset with valid X-Admin-Token
+    from app.config import get_settings
+    settings = get_settings()
+    original_key = settings.admin_api_key
+    try:
+        settings.admin_api_key = "test-secret-admin-token"
+        res = client.post("/cards/trending/reset", headers={"X-Admin-Token": "test-secret-admin-token"})
+        assert res.status_code == 200
+        assert res.json()["status"] == "ok"
+    finally:
+        settings.admin_api_key = original_key
 
     assert len(_IN_MEMORY_CARD_CLICKS) == 0
     assert len(_IN_MEMORY_POKE_CLICKS) == 0

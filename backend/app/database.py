@@ -15,8 +15,9 @@ settings = get_settings()
 engine_kwargs: dict[str, object] = {"pool_pre_ping": True}
 if not settings.database_url.startswith("sqlite"):
     engine_kwargs.update({
-        "pool_size": 10,
-        "max_overflow": 10,
+        "pool_size": 15,
+        "max_overflow": 15,
+        "pool_timeout": 5.0,
         "pool_recycle": 1800,
     })
 

@@ -161,7 +161,7 @@ function LiveUpdateRow({ item }: { item: LiveUpdateItem }) {
         </div>
 
         <div className="flex items-center gap-2">
-          {item.listing_url && (
+          {item.listing_url && (item.listing_url.startsWith("https://") || item.listing_url.startsWith("http://")) && (
             <a
               href={item.listing_url}
               target="_blank"

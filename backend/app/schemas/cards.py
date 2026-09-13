@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CardSummary(BaseModel):
@@ -272,7 +272,7 @@ class TrendingDashboardResponse(BaseModel):
 
 class TrackActionRequest(BaseModel):
     entity_type: Literal["card", "pokemon", "search"]
-    entity_id: str
+    entity_id: str = Field(..., max_length=100, pattern=r"^[a-zA-Z0-9_\-\.\:\'\s]+$")
     action: Literal["click", "search", "view"] = "click"
 
 

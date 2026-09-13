@@ -219,12 +219,17 @@ function choosePrimaryRaw(items: PriceObservation[]): PriceObservation | null {
 }
 
 function getListingUrl(item: PriceObservation): string | null {
-  if (item.listing_url) return item.listing_url;
-  if (isEbayObservation(item)) {
+  let url: string | null = null;
+  if (item.listing_url) {
+    url = item.listing_url;
+  } else if (isEbayObservation(item)) {
     const rawId = item.provider_card_id.replace(/^v1\|/, "").split("|")[0];
     if (rawId && /^\d+$/.test(rawId)) {
-      return `https://www.ebay.com/itm/${rawId}`;
+      url = `https://www.ebay.com/itm/${rawId}`;
     }
+  }
+  if (url && (url.startsWith("https://") || url.startsWith("http://"))) {
+    return url;
   }
   return null;
 }

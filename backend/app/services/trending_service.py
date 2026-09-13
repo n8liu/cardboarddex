@@ -29,20 +29,29 @@ REDIS_KEY_POKE_CLICKS = "cardboarddex:analytics:pokemon_clicks"
 REDIS_KEY_SEARCHES = "cardboarddex:analytics:searches"
 TRENDING_CACHE_TTL = 180  # 3 minutes
 
-# In-memory fallback if Redis is unavailable
+# In-memory fallback if Redis is unavailable with size bounds to prevent memory bloat
+_MAX_ANALYTICS_ENTRIES = 2000
 _IN_MEMORY_CARD_CLICKS: dict[str, int] = {}
 _IN_MEMORY_POKE_CLICKS: dict[str, int] = {}
 _IN_MEMORY_SEARCHES: dict[str, int] = {}
 _TRENDING_CACHE: dict[str, tuple[datetime, TrendingDashboardResponse]] = {}
 
 
+def _safe_increment_in_memory(store: dict[str, int], key: str) -> None:
+    """Increment count in bounded in-memory store, evicting lowest entry if full."""
+    if key not in store and len(store) >= _MAX_ANALYTICS_ENTRIES:
+        min_key = min(store, key=store.get)  # type: ignore[arg-type]
+        store.pop(min_key, None)
+    store[key] = store.get(key, 0) + 1
+
+
 def invalidate_trending_cache() -> None:
-    """Clear memory cache and delete Redis cache keys for trending dashboard."""
+    """Clear memory cache and delete Redis cache keys for trending dashboard using non-blocking SCAN."""
     _TRENDING_CACHE.clear()
     r = get_redis()
     if r is not None:
         try:
-            keys = r.keys("cardboarddex:trending:*")
+            keys = list(r.scan_iter(match="cardboarddex:trending:*", count=100))
             if keys:
                 r.delete(*keys)
         except (RedisError, Exception) as exc:
@@ -77,8 +86,8 @@ def record_action(
     entity_id: str,
     action: Literal["click", "search", "view"] = "click",
 ) -> None:
-    """Record a user click, search, or view action for trending analytics."""
-    clean_id = entity_id.strip()
+    """Record a user click, search, or view action for trending analytics with bounded memory."""
+    clean_id = entity_id.strip()[:100]
     if not clean_id:
         return
 
@@ -87,10 +96,12 @@ def record_action(
 
     if action == "search" or entity_type == "search":
         term = clean_id.lower()
-        _IN_MEMORY_SEARCHES[term] = _IN_MEMORY_SEARCHES.get(term, 0) + 1
+        _safe_increment_in_memory(_IN_MEMORY_SEARCHES, term)
         if r is not None:
             try:
                 r.zincrby(REDIS_KEY_SEARCHES, 1, term)
+                if r.zcard(REDIS_KEY_SEARCHES) > 2500:
+                    r.zremrangebyrank(REDIS_KEY_SEARCHES, 0, -2001)
             except (RedisError, Exception) as exc:
                 logger.warning(
                     "Failed to record analytics action in Redis entity_type=%s id=%s error=%s: %s",
@@ -100,10 +111,12 @@ def record_action(
                     exc,
                 )
     elif entity_type == "card":
-        _IN_MEMORY_CARD_CLICKS[clean_id] = _IN_MEMORY_CARD_CLICKS.get(clean_id, 0) + 1
+        _safe_increment_in_memory(_IN_MEMORY_CARD_CLICKS, clean_id)
         if r is not None:
             try:
                 r.zincrby(REDIS_KEY_CARD_CLICKS, 1, clean_id)
+                if r.zcard(REDIS_KEY_CARD_CLICKS) > 2500:
+                    r.zremrangebyrank(REDIS_KEY_CARD_CLICKS, 0, -2001)
             except (RedisError, Exception) as exc:
                 logger.warning(
                     "Failed to record analytics action in Redis entity_type=%s id=%s error=%s: %s",
@@ -114,10 +127,12 @@ def record_action(
                 )
     elif entity_type == "pokemon":
         norm_poke = clean_id.capitalize()
-        _IN_MEMORY_POKE_CLICKS[norm_poke] = _IN_MEMORY_POKE_CLICKS.get(norm_poke, 0) + 1
+        _safe_increment_in_memory(_IN_MEMORY_POKE_CLICKS, norm_poke)
         if r is not None:
             try:
                 r.zincrby(REDIS_KEY_POKE_CLICKS, 1, norm_poke)
+                if r.zcard(REDIS_KEY_POKE_CLICKS) > 2500:
+                    r.zremrangebyrank(REDIS_KEY_POKE_CLICKS, 0, -2001)
             except (RedisError, Exception) as exc:
                 logger.warning(
                     "Failed to record analytics action in Redis entity_type=%s id=%s error=%s: %s",
