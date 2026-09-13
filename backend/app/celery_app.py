@@ -44,6 +44,7 @@ celery_app.conf.beat_schedule = {
     "sync-catalog-daily": {
         "task": "jobs.sync_catalog.sync_catalog",
         "schedule": crontab(minute=0, hour=3),
+        "kwargs": {"game": "all"},
         # Expire well before the next nightly run; allow up to ~58 minutes of runtime.
         "options": {"expires": 3540, "time_limit": 3480},
     },

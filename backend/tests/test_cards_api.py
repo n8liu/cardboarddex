@@ -801,6 +801,28 @@ def test_get_live_updates_endpoint(client: TestClient) -> None:
 
 
 def test_pokemon_japan_support(client: TestClient) -> None:
+    db = next(app.dependency_overrides[get_db]())
+    try:
+        db.add(Set(
+            id="ja-1",
+            name="VSTAR Universe",
+            series="Pokemon Japan",
+            printed_total=172,
+            release_date=date(2022, 12, 2),
+        ))
+        db.add(Card(
+            id="ja-charizard-1",
+            name="Charizard VSTAR",
+            set_id="ja-1",
+            number="212/172",
+            printed_total=172,
+            rarity="SAR",
+            image_url="https://tcgplayer-cdn.test/ja-charizard.jpg",
+        ))
+        db.commit()
+    finally:
+        db.close()
+
     # 1. Market movers with game=pokemon-japan
     res_movers = client.get("/cards/market-movers?game=pokemon-japan")
     assert res_movers.status_code == 200
@@ -815,11 +837,20 @@ def test_pokemon_japan_support(client: TestClient) -> None:
 
     res_sets_ja = client.get("/cards/sets?game=pokemon-japan")
     assert res_sets_ja.status_code == 200
-    assert all(s.get("series") == "Pokemon Japan" for s in res_sets_ja.json())
+    ja_sets = res_sets_ja.json()
+    assert len(ja_sets) > 0
+    assert all(s.get("series") == "Pokemon Japan" for s in ja_sets)
 
     # 3. Search with game filter
     res_search_en = client.get("/cards/search?game=pokemon&limit=10")
     assert res_search_en.status_code == 200
+    assert all(c.get("set_name") != "VSTAR Universe" for c in res_search_en.json())
+
+    res_search_ja = client.get("/cards/search?game=pokemon-japan&limit=10")
+    assert res_search_ja.status_code == 200
+    ja_cards = res_search_ja.json()
+    assert len(ja_cards) > 0
+    assert all(c.get("set_name") == "VSTAR Universe" for c in ja_cards)
 
 
 def test_security_headers_present(client: TestClient) -> None:

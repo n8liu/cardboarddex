@@ -292,16 +292,16 @@ def run_catalog_sync(
 
 
 @shared_task(name="jobs.sync_catalog.sync_catalog", autoretry_for=(), max_retries=0)
-def sync_catalog() -> dict[str, int]:
+def sync_catalog(game: str = "all") -> dict[str, int]:
     with SessionLocal() as session:
-        return run_catalog_sync(session)
+        return run_catalog_sync(session, game=game)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Synchronize Pokémon catalog and prices from TCG API")
     parser.add_argument("--all", action="store_true", help="Synchronize all sets in the catalog")
     parser.add_argument("--limit", "--sets", type=int, default=None, help="Maximum number of sets to synchronize")
-    parser.add_argument("--game", choices=["pokemon", "pokemon-japan", "all"], default="pokemon", help="Game to sync (pokemon, pokemon-japan, or all)")
+    parser.add_argument("--game", choices=["pokemon", "pokemon-japan", "all"], default="all", help="Game to sync (pokemon, pokemon-japan, or all)")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")

@@ -1,21 +1,20 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { notFound } from "next/navigation";
 
 import { BackButton } from "@/components/back-button";
-import { CardDetailClientFallback } from "@/components/card-detail-client-fallback";
 import { PriceDashboard } from "@/components/price-dashboard";
 import { ShopOnEbayButton } from "@/components/shop-ebay-button";
 import { cardImageUrl, getCard, getCardPricing } from "@/lib/api";
 import { formatDexNumber } from "@/lib/pokeapi";
 import { findPokemonForCardName } from "@/lib/pokedex-data";
+import type { CardDetail, CardPricing } from "@/types/card";
 
-export const dynamic = "force-dynamic";
-export const runtime = "edge";
-
-type CardPageProps = {
-  params: Promise<{ id: string }>;
-  searchParams?: Promise<{ ref?: string }>;
+type Props = {
+  cardId: string;
+  refParam?: string;
 };
 
 function formatDate(value: string | null): string {
@@ -28,33 +27,117 @@ function formatDate(value: string | null): string {
   }).format(new Date(`${value}T00:00:00Z`));
 }
 
-export default async function CardPage({ params, searchParams }: CardPageProps) {
-  const { id } = await params;
-  const sp = searchParams ? await searchParams : undefined;
-  let card = null;
-  let pricing = null;
-  let fetchFailed = false;
+export function CardDetailClientFallback({ cardId, refParam }: Props) {
+  const [card, setCard] = useState<CardDetail | null>(null);
+  const [pricing, setPricing] = useState<CardPricing | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isNotFound, setIsNotFound] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  try {
-    const [fetchedCard, fetchedPricing] = await Promise.all([
-      getCard(id, { ref: sp?.ref }),
-      getCardPricing(id).catch((err) => {
-        console.warn(`[CardPage] Pricing fetch warning for card ${id}:`, err);
-        return null;
-      }),
-    ]);
-    card = fetchedCard;
-    pricing = fetchedPricing;
-  } catch (err) {
-    console.error(`[CardPage] Failed fetching card ${id} data on Edge SSR:`, err);
-    fetchFailed = true;
+  const fetchCardData = async () => {
+    setIsLoading(true);
+    setIsNotFound(false);
+    setErrorMsg(null);
+
+    try {
+      const [fetchedCard, fetchedPricing] = await Promise.all([
+        getCard(cardId, { ref: refParam }),
+        getCardPricing(cardId).catch((err) => {
+          console.warn("[CardFallback] Pricing fetch non-fatal error:", err);
+          return null;
+        }),
+      ]);
+
+      if (!fetchedCard) {
+        setIsNotFound(true);
+      } else {
+        setCard(fetchedCard);
+        setPricing(fetchedPricing);
+      }
+    } catch (err) {
+      console.error("[CardFallback] Failed fetching card data:", err);
+      setErrorMsg(err instanceof Error ? err.message : "Failed to load card profile");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void fetchCardData();
+  }, [cardId, refParam]);
+
+  if (isLoading) {
+    return (
+      <main className="mx-auto min-h-[70vh] max-w-7xl px-5 py-9 sm:px-8 sm:py-12">
+        <BackButton />
+        <div className="mt-8 grid gap-8 rounded-3xl border border-stone-200 bg-white p-5 shadow-[0_18px_55px_rgba(33,45,25,0.06)] md:grid-cols-[320px_1fr] md:gap-12 md:p-8 animate-pulse">
+          <div className="h-[440px] rounded-2xl bg-slate-100" />
+          <div className="space-y-4 pt-4">
+            <div className="h-6 w-32 rounded bg-slate-100" />
+            <div className="h-10 w-3/4 rounded bg-slate-100" />
+            <div className="h-4 w-20 rounded bg-slate-100" />
+            <div className="h-12 w-48 rounded-xl bg-slate-100 mt-6" />
+            <div className="h-40 rounded-xl bg-slate-100 mt-8" />
+          </div>
+        </div>
+      </main>
+    );
   }
 
-  if (fetchFailed) {
-    return <CardDetailClientFallback cardId={id} refParam={sp?.ref} />;
+  if (isNotFound) {
+    return (
+      <main className="mx-auto min-h-[70vh] max-w-2xl px-5 py-20 text-center sm:px-8">
+        <p className="text-sm font-medium text-zinc-500">404</p>
+        <h1 className="mt-3 text-2xl font-semibold text-zinc-950">Card not found</h1>
+        <p className="mt-2 text-sm text-slate-500">
+          The requested card could not be located in the catalog database.
+        </p>
+        <div className="mt-6 flex justify-center gap-3">
+          <Link
+            className="rounded-xl bg-slate-900 px-5 py-2.5 text-xs font-bold text-white shadow-xs transition hover:bg-slate-800"
+            href="/catalog"
+          >
+            Return to the catalog
+          </Link>
+          <button
+            type="button"
+            onClick={() => void fetchCardData()}
+            className="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:border-slate-300 hover:bg-slate-50"
+          >
+            Try again
+          </button>
+        </div>
+      </main>
+    );
   }
 
-  if (!card) notFound();
+  if (errorMsg && !card) {
+    return (
+      <main className="mx-auto min-h-[70vh] max-w-2xl px-5 py-20 text-center sm:px-8">
+        <p className="text-sm font-medium text-red-500">Connection Error</p>
+        <h1 className="mt-3 text-2xl font-semibold text-zinc-950">Unable to load card profile</h1>
+        <p className="mt-2 text-sm text-slate-500">{errorMsg}</p>
+        <div className="mt-6 flex justify-center gap-3">
+          <button
+            type="button"
+            onClick={() => void fetchCardData()}
+            className="rounded-xl bg-slate-900 px-5 py-2.5 text-xs font-bold text-white shadow-xs transition hover:bg-slate-800"
+          >
+            Retry
+          </button>
+          <Link
+            className="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:border-slate-300 hover:bg-slate-50"
+            href="/catalog"
+          >
+            Return to catalog
+          </Link>
+        </div>
+      </main>
+    );
+  }
+
+  if (!card) return null;
+
   const number = card.printed_total ? `${card.number}/${card.printed_total}` : card.number;
   const setCatalogUrl = `/catalog?set=${encodeURIComponent(card.set_id)}${
     card.series === "Pokemon Japan" ? "&game=pokemon-japan" : ""

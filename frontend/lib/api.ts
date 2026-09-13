@@ -26,12 +26,49 @@ import type {
 } from "@/types/card";
 import type { PokemonCardsResponse } from "@/types/pokemon";
 
+export const AWS_PRODUCTION_API_URL =
+  "https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws";
+
 export function resolveApiUrl(): string {
-  const url =
+  let url =
     process.env.NEXT_PUBLIC_API_URL?.trim() ||
     process.env.DEFAULT_API_URL?.trim() ||
-    "http://localhost:8000";
-  return url.replace(/\/+$/, "");
+    "";
+
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    const isProdHost =
+      host.endsWith(".pages.dev") ||
+      host === "cardboarddex.pages.dev" ||
+      host.endsWith("cardboarddex.com");
+    if (isProdHost) {
+      if (
+        !url ||
+        url.includes("localhost") ||
+        url.includes("127.0.0.1") ||
+        url.includes("api.cardboarddex.com")
+      ) {
+        return AWS_PRODUCTION_API_URL;
+      }
+    }
+  }
+
+  const isProdEnv =
+    process.env.NODE_ENV === "production" ||
+    Boolean(process.env.CF_PAGES);
+
+  if (isProdEnv) {
+    if (
+      !url ||
+      url.includes("localhost") ||
+      url.includes("127.0.0.1") ||
+      url.includes("api.cardboarddex.com")
+    ) {
+      return AWS_PRODUCTION_API_URL;
+    }
+  }
+
+  return (url || "http://localhost:8000").replace(/\/+$/, "");
 }
 
 export const API_URL = resolveApiUrl();

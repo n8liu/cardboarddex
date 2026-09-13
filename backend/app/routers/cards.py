@@ -220,7 +220,9 @@ def _compute_db_market_movers(
             .where(ProviderCardState.payload.is_not(None))
         )
         if game == "pokemon-japan":
-            stmt = stmt.where(Set.name.ilike("%japan%") | Card.name.ilike("%japan%"))
+            stmt = stmt.where(Set.series == "Pokemon Japan")
+        elif game == "pokemon":
+            stmt = stmt.where(or_(Set.series.is_(None), Set.series != "Pokemon Japan"))
 
         rows = db.execute(stmt.limit(500)).all()
         candidates: list[dict[str, Any]] = []
@@ -285,7 +287,9 @@ def _compute_db_market_movers(
                 .join(subq, (Card.id == subq.c.card_id) & (subq.c.rn == 1))
             )
             if game == "pokemon-japan":
-                card_stmt = card_stmt.where(Set.name.ilike("%japan%") | Card.name.ilike("%japan%"))
+                card_stmt = card_stmt.where(Set.series == "Pokemon Japan")
+            elif game == "pokemon":
+                card_stmt = card_stmt.where(or_(Set.series.is_(None), Set.series != "Pokemon Japan"))
             card_rows = db.execute(card_stmt.limit(limit)).all()
             for cr in card_rows:
                 if cr.price:

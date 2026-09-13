@@ -42,7 +42,7 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
 ### Implemented and verified
 
 - **Live AWS Production Infrastructure (RDS, S3 Asset Pipeline, ECS Fargate, & 24/7 Passive Celery Worker)**:
-  - **AWS RDS PostgreSQL 16**: Provisioned and active at `cardboarddex-db.c7gc44wq4clr.us-west-2.rds.amazonaws.com:5432` (`db.t4g.micro`, 20GB gp3, `us-west-2`). All database migrations applied cleanly via Alembic. Live database holds 234 expansion sets, 9,000 cards, and 8,732 price observations committed (with 49 sets fully cataloged on the API).
+  - **AWS RDS PostgreSQL 16**: Provisioned and active at `cardboarddex-db.c7gc44wq4clr.us-west-2.rds.amazonaws.com:5432` (`db.t4g.micro`, 20GB gp3, `us-west-2`). All database migrations applied cleanly via Alembic. Live database holds **484 expansion sets** (234 English + 250 Japanese), **54,682 cards** (32,795 English + 21,887 Japanese), and **61,687 price observations** committed. Both English and Japanese sets and cards are fully supported.
   - **Amazon S3 Card Asset Pipeline & Read-Through Cache**:
     - S3 bucket `cardboarddex-card-assets-349558247779` created in `us-west-2` with public read access.
     - Implemented read-through caching in [`backend/app/routers/cards.py`](backend/app/routers/cards.py) (`get_card_image`): checks S3 first; if absent, fetches from TCG API CDN, asynchronously uploads to S3, and streams image to client.
@@ -54,25 +54,26 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
     - Passively executes alternating 15-minute price updates (TCG API at :00, :30; eBay comps at :15, :45) and daily catalog synchronization at 02:00 UTC without manual intervention.
   - **AWS ECS Fargate Backend Service**:
     - FastAPI app running on ECS Fargate (endpoint configured via environment variable `NEXT_PUBLIC_API_URL`).
-    - Added global exception handler in [`backend/app/main.py`](backend/app/main.py) injecting CORS headers (`Access-Control-Allow-Origin: *`, `Access-Control-Allow-Methods: *`, `Access-Control-Allow-Headers: *`) into 500 internal server error responses, ensuring frontend error boundaries can inspect backend errors rather than being blocked by browser CORS restrictions.
+    - Implemented hardened global exception handler and CORS middleware in [`backend/app/main.py`](backend/app/main.py) with strict origin verification (`ALLOWED_ORIGIN_REGEX` for `cardboarddex.pages.dev`, `cardboarddex.com`, and localhost) and internal exception detail masking (`"An internal server error occurred"`), preventing CORS origin spoofing and tech stack leakage.
   - **Idempotent Catalog Ingestion**:
     - Updated [`backend/jobs/sync_catalog.py`](backend/jobs/sync_catalog.py) to check existing price observation fingerprints before inserting, resolving `UniqueViolation: uq_price_observations_fingerprint` when re-syncing sets.
     - Handles TCG API daily account quota (1,000 req/day limit) gracefully; passive worker resumes automatically when quota refreshes at midnight UTC.
 
 - **Cloudflare Pages Production Resilience & Error Isolation**:
   - Live production frontend deployed at `https://cardboarddex.pages.dev`.
-  - Added smart API endpoint resolution in [`frontend/lib/api.ts`](frontend/lib/api.ts) and [`frontend/next.config.ts`](frontend/next.config.ts) strictly reading `NEXT_PUBLIC_API_URL` and `DEFAULT_API_URL` from `.env` (`http://localhost:8000` in dev), with `frontend/.env.local` symlink. Expanded backend CORS origin regex in [`backend/app/main.py`](backend/app/main.py) to allow localhost/127.0.0.1 on all ports. No API endpoints or internal URLs are hardcoded in the codebase.
+  - Added smart API endpoint resolution in [`frontend/lib/api.ts`](frontend/lib/api.ts) and [`frontend/next.config.ts`](frontend/next.config.ts): automatically targets the live AWS ECS backend (`https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws`) on Cloudflare Pages (`*.pages.dev`, `cardboarddex.com`, and `NODE_ENV=production`) while retaining `http://localhost:8000` in local development. Added `*.on.aws` and `*.tcgplayer.com` to Next.js image `remotePatterns`.
   - Dynamic API URL resolution with trailing slash normalization inside `request<T>()`, `getCard()`, `getCardPricing()`, `trackUserAction()`, and `cardImageUrl()` prevents stale module-level hostnames in edge/serverless runtimes.
+  - Added [`frontend/components/card-detail-client-fallback.tsx`](frontend/components/card-detail-client-fallback.tsx) with resilient client-side fallback hydration: if Edge SSR encounters a network or runtime error, the card profile dynamically loads data and pricing comps directly from the browser rather than failing with a hard 404 `notFound()`.
   - Added client-side fallback fetching on mount across all dashboards ([`catalog-browser.tsx`](frontend/components/catalog-browser.tsx), [`pokemon-cards-view.tsx`](frontend/components/pokemon-cards-view.tsx), [`market-movers-dashboard.tsx`](frontend/components/market-movers-dashboard.tsx), and [`top-volume-dashboard.tsx`](frontend/components/top-volume-dashboard.tsx)) so that if an initial SSR payload is empty or errored (e.g. edge timeouts, provider quota limits), fresh data is fetched client-side immediately upon mount.
   - Instant default load for Live Comps ([`live-updates-dashboard.tsx`](frontend/components/live-updates-dashboard.tsx)): removed the first-mount skip guard so recent comps load immediately on initial page open rather than waiting 15 seconds or requiring filter interaction.
   - Implemented comprehensive error boundary in [`frontend/app/error.tsx`](frontend/app/error.tsx) with technical details toggle, direct action buttons (`Retry Action`, `Reload Application`, `Return to Pokédex`), and API health status check.
   - Added graceful SSR error catching on `/catalog`, `/cards/[id]`, `/live-updates`, and `/top-volume` routes, rendering UI shells rather than 500 error pages on transient backend outages.
-  - Disabled navigation prefetching (`prefetch={false}`) in [`frontend/components/nav-header.tsx`](frontend/components/nav-header.tsx) to prevent burst 404 / RSC fetch floods on Cloudflare Pages edge, and added `frontend/wrangler.toml` specifying `compatibility_flags = ["nodejs_compat"]`.
+  - Disabled navigation prefetching (`prefetch={false}`) in [`frontend/components/nav-header.tsx`](frontend/components/nav-header.tsx) to prevent burst 404 / RSC fetch floods on Cloudflare Pages edge, and added `wrangler.toml` specifying `compatibility_flags = ["nodejs_compat"]`.
 
 - **Automated CI/CD & Hybrid Cloud Deployment Architecture (Cloudflare + AWS)**:
   - Containerized backend using multi-stage [`backend/Dockerfile`](backend/Dockerfile) and [`backend/.dockerignore`](backend/.dockerignore) supporting FastAPI (`uvicorn`), Celery Worker, Celery Beat scheduler, and Alembic database migrations.
   - Implemented GitHub Actions CI/CD workflows with monorepo path-filtering:
-    1. [`.github/workflows/backend-ci-cd.yml`](.github/workflows/backend-ci-cd.yml): Bytecode compilation checks and 125 `pytest` unit tests (100% pass rate); on `main`, authenticates to AWS via keyless OIDC (`sts:AssumeRoleWithWebIdentity`), builds & pushes to Amazon ECR (`cardboarddex-backend`) with GHA build caching, executes Alembic migrations, and deploys zero-downtime rolling updates across ECS Fargate services (`cardboarddex-api-service`, `cardboarddex-worker-service`, `cardboarddex-beat-service`).
+    1. [`.github/workflows/backend-ci-cd.yml`](.github/workflows/backend-ci-cd.yml): Bytecode compilation checks and 136 `pytest` unit tests (100% pass rate); on `main`, authenticates to AWS via keyless OIDC (`sts:AssumeRoleWithWebIdentity`), builds & pushes to Amazon ECR (`cardboarddex-backend`) with GHA build caching, executes Alembic migrations, and deploys zero-downtime rolling updates across ECS Fargate services (`cardboarddex-api-service`, `cardboarddex-worker-service`, `cardboarddex-beat-service`).
     2. [`.github/workflows/frontend-ci-cd.yml`](.github/workflows/frontend-ci-cd.yml): Node 22 environment running TypeScript typechecking (`tsc --noEmit`) and Next.js build validation on PRs and pushes to `main`.
   - Configured Cloudflare Pages Git integration with Next.js edge adapter (`npx @cloudflare/next-on-pages` with build output `.vercel/output/static` and `nodejs_compat`).
   - Added [`frontend/.npmrc`](frontend/.npmrc) (`legacy-peer-deps=true`) and explicit `react-is` in [`frontend/package.json`](frontend/package.json) ensuring clean Webpack module resolution for `recharts`.
@@ -364,7 +365,7 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
 
 The local PostgreSQL database (`cardboarddex`) has been populated with canonical TCG API IDs using `python -m jobs.sync_catalog --all` and `python -m jobs.sync_catalog --game pokemon-japan --all`. Both English and Japanese sets are supported seamlessly: English sets default to `series="Pokemon"` / `series=None`, while Japanese sets are tagged `series="Pokemon Japan"`. Over **482 sets**, **54,480+ cards**, and **66,500+ active price observations** (including 17,400+ verified eBay comps, 1,120+ graded slabs, and per-printing TCG market prices) are active in PostgreSQL. All card records link to active TCGPlayer/TCG API CDN assets proxied through `/cards/:id/image`.
 
-In production on **AWS RDS PostgreSQL** (`cardboarddex-db.c7gc44wq4clr.us-west-2.rds.amazonaws.com:5432`), the database holds **234 expansion sets**, **9,000 cards**, and **8,732 price observations** committed across 49 fully cataloged sets. The passive Celery Beat scheduler running 24/7 on AWS ECS Fargate automatically resumes set indexing daily as the TCG API 1,000 req/day quota refreshes at 00:00 UTC. Card images are served via Amazon S3 read-through cache (`cardboarddex-card-assets-349558247779`) and proxied through `/cards/:id/image`.
+In production on **AWS RDS PostgreSQL** (`cardboarddex-db.c7gc44wq4clr.us-west-2.rds.amazonaws.com:5432`), the database holds **484 expansion sets** (234 English, 250 Japanese), **54,682 cards** (32,795 English, 21,887 Japanese), and **61,687 price observations** committed. The passive Celery Beat scheduler running 24/7 on AWS ECS Fargate automatically synchronizes both English and Japanese sets daily (`game="all"`). Card images are served via Amazon S3 read-through cache (`cardboarddex-card-assets-349558247779`) and proxied through `/cards/:id/image`.
 
 ## Canonical provider behavior
 
@@ -469,6 +470,11 @@ docker compose up -d
 | `BACKEND_CORS_ORIGINS` | Comma-separated frontend origins (allows ports 3000 and 3001). |
 | `NEXT_PUBLIC_API_URL` | Browser-visible FastAPI base URL and Next image origin (`http://localhost:8000`). |
 | `PSA_VALUE_FEE` | Editable PSA fee used by margin calculations (defaults to $24.99). |
+| `ADMIN_API_KEY` | Secret administrative token required for privileged endpoints (e.g. `POST /cards/trending/reset`) via `X-Admin-Token` header. |
+| `ENABLE_API_DOCS` | Boolean toggle to enable interactive Swagger (`/docs`), ReDoc (`/redoc`), and OpenAPI schema in production (defaults to `False`). |
+| `RATE_LIMIT_PER_MINUTE` | Global incoming request velocity limit per IP (defaults to 120 req/min). |
+| `RATE_LIMIT_TRACK_ACTION_PER_MINUTE` | Velocity limit for tracking actions per IP (defaults to 30 req/min). |
+| `RATE_LIMIT_HEAVY_PER_MINUTE` | Velocity limit for heavy compute/search endpoints (defaults to 60 req/min). |
 
 Never commit `.env` or API credentials.
 
