@@ -43,5 +43,5 @@ jobs:
 
       - name: Build Next.js application
         env:
-          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL || 'https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws' }}
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL || 'https://api.cardboarddex.app' }}
         run: npm run build

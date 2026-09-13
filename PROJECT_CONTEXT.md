@@ -62,7 +62,7 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
 
 - **Cloudflare Pages Production Resilience & Error Isolation**:
   - Live production frontend deployed at `https://cardboarddex.app` and `https://cardboarddex.pages.dev`.
-  - Added smart API endpoint resolution in [`frontend/lib/api.ts`](frontend/lib/api.ts) and [`frontend/next.config.ts`](frontend/next.config.ts): automatically targets the live AWS ECS backend (`https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws`) on Cloudflare Pages (`*.pages.dev`, `cardboarddex.app`, and `NODE_ENV=production`) while retaining `http://localhost:8000` in local development. Added `*.on.aws` and `*.tcgplayer.com` to Next.js image `remotePatterns`.
+  - Added smart API endpoint resolution in [`frontend/lib/api.ts`](frontend/lib/api.ts) and [`frontend/next.config.ts`](frontend/next.config.ts): automatically targets the live custom backend domain (`https://api.cardboarddex.app` backed by AWS ECS) on Cloudflare Pages (`*.pages.dev`, `cardboarddex.app`, and `NODE_ENV=production`) while retaining `http://localhost:8000` in local development. Added `*.cardboarddex.app`, `*.on.aws`, and `*.tcgplayer.com` to Next.js image `remotePatterns`.
   - Dynamic API URL resolution with trailing slash normalization inside `request<T>()`, `getCard()`, `getCardPricing()`, `trackUserAction()`, and `cardImageUrl()` prevents stale module-level hostnames in edge/serverless runtimes.
   - Added [`frontend/components/card-detail-client-fallback.tsx`](frontend/components/card-detail-client-fallback.tsx) with resilient client-side fallback hydration: if Edge SSR encounters a network or runtime error, the card profile dynamically loads data and pricing comps directly from the browser rather than failing with a hard 404 `notFound()`.
   - Added client-side fallback fetching on mount across all dashboards ([`catalog-browser.tsx`](frontend/components/catalog-browser.tsx), [`pokemon-cards-view.tsx`](frontend/components/pokemon-cards-view.tsx), [`market-movers-dashboard.tsx`](frontend/components/market-movers-dashboard.tsx), and [`top-volume-dashboard.tsx`](frontend/components/top-volume-dashboard.tsx)) so that if an initial SSR payload is empty or errored (e.g. edge timeouts, provider quota limits), fresh data is fetched client-side immediately upon mount.
@@ -497,7 +497,7 @@ Never commit `.env` or API credentials.
 
 - **Completed**: PostgreSQL 16 on AWS RDS, ECS Fargate backend API, S3 card asset bucket with read-through caching and batch sync worker, and 24/7 passive Celery worker with Redis broker on ECS Fargate are fully deployed and operational.
 - **Pending CloudFront Custom Domain**: Complete AWS Support verification to deploy CloudFront CDN distribution in front of S3 bucket `cardboarddex-card-assets-349558247779` for global edge caching and custom domain HTTPS.
-- **Backend API Endpoint**: Direct AWS ECS endpoint `https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws` is used directly across production frontend and CI/CD (no custom `api.cardboarddex.com` domain is used).
+- **Backend API Endpoint**: Production API subdomain `https://api.cardboarddex.app` is proxied through Cloudflare directly to the AWS ECS load balancer (`https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws`), with DDoS protection, SSL termination, and edge caching enabled.
 
 ### 4. Product-quality pass
 
