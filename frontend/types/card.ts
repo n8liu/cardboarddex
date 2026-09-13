@@ -58,6 +58,16 @@ export type CardSetOption = {
   image_url?: string | null;
 };
 
+export type SetStats = {
+  set_id: string;
+  set_name: string | null;
+  total_cards: number;
+  priced_cards: number;
+  total_price: number;
+  avg_price: number | null;
+  currency: string;
+};
+
 export type CardSort = "price_desc" | "price_asc" | "number_asc" | "number_desc" | "name" | "set";
 
 export type ProviderPricingState = {

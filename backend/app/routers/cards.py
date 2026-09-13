@@ -22,6 +22,7 @@ from app.services.catalog_service import (
     build_card_summary as _summary,
     calculate_top_pokemon_volume,
     get_pokemon_search_terms as _get_pokemon_search_terms,
+    get_set_statistics,
     query_pokemon_cards,
 )
 from app.services.grading_service import calculate_grading_profit
@@ -46,6 +47,7 @@ from app.schemas.cards import (
     ProviderPricingState,
     SealedSignalItem,
     SealedSignalsResponse,
+    SetStatsResponse,
     PokemonVolumeItem,
     PokemonVolumeResponse,
     TrendingCardItem,
@@ -88,20 +90,26 @@ def _build_mover_item(
     period: str,
     card_map: dict[str, tuple[Card, Set]],
 ) -> MarketMoverItem | None:
-    card_id = str(raw.get("card_id") or "")
+    card_id = str(raw.get("card_id") or raw.get("id") or "")
     if not card_id:
         return None
     name = str(raw.get("name") or raw.get("card_name") or "")
     set_name = str(raw.get("set_name") or "")
     printing = raw.get("printing")
-    price_val = raw.get("market_price")
+    price_val = raw.get("market_price") if raw.get("market_price") is not None else raw.get("price")
     if price_val is None:
         return None
     try:
         market_price = float(price_val)
     except (ValueError, TypeError):
         return None
-    pct_val = raw.get("price_change")
+    pct_val = (
+        raw.get("price_change")
+        if raw.get("price_change") is not None
+        else raw.get(f"price_change_{period}")
+        if raw.get(f"price_change_{period}") is not None
+        else raw.get("price_change_percentage")
+    )
     try:
         pct = float(pct_val) if pct_val is not None else 0.0
     except (ValueError, TypeError):
@@ -159,6 +167,107 @@ def _build_mover_item(
 # so that a Redis blip doesn’t immediately trigger redundant upstream API calls.
 _MOVERS_LOCAL_FALLBACK: dict[str, tuple[float, list[dict[str, Any]], list[dict[str, Any]]]] = {}
 _MOVERS_CACHE_TTL = 900  # seconds
+
+
+def _compute_db_market_movers(
+    db: Session,
+    period: str = "24h",
+    game: str = "pokemon",
+    limit: int = 50,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Compute market movers from locally cached provider card states or price observations when upstream API is unavailable."""
+    try:
+        stmt = (
+            select(ProviderCardState.card_id, ProviderCardState.payload, Card.name, Set.name.label("set_name"))
+            .join(Card, ProviderCardState.card_id == Card.id)
+            .join(Set, Card.set_id == Set.id)
+            .where(ProviderCardState.payload.is_not(None))
+        )
+        if game == "pokemon-japan":
+            stmt = stmt.where(Set.name.ilike("%japan%") | Card.name.ilike("%japan%"))
+
+        rows = db.execute(stmt.limit(500)).all()
+        candidates: list[dict[str, Any]] = []
+        for r in rows:
+            pl = r.payload if isinstance(r.payload, dict) else {}
+            price_val = pl.get("market_price") if pl.get("market_price") is not None else pl.get("price")
+            if price_val is None:
+                continue
+            try:
+                price = float(price_val)
+            except (ValueError, TypeError):
+                continue
+            if price <= 0:
+                continue
+
+            pct_val = (
+                pl.get(f"price_change_{period}")
+                if pl.get(f"price_change_{period}") is not None
+                else pl.get("price_change")
+                if pl.get("price_change") is not None
+                else pl.get("price_change_percentage")
+                if pl.get("price_change_percentage") is not None
+                else pl.get("price_change_7d")
+            )
+            try:
+                pct = float(pct_val) if pct_val is not None else 0.0
+            except (ValueError, TypeError):
+                pct = 0.0
+
+            candidates.append({
+                "card_id": r.card_id,
+                "name": r.name,
+                "set_name": r.set_name,
+                "market_price": price,
+                "price_change": pct,
+                "last_updated_at": pl.get("last_updated_at") or pl.get("updated_at"),
+            })
+
+        gainers = sorted([c for c in candidates if c["price_change"] > 0], key=lambda x: x["price_change"], reverse=True)[:limit]
+        losers = sorted([c for c in candidates if c["price_change"] < 0], key=lambda x: x["price_change"])[:limit]
+
+        if not gainers and not losers and candidates:
+            gainers = candidates[:limit]
+            losers = []
+
+        if not candidates:
+            subq = (
+                select(
+                    PriceObservation.card_id,
+                    PriceObservation.price,
+                    PriceObservation.observed_at,
+                    func.row_number().over(
+                        partition_by=PriceObservation.card_id,
+                        order_by=PriceObservation.observed_at.desc(),
+                    ).label("rn"),
+                )
+                .subquery()
+            )
+            card_stmt = (
+                select(Card.id, Card.name, Set.name.label("set_name"), subq.c.price, subq.c.observed_at)
+                .join(Set, Card.set_id == Set.id)
+                .join(subq, (Card.id == subq.c.card_id) & (subq.c.rn == 1))
+            )
+            if game == "pokemon-japan":
+                card_stmt = card_stmt.where(Set.name.ilike("%japan%") | Card.name.ilike("%japan%"))
+            card_rows = db.execute(card_stmt.limit(limit)).all()
+            for cr in card_rows:
+                if cr.price:
+                    candidates.append({
+                        "card_id": cr.id,
+                        "name": cr.name,
+                        "set_name": cr.set_name,
+                        "market_price": float(cr.price),
+                        "price_change": 0.0,
+                        "last_updated_at": cr.observed_at.isoformat() if cr.observed_at else None,
+                    })
+            gainers = candidates[:limit]
+            losers = []
+
+        return gainers, losers
+    except Exception as exc:
+        logger.error("Failed to compute database market movers error=%s: %s", type(exc).__name__, exc)
+        return [], []
 
 
 @router.get("/market-movers", response_model=MarketMoversResponse)
@@ -257,8 +366,20 @@ def get_market_movers(
             )
             _, gainers_raw, losers_raw = _MOVERS_LOCAL_FALLBACK[redis_cache_key]
 
+        if not gainers_raw and not losers_raw:
+            logger.info(
+                "Market movers empty from upstream, computing fallback from database for game=%s period=%s",
+                game,
+                period,
+            )
+            gainers_raw, losers_raw = _compute_db_market_movers(db, period=period, game=game, limit=50)
+
     # Collect card IDs to fetch local metadata in one batch query
-    all_card_ids = {str(item.get("card_id")) for item in (gainers_raw + losers_raw) if item.get("card_id")}
+    all_card_ids = {
+        str(item.get("card_id") or item.get("id"))
+        for item in (gainers_raw + losers_raw)
+        if (item.get("card_id") or item.get("id"))
+    }
     card_map: dict[str, tuple[Card, Set]] = {}
     if all_card_ids:
         rows = db.execute(
@@ -521,6 +642,26 @@ def list_card_sets(
         )
         for card_set in card_sets
     ]
+
+
+@router.get("/sets/{set_id}/stats", response_model=SetStatsResponse)
+def get_set_stats(
+    set_id: str,
+    q: str = Query(default="", max_length=120),
+    hide_sealed: bool = Query(default=True),
+    sealed_only: bool = Query(default=False),
+    game: Literal["all", "pokemon", "pokemon-japan"] = Query(default="all"),
+    db: Session = Depends(get_db),
+) -> SetStatsResponse:
+    """Retrieve aggregate market price statistics for a card set."""
+    return get_set_statistics(
+        db,
+        set_id=set_id,
+        q=q,
+        hide_sealed=hide_sealed,
+        sealed_only=sealed_only,
+        game=game,
+    )
 
 
 @router.get("/grading-profit", response_model=GradingProfitResponse)

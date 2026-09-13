@@ -4,8 +4,9 @@ import unicodedata
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
+from fastapi import HTTPException, status
 from redis.exceptions import RedisError
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import case, func, not_, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.common.formatters import escape_like
@@ -17,6 +18,7 @@ from app.schemas.cards import (
     PokemonSetCount,
     PokemonVolumeItem,
     PokemonVolumeResponse,
+    SetStatsResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -644,3 +646,141 @@ def calculate_top_pokemon_volume(
 
     _pokemon_volume_cache[cache_key] = (now, response)
     return response
+
+
+SET_STATS_CACHE_TTL = 300  # 5 minutes
+
+
+def get_set_statistics(
+    db: Session,
+    set_id: str,
+    *,
+    q: str = "",
+    hide_sealed: bool = True,
+    sealed_only: bool = False,
+    game: Literal["all", "pokemon", "pokemon-japan"] = "all",
+) -> SetStatsResponse:
+    """Calculate aggregate total price and card counts for a set (or filtered set)."""
+    clean_q = q.strip()
+    cache_key = f"{set_id}:{game}:{hide_sealed}:{sealed_only}:{clean_q}"
+    redis_key = f"cardboarddex:set_stats:{cache_key}"
+
+    r = get_redis()
+    if r is not None:
+        try:
+            cached_data = r.get(redis_key)
+            if cached_data:
+                return SetStatsResponse.model_validate_json(cached_data)
+        except (RedisError, Exception) as exc:
+            logger.warning("Redis set_stats cache read failed error=%s: %s", type(exc).__name__, exc)
+
+    # Verify set exists
+    target_set = db.get(Set, set_id)
+    if target_set is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Set '{set_id}' not found")
+    set_name = target_set.name
+
+    latest_price = (
+        select(PriceObservation.price)
+        .where(
+            PriceObservation.card_id == Card.id,
+            PriceObservation.provider == "tcgapi",
+            PriceObservation.grading_company.is_(None),
+        )
+        .order_by(
+            PriceObservation.provider_updated_at.desc().nullslast(),
+            PriceObservation.observed_at.desc(),
+            PriceObservation.id.desc(),
+        )
+        .limit(1)
+        .correlate(Card)
+        .scalar_subquery()
+    )
+
+    latest_currency = (
+        select(PriceObservation.currency)
+        .where(
+            PriceObservation.card_id == Card.id,
+            PriceObservation.provider == "tcgapi",
+            PriceObservation.grading_company.is_(None),
+        )
+        .order_by(
+            PriceObservation.provider_updated_at.desc().nullslast(),
+            PriceObservation.observed_at.desc(),
+            PriceObservation.id.desc(),
+        )
+        .limit(1)
+        .correlate(Card)
+        .scalar_subquery()
+    )
+
+    subq = (
+        select(
+            Card.id.label("card_id"),
+            latest_price.label("price"),
+            latest_currency.label("currency"),
+        )
+        .join(Set, Card.set_id == Set.id)
+        .where(
+            Card.set_id == set_id,
+            Card.name.not_ilike("%code card%"),
+            or_(Card.rarity.is_(None), Card.rarity.not_ilike("%code card%")),
+        )
+    )
+
+    if game == "pokemon":
+        subq = subq.where(or_(Set.series.is_(None), Set.series != "Pokemon Japan"))
+    elif game == "pokemon-japan":
+        subq = subq.where(Set.series == "Pokemon Japan")
+
+    if clean_q:
+        pattern = f"%{escape_like(clean_q)}%"
+        subq = subq.where(
+            or_(Card.name.ilike(pattern, escape="\\"), Set.name.ilike(pattern, escape="\\"))
+        )
+
+    is_none_or_sealed = or_(
+        Card.rarity.is_(None),
+        Card.rarity == "",
+        Card.rarity == "None",
+        Card.rarity.ilike("none"),
+    )
+    if sealed_only:
+        subq = subq.where(is_none_or_sealed)
+    elif hide_sealed:
+        subq = subq.where(not_(is_none_or_sealed))
+
+    subquery_alias = subq.subquery()
+    stats_query = select(
+        func.count(subquery_alias.c.card_id).label("total_cards"),
+        func.count(subquery_alias.c.price).label("priced_cards"),
+        func.coalesce(func.sum(subquery_alias.c.price), 0.0).label("total_price"),
+        func.coalesce(func.avg(subquery_alias.c.price), 0.0).label("avg_price"),
+        func.max(subquery_alias.c.currency).label("currency"),
+    )
+
+    row = db.execute(stats_query).one_or_none()
+    total_cards = int(row.total_cards) if row and row.total_cards is not None else 0
+    priced_cards = int(row.priced_cards) if row and row.priced_cards is not None else 0
+    total_price = round(float(row.total_price), 2) if row and row.total_price is not None else 0.0
+    avg_price = round(float(row.avg_price), 2) if row and priced_cards > 0 and row.avg_price is not None else None
+    currency = str(row.currency) if row and row.currency else "USD"
+
+    response = SetStatsResponse(
+        set_id=set_id,
+        set_name=set_name,
+        total_cards=total_cards,
+        priced_cards=priced_cards,
+        total_price=total_price,
+        avg_price=avg_price,
+        currency=currency,
+    )
+
+    if r is not None:
+        try:
+            r.setex(redis_key, SET_STATS_CACHE_TTL, response.model_dump_json())
+        except (RedisError, Exception) as exc:
+            logger.warning("Redis set_stats cache write failed error=%s: %s", type(exc).__name__, exc)
+
+    return response
+

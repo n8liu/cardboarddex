@@ -279,6 +279,13 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
     []
   );
 
+  // Fetch fresh items immediately on client mount if initial SSR items are empty
+  useEffect(() => {
+    if (!initialData.items || initialData.items.length === 0) {
+      void fetchFresh(initialParams.provider, initialParams.gradeFilter, initialParams.q);
+    }
+  }, [fetchFresh, initialData.items, initialParams.gradeFilter, initialParams.provider, initialParams.q]);
+
   const hasMore = page < data.total_pages;
 
   const loadMore = useCallback(async () => {

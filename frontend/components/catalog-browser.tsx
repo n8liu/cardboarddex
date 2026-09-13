@@ -6,14 +6,24 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CardGrid } from "@/components/card-grid";
 import { SearchForm } from "@/components/search-form";
 import { BackToTop } from "@/components/ui/back-to-top";
-import { CARD_PAGE_SIZE, getCardSets, searchCards } from "@/lib/api";
-import type { CardSetOption, CardSort, CardSummary, GameLanguage } from "@/types/card";
+import { CARD_PAGE_SIZE, getCardSets, getSetStats, searchCards } from "@/lib/api";
+import type { CardSetOption, CardSort, CardSummary, GameLanguage, SetStats } from "@/types/card";
+
+function formatMoney(value: number | null | undefined, currency: string = "USD"): string {
+  if (value === null || value === undefined) return "Price pending";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: currency || "USD",
+    maximumFractionDigits: 2,
+  }).format(value);
+}
 
 type CatalogBrowserProps = {
   initialCards: CardSummary[];
   initialHideSealed?: boolean;
   initialQuery: string;
   initialSetId: string;
+  initialSetStats?: SetStats | null;
   initialSortBy: CardSort;
   sets: CardSetOption[];
 };
@@ -23,6 +33,7 @@ export function CatalogBrowser({
   initialHideSealed = true,
   initialQuery,
   initialSetId,
+  initialSetStats = null,
   initialSortBy = "price_desc",
   sets,
 }: CatalogBrowserProps) {
@@ -49,6 +60,8 @@ export function CatalogBrowser({
   const [game, setGame] = useState<GameLanguage>("all");
   const [cards, setCards] = useState(initialCards);
   const [setsList, setSetsList] = useState<CardSetOption[]>(sets);
+  const [setStats, setSetStats] = useState<SetStats | null>(initialSetStats);
+  const [isLoadingStats, setIsLoadingStats] = useState(false);
   const [hasMore, setHasMore] = useState(initialCards.length === CARD_PAGE_SIZE);
   const [isSearching, setIsSearching] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -71,27 +84,42 @@ export function CatalogBrowser({
       if (q !== initialQuery || s !== initialSetId || sort !== initialSortBy || hs !== initialHideSealed) {
         void (async () => {
           setIsSearching(true);
+          if (s) setIsLoadingStats(true);
           try {
-            const nextCards = await searchCards(q.trim(), { setId: s, sortBy: sort, hideSealed: hs, game: g });
+            const [nextCards, nextStats] = await Promise.all([
+              searchCards(q.trim(), { setId: s, sortBy: sort, hideSealed: hs, game: g }),
+              s ? getSetStats(s, { q: q.trim(), hideSealed: hs, game: g }).catch(() => null) : Promise.resolve(null),
+            ]);
             setCards(nextCards);
             setHasMore(nextCards.length === CARD_PAGE_SIZE);
+            if (s) setSetStats(nextStats);
+            else setSetStats(null);
           } catch (err) {
             setError(err instanceof Error ? err.message : "Could not load cards.");
           } finally {
             setIsSearching(false);
+            setIsLoadingStats(false);
           }
         })();
       } else if (initialCards.length === 0) {
         void (async () => {
           setIsSearching(true);
+          if (s && !initialSetStats) setIsLoadingStats(true);
           try {
-            const nextCards = await searchCards(q.trim(), { setId: s, sortBy: sort, hideSealed: hs, game: g });
+            const [nextCards, nextStats] = await Promise.all([
+              searchCards(q.trim(), { setId: s, sortBy: sort, hideSealed: hs, game: g }),
+              s && !initialSetStats
+                ? getSetStats(s, { q: q.trim(), hideSealed: hs, game: g }).catch(() => null)
+                : Promise.resolve(initialSetStats),
+            ]);
             setCards(nextCards);
             setHasMore(nextCards.length === CARD_PAGE_SIZE);
+            if (s) setSetStats(nextStats);
           } catch (err) {
             console.error("Failed fetching initial catalog cards on client:", err);
           } finally {
             setIsSearching(false);
+            setIsLoadingStats(false);
           }
         })();
       }
@@ -119,12 +147,22 @@ export function CatalogBrowser({
     const version = ++requestVersion.current;
     const timer = window.setTimeout(async () => {
       setIsSearching(true);
+      if (setId) setIsLoadingStats(true);
       setError(null);
       try {
-        const nextCards = await searchCards(query.trim(), { setId, sortBy, hideSealed, game });
+        const [nextCards, nextStats] = await Promise.all([
+          searchCards(query.trim(), { setId, sortBy, hideSealed, game }),
+          setId
+            ? getSetStats(setId, { q: query.trim(), hideSealed, game }).catch((err) => {
+                console.error("Failed fetching set stats:", err);
+                return null;
+              })
+            : Promise.resolve(null),
+        ]);
         if (requestVersion.current !== version) return;
         setCards(nextCards);
         setHasMore(nextCards.length === CARD_PAGE_SIZE);
+        setSetStats(nextStats);
 
         const url = new URL(window.location.href);
         query.trim() ? url.searchParams.set("q", query.trim()) : url.searchParams.delete("q");
@@ -139,7 +177,10 @@ export function CatalogBrowser({
         setCards([]);
         setHasMore(false);
       } finally {
-        if (requestVersion.current === version) setIsSearching(false);
+        if (requestVersion.current === version) {
+          setIsSearching(false);
+          setIsLoadingStats(false);
+        }
       }
     }, 250);
 
@@ -188,6 +229,7 @@ export function CatalogBrowser({
   const clearFilters = () => {
     setQuery("");
     setSetId("");
+    setSetStats(null);
     setSortBy("price_desc");
     setHideSealed(true);
     setGame("all");
@@ -343,14 +385,55 @@ export function CatalogBrowser({
         </aside>
 
         <div className="min-w-0">
-          <div className="mb-5 flex items-end justify-between gap-4">
+          <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <h2 className="text-lg font-bold tracking-tight text-slate-950">{resultsTitle}</h2>
               <p aria-live="polite" className="mt-1 text-sm text-slate-500">
                 {isSearching ? "Updating cards…" : `${cards.length} card${cards.length === 1 ? "" : "s"} loaded`}
               </p>
             </div>
-            <span className="hidden text-xs font-medium text-slate-400 sm:inline">Exact catalog matches</span>
+
+            {setId ? (
+              <div className="flex flex-col items-start sm:items-end">
+                <div
+                  className={`group relative flex items-center gap-2.5 rounded-xl border border-emerald-600/25 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-teal-500/10 px-3.5 py-2 font-mono shadow-2xs backdrop-blur-xs transition-all hover:border-emerald-500/40 hover:shadow-sm ${
+                    isLoadingStats ? "animate-pulse opacity-80" : ""
+                  }`}
+                  title={
+                    setStats
+                      ? `${setStats.priced_cards} of ${setStats.total_cards} cards verified with active market prices. Avg: ${formatMoney(setStats.avg_price ?? 0, setStats.currency)}/card`
+                      : "Aggregating set total prices…"
+                  }
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span className="relative flex h-2 w-2">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                      <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                    </span>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">
+                      {query.trim() ? "Filtered Total" : "Set Total"}
+                    </span>
+                  </div>
+
+                  <div className="h-4 w-px bg-emerald-600/20" />
+
+                  <span className="text-base font-black tracking-tight text-emerald-950 sm:text-lg">
+                    {formatMoney(
+                      setStats ? setStats.total_price : cards.reduce((sum, c) => sum + (c.market_price ?? 0), 0),
+                      setStats?.currency ?? "USD"
+                    )}
+                  </span>
+
+                  <span className="rounded-md bg-emerald-600/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">
+                    {setStats
+                      ? `${setStats.priced_cards}/${setStats.total_cards} priced`
+                      : `${cards.filter((c) => c.market_price !== null).length} priced`}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <span className="hidden text-xs font-medium text-slate-400 sm:inline">Exact catalog matches</span>
+            )}
           </div>
 
           {error ? (

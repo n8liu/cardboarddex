@@ -61,6 +61,16 @@ class CardSetOption(BaseModel):
     image_url: str | None = None
 
 
+class SetStatsResponse(BaseModel):
+    set_id: str
+    set_name: str | None = None
+    total_cards: int
+    priced_cards: int
+    total_price: float
+    avg_price: float | None = None
+    currency: str = "USD"
+
+
 class PokemonSetCount(BaseModel):
     id: str
     name: str

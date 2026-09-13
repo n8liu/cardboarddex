@@ -1,8 +1,8 @@
 import { Suspense } from "react";
 
 import { CatalogBrowser } from "@/components/catalog-browser";
-import { getCardSets, searchCards } from "@/lib/api";
-import type { CardSort, GameLanguage } from "@/types/card";
+import { getCardSets, getSetStats, searchCards } from "@/lib/api";
+import type { CardSort, GameLanguage, SetStats } from "@/types/card";
 
 export const dynamic = "force-dynamic";
 export const runtime = "edge";
@@ -31,14 +31,22 @@ export default async function CatalogPage({ searchParams }: CatalogProps) {
 
   let cards: Awaited<ReturnType<typeof searchCards>> = [];
   let sets: Awaited<ReturnType<typeof getCardSets>> = [];
+  let initialSetStats: SetStats | null = null;
 
   try {
-    const [fetchedCards, fetchedSets] = await Promise.all([
+    const [fetchedCards, fetchedSets, fetchedSetStats] = await Promise.all([
       searchCards(query, { setId, sortBy, hideSealed, game }),
       getCardSets(),
+      setId
+        ? getSetStats(setId, { q: query, hideSealed, game }).catch((err) => {
+            console.error("Failed fetching initial set stats:", err);
+            return null;
+          })
+        : Promise.resolve(null),
     ]);
     cards = fetchedCards;
     sets = fetchedSets;
+    initialSetStats = fetchedSetStats;
   } catch (err) {
     console.error("Failed fetching catalog cards or sets:", err);
   }
@@ -51,6 +59,7 @@ export default async function CatalogPage({ searchParams }: CatalogProps) {
           initialHideSealed={hideSealed}
           initialQuery={query}
           initialSetId={setId}
+          initialSetStats={initialSetStats}
           initialSortBy={sortBy}
           sets={sets}
         />

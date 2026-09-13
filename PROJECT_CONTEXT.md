@@ -264,6 +264,7 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
   - Code cards are automatically excluded from catalog search and browsing.
   - Unrated / sealed items hidden by default (`hide_sealed=true`), with an interactive sidebar toggle.
   - Catalog sorting supports `price_desc` (default), `price_asc`, `number_asc`, `number_desc`, `name`, and `set`.
+  - **Filtered Set Total Price Tag**: Added real-time set market value aggregation (backend endpoint `GET /cards/sets/:id/stats` with Redis 300s cache) and interactive terminal telemetry tag in the top right of the cards view on `/catalog`. Displays complete set dollar value (or filtered subquery total), active priced card ratio (e.g. `165/165 priced`), and average card price tooltip, with SSR pre-fetching in `app/catalog/page.tsx` for instant zero-layout-shift rendering.
 
 - **Automated Price Cycling & Alternating 15-Minute Engine**:
   - Unified price cycling engine implemented in [`backend/jobs/cycle_prices.py`](backend/jobs/cycle_prices.py).

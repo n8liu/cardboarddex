@@ -215,7 +215,12 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
   useEffect(() => {
     if (!isInitialized.current) {
       isInitialized.current = true;
-      if (initialParams.period !== (initialData.period || "24h") || initialParams.game !== "pokemon") {
+      if (
+        initialParams.period !== (initialData.period || "24h") ||
+        initialParams.game !== "pokemon" ||
+        ((!initialData.gainers || initialData.gainers.length === 0) &&
+          (!initialData.losers || initialData.losers.length === 0))
+      ) {
         void fetchFresh(initialParams.period, initialParams.game);
       }
       return;

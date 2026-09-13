@@ -1,6 +1,7 @@
 from collections.abc import Generator
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -205,6 +206,32 @@ def test_search_cards_filters_empty_sets_and_code_cards(client: TestClient) -> N
     assert len(all_search.json()) == 0
 
 
+def test_get_set_stats(client: TestClient) -> None:
+    # 1. Base Set stats (Pikachu $12.34 + Venusaur $150.00 = $162.34, 2 cards when hide_sealed=true)
+    res = client.get("/cards/sets/1/stats", params={"hide_sealed": "true"})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["set_id"] == "1"
+    assert data["set_name"] == "Base Set"
+    assert data["total_cards"] == 2
+    assert data["priced_cards"] == 2
+    assert data["total_price"] == 162.34
+    assert data["avg_price"] == 81.17
+    assert data["currency"] == "USD"
+
+    # 2. Filtered with search query q="pika"
+    res_q = client.get("/cards/sets/1/stats", params={"q": "pika", "hide_sealed": "true"})
+    assert res_q.status_code == 200
+    data_q = res_q.json()
+    assert data_q["total_cards"] == 1
+    assert data_q["priced_cards"] == 1
+    assert data_q["total_price"] == 12.34
+
+    # 3. Non-existent set returns 404
+    res_404 = client.get("/cards/sets/missing-set/stats")
+    assert res_404.status_code == 404
+
+
 def test_search_cards_sort_options(client: TestClient) -> None:
     # Default is price_desc (Venusaur $150 > Pikachu $12.34 > Eevee None)
     default_sort = client.get("/cards/search", params={"hide_sealed": "true"})
@@ -364,6 +391,72 @@ def test_get_market_movers_endpoint() -> None:
             assert data["losers"][0]["card_id"] == "venusaur-1"
             assert data["losers"][0]["direction"] == "down"
             assert data["losers"][0]["price_change_percentage"] == -50.0
+    finally:
+        _MOVERS_LOCAL_FALLBACK.clear()
+        app.dependency_overrides.clear()
+
+
+def test_get_market_movers_database_fallback() -> None:
+    from app.routers.cards import _MOVERS_LOCAL_FALLBACK, _get_redis
+    _MOVERS_LOCAL_FALLBACK.clear()
+    _r = _get_redis()
+    if _r is not None:
+        try:
+            _r.delete("cardboarddex:movers:pokemon:24h")
+        except Exception:
+            pass
+
+    class EmptyMoverClient:
+        def get_top_movers(self, game: str = "pokemon", direction: str = "up", period: str = "24h", limit: int = 50) -> dict[str, Any]:
+            return {"data": []}
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(Set(id="1", name="Base Set", series="Original", printed_total=102, release_date=date(1999, 1, 9)))
+        session.add(Card(id="charizard-1", name="Charizard", set_id="1", number="4", printed_total=102, rarity="Rare Holo", image_url="https://tcgplayer-cdn.test/charizard.jpg"))
+        session.add(Card(id="blastoise-1", name="Blastoise", set_id="1", number="2", printed_total=102, rarity="Rare Holo", image_url="https://tcgplayer-cdn.test/blastoise.jpg"))
+        session.add(
+            ProviderCardState(
+                card_id="charizard-1",
+                provider="tcgapi",
+                match_status="matched",
+                payload={"market_price": 350.0, "price_change_24h": 15.5},
+            )
+        )
+        session.add(
+            ProviderCardState(
+                card_id="blastoise-1",
+                provider="tcgapi",
+                match_status="matched",
+                payload={"market_price": 120.0, "price_change_24h": -8.0},
+            )
+        )
+        session.commit()
+
+    def override_db() -> Generator[Session, None, None]:
+        with Session(engine) as session:
+            yield session
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_tcgapi_client] = lambda: EmptyMoverClient()
+    try:
+        with TestClient(app) as test_client:
+            res = test_client.get("/cards/market-movers?direction=all&period=24h&page=1&per_page=12")
+            assert res.status_code == 200
+            data = res.json()
+            assert data["total_gainers"] == 1
+            assert data["total_losers"] == 1
+            assert data["gainers"][0]["card_id"] == "charizard-1"
+            assert data["gainers"][0]["market_price"] == 350.0
+            assert data["gainers"][0]["price_change_percentage"] == 15.5
+            assert data["losers"][0]["card_id"] == "blastoise-1"
+            assert data["losers"][0]["market_price"] == 120.0
+            assert data["losers"][0]["price_change_percentage"] == -8.0
     finally:
         _MOVERS_LOCAL_FALLBACK.clear()
         app.dependency_overrides.clear()

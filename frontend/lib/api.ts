@@ -22,23 +22,19 @@ import type {
   LiveUpdateProviderFilter,
   LiveUpdateGradeFilter,
   GameLanguage,
+  SetStats,
 } from "@/types/card";
 import type { PokemonCardsResponse } from "@/types/pokemon";
 
-const DEFAULT_API_URL =
-  process.env.NEXT_PUBLIC_API_URL?.trim() ||
-  process.env.DEFAULT_API_URL?.trim() ||
-  "http://localhost:8000";
-
-function resolveApiUrl(): string {
-  return (
+export function resolveApiUrl(): string {
+  const url =
     process.env.NEXT_PUBLIC_API_URL?.trim() ||
     process.env.DEFAULT_API_URL?.trim() ||
-    DEFAULT_API_URL
-  );
+    "http://localhost:8000";
+  return url.replace(/\/+$/, "");
 }
 
-const API_URL = resolveApiUrl();
+export const API_URL = resolveApiUrl();
 export const CARD_PAGE_SIZE = 24;
 
 export function buildQueryString(
@@ -55,7 +51,9 @@ export function buildQueryString(
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, {
+  const baseUrl = resolveApiUrl();
+  const fullUrl = `${baseUrl}${path.startsWith("/") ? "" : "/"}${path}`;
+  const response = await fetch(fullUrl, {
     ...options,
   });
   if (!response.ok) {
@@ -86,6 +84,26 @@ export function searchCards(query: string, options: SearchCardOptions = {}): Pro
     game: options.game && options.game !== "all" ? options.game : undefined,
   });
   return request<CardSummary[]>(`/cards/search${qs}`, { cache: "no-store" });
+}
+
+export function getSetStats(
+  setId: string,
+  options: {
+    q?: string;
+    hideSealed?: boolean;
+    sealedOnly?: boolean;
+    game?: GameLanguage;
+  } = {}
+): Promise<SetStats> {
+  const qs = buildQueryString({
+    q: options.q,
+    hide_sealed: options.hideSealed === false ? "false" : "true",
+    sealed_only: options.sealedOnly ? "true" : undefined,
+    game: options.game && options.game !== "all" ? options.game : undefined,
+  });
+  return request<SetStats>(`/cards/sets/${encodeURIComponent(setId)}/stats${qs}`, {
+    cache: "no-store",
+  });
 }
 
 export function getPokemonCards(
@@ -146,8 +164,9 @@ export async function getCard(
   cardId: string,
   options?: { ref?: string }
 ): Promise<CardDetail | null> {
+  const baseUrl = resolveApiUrl();
   const qs = options?.ref ? `?ref=${encodeURIComponent(options.ref)}` : "";
-  const response = await fetch(`${API_URL}/cards/${encodeURIComponent(cardId)}${qs}`, {
+  const response = await fetch(`${baseUrl}/cards/${encodeURIComponent(cardId)}${qs}`, {
     cache: "no-store",
   });
   if (response.status === 404) return null;
@@ -158,8 +177,9 @@ export async function getCard(
 }
 
 export async function getCardPricing(cardId: string): Promise<CardPricing | null> {
+  const baseUrl = resolveApiUrl();
   const response = await fetch(
-    `${API_URL}/cards/${encodeURIComponent(cardId)}/prices?days=365`,
+    `${baseUrl}/cards/${encodeURIComponent(cardId)}/prices?days=365`,
     { cache: "no-store" },
   );
   if (response.status === 404) return null;
@@ -258,7 +278,8 @@ export function trackUserAction(data: TrackActionPayload): void {
     action: data.action ?? "click",
   };
   try {
-    fetch(`${API_URL}/cards/track-action`, {
+    const baseUrl = resolveApiUrl();
+    fetch(`${baseUrl}/cards/track-action`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -289,5 +310,10 @@ export function getLiveUpdates(options: {
 }
 
 export function cardImageUrl(path: string): string {
-  return `${API_URL}${path}`;
+  if (!path) return "";
+  if (path.startsWith("http://") || path.startsWith("https://")) {
+    return path;
+  }
+  const baseUrl = resolveApiUrl();
+  return `${baseUrl}${path.startsWith("/") ? "" : "/"}${path}`;
 }

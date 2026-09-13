@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { cardImageUrl, getTrendingDashboard } from "@/lib/api";
 import { SearchInput } from "@/components/ui/search-input";
@@ -308,6 +308,20 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
   const [viewMode, setViewMode] = useState<ViewMode>("overview");
   const [searchQuery, setSearchQuery] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const isInitialized = useRef(false);
+
+  useEffect(() => {
+    if (!isInitialized.current) {
+      isInitialized.current = true;
+      if (!initialData.trending_cards || initialData.trending_cards.length === 0) {
+        setIsLoading(true);
+        void getTrendingDashboard({ timeframe })
+          .then(setData)
+          .catch((err) => console.error("Failed fetching trending data on mount:", err))
+          .finally(() => setIsLoading(false));
+      }
+    }
+  }, [initialData.trending_cards, timeframe]);
 
   // Timeframe switch
   const handleTimeframeChange = async (newTf: VolumeTimeframe) => {
