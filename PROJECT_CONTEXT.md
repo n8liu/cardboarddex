@@ -496,7 +496,7 @@ Never commit `.env` or API credentials.
 
 - **Completed**: PostgreSQL 16 on AWS RDS, ECS Fargate backend API, S3 card asset bucket with read-through caching and batch sync worker, and 24/7 passive Celery worker with Redis broker on ECS Fargate are fully deployed and operational.
 - **Pending CloudFront Custom Domain**: Complete AWS Support verification to deploy CloudFront CDN distribution in front of S3 bucket `cardboarddex-card-assets-349558247779` for global edge caching and custom domain HTTPS.
-- **Custom API Domain**: Add DNS CNAME record in Cloudflare DNS for `api.cardboarddex.com` pointing to the AWS ECS load balancer / service endpoint.
+- **Backend API Endpoint**: Direct AWS ECS endpoint `https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws` is used directly across production frontend and CI/CD (no custom `api.cardboarddex.com` domain is used).
 
 ### 4. Product-quality pass
 

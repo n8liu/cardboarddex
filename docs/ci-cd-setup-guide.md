@@ -147,7 +147,7 @@ Using OIDC avoids storing long-lived AWS keys in GitHub.
 2. Navigate to **Workers & Pages** > **Create application** > **Pages**.
 3. Create a project named `cardboarddex-frontend`.
 4. Under **Settings** > **Environment Variables**, set:
-   - `NEXT_PUBLIC_API_URL`: `https://api.cardboarddex.com`
+   - `NEXT_PUBLIC_API_URL`: `https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws`
    - `NODE_VERSION`: `20`
 
 ### 2.2 Create Cloudflare API Token for GitHub Actions
@@ -184,7 +184,7 @@ In your GitHub repository (`n8liu/cardboarddex`), navigate to **Settings** > **S
 | `ECS_MIGRATION_TASK_FAMILY` | `cardboarddex-migration` | Task definition name for Alembic migrations |
 | `ECS_SUBNET_IDS` | `subnet-abc,subnet-xyz` | Comma-separated private subnet IDs for migration task |
 | `ECS_SECURITY_GROUP_IDS` | `sg-0123456` | Security group allowing access to RDS |
-| `NEXT_PUBLIC_API_URL` | `https://api.cardboarddex.com` | Public URL for backend API |
+| `NEXT_PUBLIC_API_URL` | `https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws` | Public URL for backend API |
 | `CLOUDFLARE_PROJECT_NAME` | `cardboarddex-frontend` | Cloudflare Pages project name |
 
 ---

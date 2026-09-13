@@ -29,6 +29,17 @@ import type { PokemonCardsResponse } from "@/types/pokemon";
 export const AWS_PRODUCTION_API_URL =
   "https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws";
 
+function isInvalidOrLocalhost(url: string | undefined): boolean {
+  if (!url) return true;
+  const lower = url.toLowerCase();
+  return (
+    lower.includes("localhost") ||
+    lower.includes("127.0.0.1") ||
+    lower.includes("cardboarddex.com") ||
+    lower.includes("cardboard.com")
+  );
+}
+
 export function resolveApiUrl(): string {
   let url =
     process.env.NEXT_PUBLIC_API_URL?.trim() ||
@@ -39,15 +50,9 @@ export function resolveApiUrl(): string {
     const host = window.location.hostname;
     const isProdHost =
       host.endsWith(".pages.dev") ||
-      host === "cardboarddex.pages.dev" ||
-      host.endsWith("cardboarddex.com");
+      host === "cardboarddex.pages.dev";
     if (isProdHost) {
-      if (
-        !url ||
-        url.includes("localhost") ||
-        url.includes("127.0.0.1") ||
-        url.includes("api.cardboarddex.com")
-      ) {
+      if (isInvalidOrLocalhost(url)) {
         return AWS_PRODUCTION_API_URL;
       }
     }
@@ -58,14 +63,13 @@ export function resolveApiUrl(): string {
     Boolean(process.env.CF_PAGES);
 
   if (isProdEnv) {
-    if (
-      !url ||
-      url.includes("localhost") ||
-      url.includes("127.0.0.1") ||
-      url.includes("api.cardboarddex.com")
-    ) {
+    if (isInvalidOrLocalhost(url)) {
       return AWS_PRODUCTION_API_URL;
     }
+  }
+
+  if (url.includes("cardboarddex.com") || url.includes("cardboard.com")) {
+    return AWS_PRODUCTION_API_URL;
   }
 
   return (url || "http://localhost:8000").replace(/\/+$/, "");
