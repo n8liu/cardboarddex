@@ -38,6 +38,7 @@ function isInvalidOrLocalhost(url: string | undefined): boolean {
   return (
     lower.includes("cardboarddex.com") ||
     lower.includes("cardboard.com") ||
+    lower.includes("cardboarddex.app") ||
     (isProd && (lower.includes("localhost") || lower.includes("127.0.0.1")))
   );
 }

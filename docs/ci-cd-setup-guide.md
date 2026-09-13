@@ -135,7 +135,7 @@ Using OIDC avoids storing long-lived AWS keys in GitHub.
    - `TCGAPI_API_KEY`: Secrets Manager ARN
    - `EBAY_CLIENT_ID`: Secrets Manager ARN
    - `EBAY_CLIENT_SECRET`: Secrets Manager ARN
-   - `BACKEND_CORS_ORIGINS`: `https://cardboarddex.com,https://cardboarddex-frontend.pages.dev`
+   - `BACKEND_CORS_ORIGINS`: `https://cardboarddex.app,https://www.cardboarddex.app,https://cardboarddex.pages.dev`
 
 ---
 

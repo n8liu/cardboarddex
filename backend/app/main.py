@@ -17,7 +17,7 @@ logging.basicConfig(
 settings = get_settings()
 
 ALLOWED_ORIGIN_REGEX = re.compile(
-    r"^(https:\/\/([a-zA-Z0-9\-_]+\.)?cardboarddex\.pages\.dev|https:\/\/(www\.)?cardboarddex\.com|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?)$"
+    r"^(https:\/\/([a-zA-Z0-9\-_]+\.)?cardboarddex\.pages\.dev|https:\/\/(www\.)?cardboarddex\.(app|com)|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?)$"
 )
 
 

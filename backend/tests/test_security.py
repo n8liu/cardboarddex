@@ -41,6 +41,8 @@ def test_cors_origin_validation() -> None:
     """Verify that only legitimate domains are permitted, blocking substring tricks."""
     # Legitimate origins
     assert is_allowed_origin("https://cardboarddex.pages.dev") is True
+    assert is_allowed_origin("https://cardboarddex.app") is True
+    assert is_allowed_origin("https://www.cardboarddex.app") is True
     assert is_allowed_origin("https://cardboarddex.com") is True
     assert is_allowed_origin("https://www.cardboarddex.com") is True
     assert is_allowed_origin("http://localhost:3000") is True
@@ -51,6 +53,8 @@ def test_cors_origin_validation() -> None:
     assert is_allowed_origin("https://malicious.com/?pages.dev") is False
     assert is_allowed_origin("https://evilcardboarddex.com") is False
     assert is_allowed_origin("https://cardboarddex.com.attacker.com") is False
+    assert is_allowed_origin("https://evilcardboarddex.app") is False
+    assert is_allowed_origin("https://cardboarddex.app.attacker.com") is False
     assert is_allowed_origin("https://random-app.pages.dev") is False
     assert is_allowed_origin(None) is False
     assert is_allowed_origin("") is False

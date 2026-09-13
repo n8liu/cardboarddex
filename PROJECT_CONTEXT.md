@@ -25,6 +25,7 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
 3. All eBay title interpretation must live in `backend/parsers/title_matcher.py`, with comprehensive edge-case tests.
 4. Before implementing a feature, publish a Markdown plan listing every file intended to change.
 5. Implement one tested, runnable phase at a time.
+6. Do not commit and push every code fix, ask user first.
 
 ## Technology
 
@@ -54,14 +55,14 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
     - Passively executes alternating 15-minute price updates (TCG API at :00, :30; eBay comps at :15, :45) and daily catalog synchronization at 02:00 UTC without manual intervention.
   - **AWS ECS Fargate Backend Service**:
     - FastAPI app running on ECS Fargate (endpoint configured via environment variable `NEXT_PUBLIC_API_URL`).
-    - Implemented hardened global exception handler and CORS middleware in [`backend/app/main.py`](backend/app/main.py) with strict origin verification (`ALLOWED_ORIGIN_REGEX` for `cardboarddex.pages.dev`, `cardboarddex.com`, and localhost) and internal exception detail masking (`"An internal server error occurred"`), preventing CORS origin spoofing and tech stack leakage.
+    - Implemented hardened global exception handler and CORS middleware in [`backend/app/main.py`](backend/app/main.py) with strict origin verification (`ALLOWED_ORIGIN_REGEX` for `cardboarddex.pages.dev`, `cardboarddex.app`, and localhost) and internal exception detail masking (`"An internal server error occurred"`), preventing CORS origin spoofing and tech stack leakage.
   - **Idempotent Catalog Ingestion**:
     - Updated [`backend/jobs/sync_catalog.py`](backend/jobs/sync_catalog.py) to check existing price observation fingerprints before inserting, resolving `UniqueViolation: uq_price_observations_fingerprint` when re-syncing sets.
     - Handles TCG API daily account quota (1,000 req/day limit) gracefully; passive worker resumes automatically when quota refreshes at midnight UTC.
 
 - **Cloudflare Pages Production Resilience & Error Isolation**:
-  - Live production frontend deployed at `https://cardboarddex.pages.dev`.
-  - Added smart API endpoint resolution in [`frontend/lib/api.ts`](frontend/lib/api.ts) and [`frontend/next.config.ts`](frontend/next.config.ts): automatically targets the live AWS ECS backend (`https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws`) on Cloudflare Pages (`*.pages.dev`, `cardboarddex.com`, and `NODE_ENV=production`) while retaining `http://localhost:8000` in local development. Added `*.on.aws` and `*.tcgplayer.com` to Next.js image `remotePatterns`.
+  - Live production frontend deployed at `https://cardboarddex.app` and `https://cardboarddex.pages.dev`.
+  - Added smart API endpoint resolution in [`frontend/lib/api.ts`](frontend/lib/api.ts) and [`frontend/next.config.ts`](frontend/next.config.ts): automatically targets the live AWS ECS backend (`https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws`) on Cloudflare Pages (`*.pages.dev`, `cardboarddex.app`, and `NODE_ENV=production`) while retaining `http://localhost:8000` in local development. Added `*.on.aws` and `*.tcgplayer.com` to Next.js image `remotePatterns`.
   - Dynamic API URL resolution with trailing slash normalization inside `request<T>()`, `getCard()`, `getCardPricing()`, `trackUserAction()`, and `cardImageUrl()` prevents stale module-level hostnames in edge/serverless runtimes.
   - Added [`frontend/components/card-detail-client-fallback.tsx`](frontend/components/card-detail-client-fallback.tsx) with resilient client-side fallback hydration: if Edge SSR encounters a network or runtime error, the card profile dynamically loads data and pricing comps directly from the browser rather than failing with a hard 404 `notFound()`.
   - Added client-side fallback fetching on mount across all dashboards ([`catalog-browser.tsx`](frontend/components/catalog-browser.tsx), [`pokemon-cards-view.tsx`](frontend/components/pokemon-cards-view.tsx), [`market-movers-dashboard.tsx`](frontend/components/market-movers-dashboard.tsx), and [`top-volume-dashboard.tsx`](frontend/components/top-volume-dashboard.tsx)) so that if an initial SSR payload is empty or errored (e.g. edge timeouts, provider quota limits), fresh data is fetched client-side immediately upon mount.
@@ -347,7 +348,7 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
   - **Structured `httpx.Timeout`** ([`tcgapi/client.py`](backend/app/tcgapi/client.py), [`ebay/client.py`](backend/app/ebay/client.py)): Replaced flat 60 s / 30 s scalar timeouts with `httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0)` on all outbound HTTP calls. Prevents hung upstream connections from stalling FastAPI worker threads for up to a full minute.
   - **Public Deployment Security, Injection Prevention & High-Concurrency Hardening**:
     - **Sliding-Window IP Rate Limiter** ([`common/rate_limiter.py`](backend/app/common/rate_limiter.py)): Lightweight rate limiter middleware backed by Redis with in-memory fallback, enforcing 120 req/min global baseline, 30 req/min on `/cards/track-action`, and heavy endpoint bounds.
-    - **Strict CORS & Domain Isolation** ([`main.py`](backend/app/main.py)): Replaced loose substring checks (`"pages.dev" in origin`) with exact origin matching and regex (`ALLOWED_ORIGIN_REGEX`) restricted to `cardboarddex.pages.dev`, `cardboarddex.com`, and development localhost.
+    - **Strict CORS & Domain Isolation** ([`main.py`](backend/app/main.py)): Replaced loose substring checks (`"pages.dev" in origin`) with exact origin matching and regex (`ALLOWED_ORIGIN_REGEX`) restricted to `cardboarddex.app`, `cardboarddex.pages.dev`, `cardboarddex.com`, and development localhost.
     - **Modern Security Headers & CSP** ([`main.py`](backend/app/main.py)): Injected `Content-Security-Policy`, `Strict-Transport-Security` (`max-age=31536000`), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and `Referrer-Policy: strict-origin-when-cross-origin`.
     - **Internal Error Detail Masking** ([`main.py`](backend/app/main.py)): Preserved full server-side exception traceback logging while returning generic, sanitized error payloads (`"An internal server error occurred"`) to clients.
     - **Admin Endpoint Authentication** ([`routers/cards.py`](backend/app/routers/cards.py)): Gated `POST /cards/trending/reset` behind `verify_admin_token` requiring a valid `X-Admin-Token` matching `settings.admin_api_key`.

@@ -36,7 +36,8 @@ function isInvalidOrLocalhost(url: string | undefined): boolean {
     lower.includes("localhost") ||
     lower.includes("127.0.0.1") ||
     lower.includes("cardboarddex.com") ||
-    lower.includes("cardboard.com")
+    lower.includes("cardboard.com") ||
+    lower.includes("cardboarddex.app")
   );
 }
 
@@ -50,7 +51,9 @@ export function resolveApiUrl(): string {
     const host = window.location.hostname;
     const isProdHost =
       host.endsWith(".pages.dev") ||
-      host === "cardboarddex.pages.dev";
+      host === "cardboarddex.pages.dev" ||
+      host === "cardboarddex.app" ||
+      host.endsWith(".cardboarddex.app");
     if (isProdHost) {
       if (isInvalidOrLocalhost(url)) {
         return AWS_PRODUCTION_API_URL;
@@ -68,7 +71,11 @@ export function resolveApiUrl(): string {
     }
   }
 
-  if (url.includes("cardboarddex.com") || url.includes("cardboard.com")) {
+  if (
+    url.includes("cardboarddex.com") ||
+    url.includes("cardboard.com") ||
+    url.includes("cardboarddex.app")
+  ) {
     return AWS_PRODUCTION_API_URL;
   }
 
