@@ -5,6 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { BackToTop } from "@/components/ui/back-to-top";
+import { shimmerBlurDataUrl } from "@/lib/shimmer";
 import { POKEDEX_DATA, GENERATION_REGIONS } from "@/lib/pokedex-data";
 import { TYPE_THEMES, formatDexNumber } from "@/lib/pokeapi";
 import {
@@ -763,7 +764,7 @@ function PokemonCard({
     <div
       id={`pokemon-card-${pokemon.id}`}
       onClickCapture={() => onSelect?.(pokemon.id)}
-      className={`group relative flex flex-col justify-between overflow-hidden rounded-2xl border p-3.5 shadow-sm transition-all duration-300 hover:-translate-y-1.5 hover:shadow-xl ${
+      className={`card-cv group relative flex flex-col justify-between overflow-hidden rounded-2xl border p-3.5 shadow-sm transition-all duration-300 hover:-translate-y-1.5 hover:shadow-xl ${
         isRestored
           ? "border-emerald-500 bg-emerald-50/40 ring-2 ring-emerald-500/80 shadow-md"
           : isDirect
@@ -811,6 +812,8 @@ function PokemonCard({
               fill
               sizes="(max-width: 640px) 150px, (max-width: 1024px) 200px, 250px"
               className="object-contain drop-shadow-md transition-all duration-300"
+              placeholder="blur"
+              blurDataURL={shimmerBlurDataUrl(112, 112)}
               loading="lazy"
             />
           </div>

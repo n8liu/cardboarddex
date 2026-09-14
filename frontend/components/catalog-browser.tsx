@@ -1,11 +1,14 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CardGrid } from "@/components/card-grid";
+import { CardTableView } from "@/components/card-table-view";
 import { SearchForm } from "@/components/search-form";
+import { AnimatedNumber } from "@/components/ui/animated-number";
 import { BackToTop } from "@/components/ui/back-to-top";
+import { useCurrency } from "@/context/currency-context";
 import { CARD_PAGE_SIZE, getCardSets, getSetStats, searchCards } from "@/lib/api";
 import type { CardSetOption, CardSort, CardSummary, GameLanguage, SetStats } from "@/types/card";
 
@@ -17,6 +20,16 @@ function formatMoney(value: number | null | undefined, currency: string = "USD")
     maximumFractionDigits: 2,
   }).format(value);
 }
+
+type CatalogQuickFilter = "all" | "under10" | "10to50" | "grails" | "specials";
+
+const QUICK_FILTERS: { id: CatalogQuickFilter; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "under10", label: "Under $10" },
+  { id: "10to50", label: "$10 – $50" },
+  { id: "grails", label: "$100+ Grails" },
+  { id: "specials", label: "Illustration / Specials" },
+];
 
 type CatalogBrowserProps = {
   initialCards: CardSummary[];
@@ -53,12 +66,62 @@ export function CatalogBrowser({
     return { q, s, sort, hs, g };
   }, [initialHideSealed, initialQuery, initialSetId, initialSortBy, searchParams]);
 
+  const { formatPrice } = useCurrency();
+  const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("cardboarddex_catalog_view");
+      if (saved === "grid" || saved === "table") {
+        setViewMode(saved);
+      }
+    } catch {}
+  }, []);
+
+  const handleViewModeChange = (mode: "grid" | "table") => {
+    setViewMode(mode);
+    try {
+      localStorage.setItem("cardboarddex_catalog_view", mode);
+    } catch {}
+  };
+
   const [query, setQuery] = useState(initialQuery);
   const [setId, setSetId] = useState(initialSetId);
   const [sortBy, setSortBy] = useState<CardSort>(initialSortBy);
   const [hideSealed, setHideSealed] = useState(initialHideSealed);
   const [game, setGame] = useState<GameLanguage>("all");
+  const [quickFilter, setQuickFilter] = useState<CatalogQuickFilter>("all");
   const [cards, setCards] = useState(initialCards);
+
+  const displayedCards = useMemo(() => {
+    if (quickFilter === "all") return cards;
+    if (quickFilter === "under10") {
+      return cards.filter((c) => c.market_price !== null && c.market_price < 10);
+    }
+    if (quickFilter === "10to50") {
+      return cards.filter(
+        (c) => c.market_price !== null && c.market_price >= 10 && c.market_price <= 50
+      );
+    }
+    if (quickFilter === "grails") {
+      return cards.filter((c) => c.market_price !== null && c.market_price >= 100);
+    }
+    if (quickFilter === "specials") {
+      return cards.filter((c) => {
+        const r = (c.rarity || "").toLowerCase();
+        return (
+          r.includes("illustration") ||
+          r.includes("secret") ||
+          r.includes("hyper") ||
+          r.includes("special") ||
+          r.includes("sir") ||
+          r.includes("alt")
+        );
+      });
+    }
+    return cards;
+  }, [cards, quickFilter]);
+
   const [setsList, setSetsList] = useState<CardSetOption[]>(sets);
   const [setStats, setSetStats] = useState<SetStats | null>(initialSetStats);
   const [isLoadingStats, setIsLoadingStats] = useState(false);
@@ -233,6 +296,7 @@ export function CatalogBrowser({
     setSortBy("price_desc");
     setHideSealed(true);
     setGame("all");
+    setQuickFilter("all");
   };
 
   const handleSetChange = (newSetId: string) => {
@@ -261,6 +325,30 @@ export function CatalogBrowser({
           onQueryChange={setQuery}
           query={query}
         />
+
+        {/* Quick Filter Chips */}
+        <div className="mt-3 flex flex-wrap items-center gap-1.5 font-mono text-xs">
+          <span className="text-slate-400 text-[11px] uppercase tracking-wider font-semibold mr-1">
+            Filter:
+          </span>
+          {QUICK_FILTERS.map((chip) => {
+            const isActive = quickFilter === chip.id;
+            return (
+              <button
+                key={chip.id}
+                type="button"
+                onClick={() => setQuickFilter(chip.id)}
+                className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
+                  isActive
+                    ? "bg-slate-900 text-white shadow-2xs"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-950"
+                }`}
+              >
+                {chip.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div className="mt-10 grid items-start gap-7 lg:grid-cols-[240px_minmax(0,1fr)]">
@@ -389,51 +477,89 @@ export function CatalogBrowser({
             <div>
               <h2 className="text-lg font-bold tracking-tight text-slate-950">{resultsTitle}</h2>
               <p aria-live="polite" className="mt-1 text-sm text-slate-500">
-                {isSearching ? "Updating cards…" : `${cards.length} card${cards.length === 1 ? "" : "s"} loaded`}
+                {isSearching ? "Updating cards…" : `${displayedCards.length} card${displayedCards.length === 1 ? "" : "s"} loaded`}
               </p>
             </div>
 
-            {setId ? (
-              <div className="flex flex-col items-start sm:items-end">
-                <div
-                  className={`group relative flex items-center gap-2.5 rounded-xl border border-emerald-600/25 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-teal-500/10 px-3.5 py-2 font-mono shadow-2xs backdrop-blur-xs transition-all hover:border-emerald-500/40 hover:shadow-sm ${
-                    isLoadingStats ? "animate-pulse opacity-80" : ""
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Grid / Table View Switcher */}
+              <div className="flex items-center rounded-xl bg-slate-100 p-1 text-xs font-mono">
+                <button
+                  type="button"
+                  onClick={() => handleViewModeChange("grid")}
+                  className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 transition ${
+                    viewMode === "grid"
+                      ? "bg-white text-slate-950 shadow-xs font-bold"
+                      : "text-slate-600 hover:text-slate-900"
                   }`}
-                  title={
-                    setStats
-                      ? `${setStats.priced_cards} of ${setStats.total_cards} cards verified with active market prices. Avg: ${formatMoney(setStats.avg_price ?? 0, setStats.currency)}/card`
-                      : "Aggregating set total prices…"
-                  }
+                  title="Visual Card Grid View"
+                  aria-label="Grid view"
                 >
-                  <div className="flex items-center gap-1.5">
-                    <span className="relative flex h-2 w-2">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                      <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                  <span>⊞</span>
+                  <span>Grid</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleViewModeChange("table")}
+                  className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 transition ${
+                    viewMode === "table"
+                      ? "bg-white text-slate-950 shadow-xs font-bold"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                  title="Compact Trader Table View"
+                  aria-label="Table view"
+                >
+                  <span>☰</span>
+                  <span>Table</span>
+                </button>
+              </div>
+
+              {setId ? (
+                <div className="flex flex-col items-start sm:items-end">
+                  <div
+                    className={`group relative flex items-center gap-2.5 rounded-xl border border-emerald-600/25 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-teal-500/10 px-3.5 py-2 font-mono shadow-2xs backdrop-blur-xs transition-all hover:border-emerald-500/40 hover:shadow-sm ${
+                      isLoadingStats ? "animate-pulse opacity-80" : ""
+                    }`}
+                    title={
+                      setStats
+                        ? `${setStats.priced_cards} of ${setStats.total_cards} cards verified with active market prices.`
+                        : "Aggregating set total prices…"
+                    }
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className="relative flex h-2 w-2">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                        <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                      </span>
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">
+                        {query.trim() || quickFilter !== "all" ? "Filtered Total" : "Set Total"}
+                      </span>
+                    </div>
+
+                    <div className="h-4 w-px bg-emerald-600/20" />
+
+                    <span className="text-base font-black tracking-tight text-emerald-950 sm:text-lg">
+                      <AnimatedNumber
+                        value={
+                          setStats && quickFilter === "all"
+                            ? setStats.total_price
+                            : displayedCards.reduce((sum, c) => sum + (c.market_price ?? 0), 0)
+                        }
+                        format={(val) => formatPrice(val)}
+                      />
                     </span>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">
-                      {query.trim() ? "Filtered Total" : "Set Total"}
+
+                    <span className="rounded-md bg-emerald-600/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">
+                      {setStats && quickFilter === "all"
+                        ? `${setStats.priced_cards}/${setStats.total_cards} priced`
+                        : `${displayedCards.filter((c) => c.market_price !== null).length} priced`}
                     </span>
                   </div>
-
-                  <div className="h-4 w-px bg-emerald-600/20" />
-
-                  <span className="text-base font-black tracking-tight text-emerald-950 sm:text-lg">
-                    {formatMoney(
-                      setStats ? setStats.total_price : cards.reduce((sum, c) => sum + (c.market_price ?? 0), 0),
-                      setStats?.currency ?? "USD"
-                    )}
-                  </span>
-
-                  <span className="rounded-md bg-emerald-600/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">
-                    {setStats
-                      ? `${setStats.priced_cards}/${setStats.total_cards} priced`
-                      : `${cards.filter((c) => c.market_price !== null).length} priced`}
-                  </span>
                 </div>
-              </div>
-            ) : (
-              <span className="hidden text-xs font-medium text-slate-400 sm:inline">Exact catalog matches</span>
-            )}
+              ) : (
+                <span className="hidden text-xs font-medium text-slate-400 sm:inline">Exact catalog matches</span>
+              )}
+            </div>
           </div>
 
           {error ? (
@@ -443,7 +569,11 @@ export function CatalogBrowser({
           ) : null}
 
           <div className={isSearching ? "opacity-45 transition-opacity" : "transition-opacity"}>
-            <CardGrid cards={cards} query={query || selectedSet?.name || ""} />
+            {viewMode === "grid" ? (
+              <CardGrid cards={displayedCards} query={query || selectedSet?.name || ""} />
+            ) : (
+              <CardTableView cards={displayedCards} query={query || selectedSet?.name || ""} />
+            )}
           </div>
 
           <div className="flex min-h-24 items-center justify-center" ref={sentinelRef}>

@@ -38,9 +38,75 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
 - External sources: [PokéAPI](https://pokeapi.co/), [TCG API Cards](https://tcgapi.dev/api/cards/), [TCG API Prices](https://tcgapi.dev/api/prices/), and eBay Developers APIs only.
 - Live Infrastructure: Hybrid architecture active with Cloudflare Edge (Pages frontend, DNS, DDoS WAF) + AWS Core (RDS PostgreSQL, S3 Asset Bucket, ECS Fargate for API, ECS Fargate for Celery Worker + Redis).
 
-## Current state as of 2026-09-13 (updated 2026-09-13)
+## Current state as of 2026-09-14 (updated 2026-09-14)
 
 ### Implemented and verified
+
+- **Interactive Micro-Animations & Productivity Quality of Life (QoL) Suite**:
+  - **Holographic Foil 3D Tilt Effect & Rarity-Reactive Shaders on Card Hover** ([`frontend/components/ui/holo-card.tsx`](frontend/components/ui/holo-card.tsx)):
+    - Integrated across all card grids in [`frontend/components/card-grid.tsx`](frontend/components/card-grid.tsx), [`frontend/components/pokemon-cards-view.tsx`](frontend/components/pokemon-cards-view.tsx), and the hero card on [`frontend/app/cards/[id]/page.tsx`](frontend/app/cards/[id]/page.tsx).
+    - Mouse-driven 3D card tilt using CSS perspective (`perspective: 800px; transformStyle: preserve-3d`) calculating dynamic `rotateX`, `rotateY`, and `scale3d(1.025)`.
+    - **Rarity-Reactive Foil Shaders**: Automatically adapts foil patterns based on card rarity:
+      - **Gold / Secret / Hyper Rare**: Warm radiant metallic gold sheen (`#ffd700`, `#ffaa00`, `#ffe680`).
+      - **Cosmic Starburst (Special Illustration Rare / Illustration Rare / Art Rare)**: Twinkling celestial starfield with chromatic dispersion.
+      - **Ultra / Laser Prism (Ultra Rare / Full Art / VMAX / VSTAR / ex)**: High-contrast diagonal laser spectrum beams.
+      - **Classic Holo / Reverse Holo**: Smooth prismatic rainbow sweep.
+      - **Satin Glare (Common / Uncommon / Standard)**: Clean soft white specular spotlight without rainbow tints.
+  - **Pokémon Type-Themed Atmospheric Ambient Lighting** ([`frontend/app/pokemon/[id]/page.tsx`](frontend/app/pokemon/[id]/page.tsx)):
+    - Multi-stop atmospheric gradient lighting tuned to canonical primary and secondary Pokémon types (e.g. Charizard warm ember, Gengar phantom violet, Blastoise oceanic cyan).
+    - Features glowing accent border bar, ambient radial spotlight mesh across the hero canvas, and a floating dual-tone glowing podium behind the official artwork.
+  - **Interactive Price Chart Area Glow, Dotted Crosshair & Smooth Curve Animations** ([`frontend/components/price-history-chart.tsx`](frontend/components/price-history-chart.tsx)):
+    - Upgraded from static `LineChart` to interactive `ComposedChart` with SVG linear gradients (`#rawGradient` with soft 16% emerald area fill).
+    - Enabled smooth 700ms cubic-bezier curve draw-in animations (`isAnimationActive={true}`).
+    - Added a dotted vertical crosshair line (`strokeDasharray: "3 3"`) and active dots with drop-shadow for interactive date scrubbing.
+  - **Species Trading Cards View Parity & Skeleton Cascades** ([`frontend/components/pokemon-cards-view.tsx`](frontend/components/pokemon-cards-view.tsx)):
+    - Upgraded card grid on `/pokemon/[id]` to use `HoloCard` with rarity foil shaders, multi-currency switching via `useCurrency()`, staggered cascade entrance (`animate-card-cascade`), and base64 SVG shimmer blur placeholders (`shimmerBlurDataUrl`).
+    - Replaced generic spinner box with 6-card staggered cascading skeletons during filter and sort updates.
+  - **Staggered Card Grid & Table Entrance Cascade**:
+    - Added `@keyframes card-cascade` and `.animate-card-cascade` using spring cubic-bezier easing (`300ms cubic-bezier(0.16, 1, 0.3, 1) backwards`) in [`frontend/app/globals.css`](frontend/app/globals.css).
+    - Applied staggered `animationDelay` across [`card-grid.tsx`](frontend/components/card-grid.tsx), [`card-table-view.tsx`](frontend/components/card-table-view.tsx), [`pokemon-cards-view.tsx`](frontend/components/pokemon-cards-view.tsx), and [`market-movers-dashboard.tsx`](frontend/components/market-movers-dashboard.tsx), preventing abrupt content popping.
+  - **Dynamic Rolling Number Count-Up for Telemetry Stats** ([`frontend/components/ui/animated-number.tsx`](frontend/components/ui/animated-number.tsx)):
+    - Smoothly transitions numeric values using `requestAnimationFrame` and an ease-out cubic curve (`1 - (1 - progress)^3`).
+    - Respects `prefers-reduced-motion` and supports custom formatters (multi-currency, percentages, and compact abbreviations).
+    - Integrated for Set Totals in [`catalog-browser.tsx`](frontend/components/catalog-browser.tsx), Top Surge %, Steepest Drop %, Gainers, and Drops in [`market-movers-dashboard.tsx`](frontend/components/market-movers-dashboard.tsx), and Tracked Volume & Comps count in [`top-volume-dashboard.tsx`](frontend/components/top-volume-dashboard.tsx).
+  - **Quick Filter Chips for Catalog & Movers**:
+    - **Catalog Browser** ([`catalog-browser.tsx`](frontend/components/catalog-browser.tsx)): 1-click price filter pills (`All Cards`, `Under $10`, `$10 – $50`, `$100+ Grails`, `Illustration / Specials`) filtering active cards with 0ms reload latency.
+    - **Market Movers** ([`market-movers-dashboard.tsx`](frontend/components/market-movers-dashboard.tsx)): 1-click velocity filter pills (`All Movers`, `Mega Surge (+25%+)`, `Steep Dips (-15%+)`, `High Value ($50+)`, `Budget (<$15)`).
+  - **Global Command Palette (`Cmd + K` / `Ctrl + K`)** ([`frontend/components/command-palette.tsx`](frontend/components/command-palette.tsx)):
+    - Full-screen spotlight modal listening for `Cmd + K`, `Ctrl + K`, or clicking the header search shortcut.
+    - Direct route navigation (`Pokédex`, `Catalog`, `Movers`, `Sealed`, `Grading`, `Trending`, `Live Comps`).
+    - Multi-Currency switching (`USD`, `EUR`, `JPY`, `GBP`) directly inside the palette.
+    - Live instant Pokémon species search matching against `POKEDEX_DATA`.
+    - Live debounced card search via `searchCards()` with thumbnails and real-time market prices.
+    - Full keyboard navigation (`↑`, `↓`, `Enter`, `Esc`). Mounted globally in [`frontend/app/layout.tsx`](frontend/app/layout.tsx) with a trigger badge in [`frontend/components/nav-header.tsx`](frontend/components/nav-header.tsx).
+  - **High-Density Trader Table View**:
+    - Created [`frontend/components/card-table-view.tsx`](frontend/components/card-table-view.tsx) providing a compact, 50px-height tabular view (Rank, Thumbnail, Title & Set, Rarity, TCG Market Value, Last Updated, and Quick Comp Links).
+    - Toggleable between Visual Cards and Trader Table in [`catalog-browser.tsx`](frontend/components/catalog-browser.tsx) and [`market-movers-dashboard.tsx`](frontend/components/market-movers-dashboard.tsx), persisting in `localStorage`.
+  - **Multi-Currency Switcher**:
+    - Implemented [`frontend/context/currency-context.tsx`](frontend/context/currency-context.tsx) supporting `USD` ($), `EUR` (€), `JPY` (¥), and `GBP` (£) with localized formatting and persistence in `localStorage`.
+    - Integrated selector in [`frontend/components/nav-header.tsx`](frontend/components/nav-header.tsx) and connected site-wide across all cards, deltas, and aggregated set totals.
+  - **Sliding Gliding Pill Navigation Header**:
+    - Hardware-accelerated sliding background pill in [`frontend/components/nav-header.tsx`](frontend/components/nav-header.tsx) that glides to destination buttons with 0ms click latency and responsive resize tracking.
+
+- **Zero-Shift Route Loading with Instant Headers & In-Section Indeterminate Progress**:
+  - Eliminated layout-shifting top progress banner and gray skeleton boxes across all 11 routes.
+  - Route loading states render the final page title, pill badge, and description immediately.
+  - Created [`frontend/components/section-loading-bar.tsx`](frontend/components/section-loading-bar.tsx) positioned directly above the data grid, displaying an animated pulse indicator, status label, and continuous indeterminate progress bar (`.section-progress-indeterminate`).
+
+- **Production Edge Isolation & Image Throttling Resolution (HTTP 429 & 404)**:
+  - **Image Rate Limiter Bucket**: In [`backend/app/main.py`](backend/app/main.py), separated `/image` requests into a dedicated bucket with a capacity of 6,000 requests/minute, insulating Next.js image optimization from general API rate limiting.
+  - **Eliminated RSC Prefetch Storms**: Added `prefetch={false}` across all high-density card and Pokédex links to prevent stale RSC build ID 404s and backend traffic spikes during deploys.
+
+- **Production Market Movers & Dual-Direction Delta Fallback**:
+  - Bypassed Celery batch request limiter for real-time cached interactive endpoints (`/cards/market-movers` and `/cards/{id}/image`).
+  - Rewrote `_compute_db_market_movers` in [`backend/app/routers/cards.py`](backend/app/routers/cards.py) with multi-pass resolution extracting real price changes and historical `PriceObservation` deltas, guaranteeing `losers` is never empty.
+  - Added resilient hydration recovery in [`frontend/components/market-movers-dashboard.tsx`](frontend/components/market-movers-dashboard.tsx).
+
+- **Rendering Performance Optimizations**:
+  - **Content Visibility**: Added `.card-cv` and `.table-row-cv` with `content-visibility: auto` in [`frontend/app/globals.css`](frontend/app/globals.css), skipping offscreen layout/paint and locking framerates at 60fps.
+  - **SVG Shimmer Placeholders**: Created [`frontend/lib/shimmer.ts`](frontend/lib/shimmer.ts) with animated base64 SVG shimmer blur data URLs, eliminating white pop-in.
+  - **Client SWR Memory Cache**: Implemented in-memory browser client cache (60s TTL) and in-flight request deduplication in [`frontend/lib/api.ts`](frontend/lib/api.ts), enabling instant 0ms tab switching.
+  - **Resource Hints**: Added preconnect and dns-prefetch hints in [`frontend/app/layout.tsx`](frontend/app/layout.tsx).
 
 - **Live AWS Production Infrastructure (RDS, S3 Asset Pipeline, ECS Fargate, & 24/7 Passive Celery Worker)**:
   - **AWS RDS PostgreSQL 16**: Provisioned and active at `cardboarddex-db.c7gc44wq4clr.us-west-2.rds.amazonaws.com:5432` (`db.t4g.micro`, 20GB gp3, `us-west-2`). All database migrations applied cleanly via Alembic. Live database holds **484 expansion sets** (234 English + 250 Japanese), **54,682 cards** (32,795 English + 21,887 Japanese), and **61,687 price observations** committed. Both English and Japanese sets and cards are fully supported.
@@ -113,6 +179,7 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
   - Added dedicated single-card updater CLI [`backend/jobs/update_card.py`](backend/jobs/update_card.py) to sequentially update both TCG API market prices and eBay comps with a single command:
     ```bash
     .venv/bin/python jobs/update_card.py 28402
+    .venv/bin/python jobs/update_card.py 2158854
     .venv/bin/python jobs/update_card.py "Rayquaza Legends Awakened"
     ```
   - Added dedicated Pokémon character updater CLI [`backend/jobs/update_pokemon.py`](backend/jobs/update_pokemon.py) to update all cards for a specific Pokémon character across both TCG API market prices and eBay comps with progress tracking, rate-limit delays, and error handling:
@@ -359,7 +426,7 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
     - **JavaScript URI Injection Sanitization** ([`routers/cards.py`](backend/app/routers/cards.py), [`frontend/components/price-dashboard.tsx`](frontend/components/price-dashboard.tsx), [`frontend/components/live-updates-dashboard.tsx`](frontend/components/live-updates-dashboard.tsx)): Enforced `https://` / `http://` protocols and trusted marketplace domain verification (`ebay.com`, `tcgplayer.com`) for all rendered listing links.
 
 - **Testing & Verification**:
-  - Backend pytest suite: **136 passed** with 100% pass rate (`tests/test_security.py`, `tests/test_trending.py`, `tests/test_services.py`, `tests/test_cards_api.py`, `tests/test_collect_prices.py`, `tests/test_cycle_prices.py`, `tests/test_update_pokemon.py`, `tests/test_foundation.py`, `tests/test_title_matcher.py`, `tests/test_sync_catalog.py`, `tests/test_tcgapi_client.py`, `tests/test_ebay_client.py`).
+  - Backend pytest suite: **137 passed** with 100% pass rate (`tests/test_security.py`, `tests/test_trending.py`, `tests/test_services.py`, `tests/test_cards_api.py`, `tests/test_collect_prices.py`, `tests/test_cycle_prices.py`, `tests/test_update_pokemon.py`, `tests/test_foundation.py`, `tests/test_title_matcher.py`, `tests/test_sync_catalog.py`, `tests/test_tcgapi_client.py`, `tests/test_ebay_client.py`).
   - Frontend: TypeScript check (`npm run typecheck`) and Webpack build pass cleanly with **0 errors**. All routes compiled and optimized.
 
 ### Database and catalog state

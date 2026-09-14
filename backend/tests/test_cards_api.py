@@ -462,6 +462,60 @@ def test_get_market_movers_database_fallback() -> None:
         app.dependency_overrides.clear()
 
 
+def test_get_market_movers_historical_observations_fallback() -> None:
+    from datetime import datetime, UTC, timedelta
+    from app.routers.cards import _MOVERS_LOCAL_FALLBACK, _get_redis
+    _MOVERS_LOCAL_FALLBACK.clear()
+    _r = _get_redis()
+    if _r is not None:
+        try:
+            _r.delete("cardboarddex:movers:pokemon:24h")
+        except Exception:
+            pass
+
+    class EmptyMoverClient:
+        def get_top_movers(self, game: str = "pokemon", direction: str = "up", period: str = "24h", limit: int = 50) -> dict[str, Any]:
+            return {"data": []}
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    now = datetime.now(UTC)
+    with Session(engine) as session:
+        session.add(Set(id="1", name="Base Set", series="Original", printed_total=102, release_date=date(1999, 1, 9)))
+        session.add(Card(id="gengar-1", name="Gengar", set_id="1", number="5", printed_total=102, rarity="Rare Holo", image_url="https://tcgplayer-cdn.test/gengar.jpg"))
+        session.add(Card(id="venusaur-1", name="Venusaur", set_id="1", number="15", printed_total=102, rarity="Rare Holo", image_url="https://tcgplayer-cdn.test/venusaur.jpg"))
+        # Gengar went UP: 50 -> 80 (+60%)
+        session.add(PriceObservation(fingerprint="g1", card_id="gengar-1", provider="tcgapi", provider_card_id="g1", variant_id="v1", price=50.0, observed_at=now - timedelta(days=2)))
+        session.add(PriceObservation(fingerprint="g2", card_id="gengar-1", provider="tcgapi", provider_card_id="g1", variant_id="v1", price=80.0, observed_at=now))
+        # Venusaur went DOWN: 100 -> 75 (-25%)
+        session.add(PriceObservation(fingerprint="v1", card_id="venusaur-1", provider="tcgapi", provider_card_id="v1", variant_id="v1", price=100.0, observed_at=now - timedelta(days=2)))
+        session.add(PriceObservation(fingerprint="v2", card_id="venusaur-1", provider="tcgapi", provider_card_id="v1", variant_id="v1", price=75.0, observed_at=now))
+        session.commit()
+
+    def override_db() -> Generator[Session, None, None]:
+        with Session(engine) as session:
+            yield session
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_tcgapi_client] = lambda: EmptyMoverClient()
+    try:
+        with TestClient(app) as test_client:
+            res = test_client.get("/cards/market-movers?direction=all&period=24h&page=1&per_page=12")
+            assert res.status_code == 200
+            data = res.json()
+            assert data["total_gainers"] >= 1
+            assert data["total_losers"] >= 1
+            assert any(g["card_id"] == "gengar-1" and g["price_change_percentage"] == 60.0 for g in data["gainers"])
+            assert any(l["card_id"] == "venusaur-1" and l["price_change_percentage"] == -25.0 for l in data["losers"])
+    finally:
+        _MOVERS_LOCAL_FALLBACK.clear()
+        app.dependency_overrides.clear()
+
+
 def test_get_grading_profit_endpoint() -> None:
     engine = create_engine(
         "sqlite://",

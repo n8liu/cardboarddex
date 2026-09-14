@@ -6,6 +6,7 @@ import { BackButton } from "@/components/back-button";
 import { CardDetailClientFallback } from "@/components/card-detail-client-fallback";
 import { PriceDashboard } from "@/components/price-dashboard";
 import { ShopOnEbayButton } from "@/components/shop-ebay-button";
+import { HoloCard } from "@/components/ui/holo-card";
 import { cardImageUrl, getCard, getCardPricing } from "@/lib/api";
 import { formatDexNumber } from "@/lib/pokeapi";
 import { findPokemonForCardName } from "@/lib/pokedex-data";
@@ -67,16 +68,18 @@ export default async function CardPage({ params, searchParams }: CardPageProps) 
 
       <div className="mt-8 grid gap-8 rounded-3xl border border-stone-200 bg-white p-5 shadow-[0_18px_55px_rgba(33,45,25,0.06)] md:grid-cols-[320px_1fr] md:gap-12 md:p-8">
         <div className="overflow-hidden rounded-2xl bg-[radial-gradient(circle_at_top,_#f1fee7,_#f5f5f4_70%)] p-5">
-          <Image
-            alt={`${card.name} from ${card.set_name}`}
-            className="mx-auto block h-auto w-full rounded-xl drop-shadow-[0_18px_18px_rgba(15,23,42,0.18)]"
-            height={440}
-            priority
-            quality={75}
-            src={cardImageUrl(card.image_url)}
-            sizes="(max-width: 768px) 80vw, 320px"
-            width={320}
-          />
+          <HoloCard maxTilt={14} rarity={card.rarity} className="mx-auto block w-full rounded-xl">
+            <Image
+              alt={`${card.name} from ${card.set_name}`}
+              className="mx-auto block h-auto w-full rounded-xl drop-shadow-[0_18px_18px_rgba(15,23,42,0.18)]"
+              height={440}
+              priority
+              quality={75}
+              src={cardImageUrl(card.image_url)}
+              sizes="(max-width: 768px) 80vw, 320px"
+              width={320}
+            />
+          </HoloCard>
         </div>
 
         <section className="pt-1 md:pt-4">

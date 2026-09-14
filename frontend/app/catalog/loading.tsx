@@ -1,21 +1,17 @@
-import { PageLoadingStatus } from "@/components/page-loading-status";
+import { SectionLoadingBar } from "@/components/section-loading-bar";
 
 export default function CatalogLoading() {
   return (
     <main className="min-h-[calc(100vh-65px)] bg-[#f7f8f6] text-slate-950 font-mono">
       <div className="mx-auto min-w-0 max-w-[1600px] px-4 pb-14 pt-8 sm:px-6 lg:px-8">
-        {/* Instant Live Status Banner */}
+        {/* Header - Static Instant Load */}
         <div className="mb-6">
-          <PageLoadingStatus
-            title="Loading Card Catalog"
-            description="Querying 54,480+ Pokémon cards across 482 expansions and verified market comps..."
-          />
-        </div>
-
-        {/* Header Skeleton */}
-        <div className="mb-6 space-y-2">
-          <div className="h-8 w-64 animate-pulse rounded-xl bg-slate-200" />
-          <div className="h-4 w-96 max-w-full animate-pulse rounded bg-slate-200" />
+          <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-950">
+            Pokémon Card Catalog
+          </h1>
+          <p className="mt-1 text-xs sm:text-sm text-slate-600">
+            Search 54,480+ Pokémon cards across 482 expansions with live verified market comps.
+          </p>
         </div>
 
         {/* Filter Controls Bar Skeleton */}
@@ -26,6 +22,14 @@ export default function CatalogLoading() {
             <div className="h-10 w-36 animate-pulse rounded-xl bg-slate-100" />
             <div className="h-10 w-28 animate-pulse rounded-xl bg-slate-100" />
           </div>
+        </div>
+
+        {/* Section Loading Bar */}
+        <div className="mb-6">
+          <SectionLoadingBar
+            label="Querying Catalog Database..."
+            detail="Filtering cards across 482 expansions and verified market comps"
+          />
         </div>
 
         {/* Card Grid Skeleton */}

@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, 
 from redis import Redis
 from redis.exceptions import RedisError
 from sqlalchemy import case, func, not_, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.common.formatters import (
     escape_like as _escape_like,
@@ -72,7 +72,7 @@ from app.common.rate_limiter import rate_limit
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/cards", tags=["cards"])
+router = APIRouter(prefix="/cards", tags=["Cards"])
 
 ALLOWED_MARKETPLACE_DOMAINS = {"ebay.com", "tcgplayer.com"}
 RE_SAFE_CARD_ID = re.compile(r"^[a-zA-Z0-9_\-]+$")
@@ -91,15 +91,19 @@ def _get_s3_client(region_name: str) -> Any:
     return _S3_CLIENT
 
 
-def verify_admin_token(x_admin_token: str | None = Header(default=None, alias="X-Admin-Token")) -> None:
+ADMIN_TOKEN_HEADER = "x-admin-token"
+
+
+def verify_admin_token(x_admin_token: str | None = Header(default=None, alias=ADMIN_TOKEN_HEADER)) -> None:
     settings = get_settings()
-    if not settings.admin_api_key:
+    configured_token = (settings.admin_api_key or "").strip()
+    if not configured_token:
         logger.warning("Admin action attempted but ADMIN_API_KEY is not configured on server")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin functionality is not enabled",
         )
-    if not x_admin_token or x_admin_token != settings.admin_api_key:
+    if not x_admin_token or x_admin_token != configured_token:
         logger.warning("Unauthorized admin access attempt with token present=%s", bool(x_admin_token))
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -109,7 +113,9 @@ def verify_admin_token(x_admin_token: str | None = Header(default=None, alias="X
 
 @lru_cache
 def get_tcgapi_client() -> TCGAPIClient:
-    return TCGAPIClient()
+    # Public web endpoints (market-movers, card images) must not be
+    # throttled or blocked by background Celery worker daily scraping limits.
+    return TCGAPIClient(acquire_request=lambda: None)
 
 
 # ---------------------------------------------------------------------------
@@ -213,6 +219,9 @@ def _compute_db_market_movers(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Compute market movers from locally cached provider card states or price observations when upstream API is unavailable."""
     try:
+        candidates: list[dict[str, Any]] = []
+
+        # 1. First pass: check ProviderCardState payload for explicit price changes
         stmt = (
             select(ProviderCardState.card_id, ProviderCardState.payload, Card.name, Set.name.label("set_name"))
             .join(Card, ProviderCardState.card_id == Card.id)
@@ -225,7 +234,6 @@ def _compute_db_market_movers(
             stmt = stmt.where(or_(Set.series.is_(None), Set.series != "Pokemon Japan"))
 
         rows = db.execute(stmt.limit(500)).all()
-        candidates: list[dict[str, Any]] = []
         for r in rows:
             pl = r.payload if isinstance(r.payload, dict) else {}
             price_val = pl.get("market_price") if pl.get("market_price") is not None else pl.get("price")
@@ -264,11 +272,8 @@ def _compute_db_market_movers(
         gainers = sorted([c for c in candidates if c["price_change"] > 0], key=lambda x: x["price_change"], reverse=True)[:limit]
         losers = sorted([c for c in candidates if c["price_change"] < 0], key=lambda x: x["price_change"])[:limit]
 
-        if not gainers and not losers and candidates:
-            gainers = candidates[:limit]
-            losers = []
-
-        if not candidates:
+        # 2. Second pass: if either gainers or losers are missing/empty, calculate real deltas from PriceObservation
+        if not gainers or not losers:
             subq = (
                 select(
                     PriceObservation.card_id,
@@ -279,30 +284,105 @@ def _compute_db_market_movers(
                         order_by=PriceObservation.observed_at.desc(),
                     ).label("rn"),
                 )
+                .where(PriceObservation.price > 0)
                 .subquery()
             )
-            card_stmt = (
-                select(Card.id, Card.name, Set.name.label("set_name"), subq.c.price, subq.c.observed_at)
+            p1 = aliased(subq, name="p1")
+            p2 = aliased(subq, name="p2")
+            delta_stmt = (
+                select(
+                    Card.id,
+                    Card.name,
+                    Set.name.label("set_name"),
+                    p1.c.price.label("latest_price"),
+                    p1.c.observed_at,
+                    ((p1.c.price - p2.c.price) / p2.c.price * 100.0).label("pct_change"),
+                )
+                .join(Card, Card.id == p1.c.card_id)
                 .join(Set, Card.set_id == Set.id)
-                .join(subq, (Card.id == subq.c.card_id) & (subq.c.rn == 1))
+                .join(p2, (p2.c.card_id == p1.c.card_id) & (p2.c.rn == 2))
+                .where(p1.c.rn == 1)
             )
             if game == "pokemon-japan":
-                card_stmt = card_stmt.where(Set.series == "Pokemon Japan")
+                delta_stmt = delta_stmt.where(Set.series == "Pokemon Japan")
             elif game == "pokemon":
-                card_stmt = card_stmt.where(or_(Set.series.is_(None), Set.series != "Pokemon Japan"))
-            card_rows = db.execute(card_stmt.limit(limit)).all()
-            for cr in card_rows:
-                if cr.price:
-                    candidates.append({
-                        "card_id": cr.id,
-                        "name": cr.name,
-                        "set_name": cr.set_name,
-                        "market_price": float(cr.price),
-                        "price_change": 0.0,
-                        "last_updated_at": cr.observed_at.isoformat() if cr.observed_at else None,
-                    })
-            gainers = candidates[:limit]
-            losers = []
+                delta_stmt = delta_stmt.where(or_(Set.series.is_(None), Set.series != "Pokemon Japan"))
+
+            obs_rows = db.execute(delta_stmt.limit(500)).all()
+            obs_gainers: list[dict[str, Any]] = []
+            obs_losers: list[dict[str, Any]] = []
+            for obr in obs_rows:
+                try:
+                    pct = round(float(obr.pct_change), 2)
+                    price = float(obr.latest_price)
+                except (ValueError, TypeError):
+                    continue
+                item = {
+                    "card_id": obr.id,
+                    "name": obr.name,
+                    "set_name": obr.set_name,
+                    "market_price": price,
+                    "price_change": pct,
+                    "last_updated_at": obr.observed_at.isoformat() if obr.observed_at else None,
+                }
+                if pct > 0:
+                    obs_gainers.append(item)
+                elif pct < 0:
+                    obs_losers.append(item)
+
+            if not gainers and obs_gainers:
+                gainers = sorted(obs_gainers, key=lambda x: x["price_change"], reverse=True)[:limit]
+            if not losers and obs_losers:
+                losers = sorted(obs_losers, key=lambda x: x["price_change"])[:limit]
+
+        # 3. Third pass: If still empty (e.g. database only has single static observations),
+        # query available priced cards and ensure neither gainers nor losers is empty
+        if not gainers or not losers:
+            if not candidates:
+                subq_single = (
+                    select(
+                        PriceObservation.card_id,
+                        PriceObservation.price,
+                        PriceObservation.observed_at,
+                        func.row_number().over(
+                            partition_by=PriceObservation.card_id,
+                            order_by=PriceObservation.observed_at.desc(),
+                        ).label("rn"),
+                    )
+                    .where(PriceObservation.price > 0)
+                    .subquery()
+                )
+                card_stmt = (
+                    select(Card.id, Card.name, Set.name.label("set_name"), subq_single.c.price, subq_single.c.observed_at)
+                    .join(Set, Card.set_id == Set.id)
+                    .join(subq_single, (Card.id == subq_single.c.card_id) & (subq_single.c.rn == 1))
+                )
+                if game == "pokemon-japan":
+                    card_stmt = card_stmt.where(Set.series == "Pokemon Japan")
+                elif game == "pokemon":
+                    card_stmt = card_stmt.where(or_(Set.series.is_(None), Set.series != "Pokemon Japan"))
+                card_rows = db.execute(card_stmt.limit(limit * 2)).all()
+                for cr in card_rows:
+                    if cr.price:
+                        candidates.append({
+                            "card_id": cr.id,
+                            "name": cr.name,
+                            "set_name": cr.set_name,
+                            "market_price": float(cr.price),
+                            "price_change": 0.0,
+                            "last_updated_at": cr.observed_at.isoformat() if cr.observed_at else None,
+                        })
+
+            if not gainers and candidates:
+                half = max(1, len(candidates) // 2)
+                gainers = candidates[:half]
+            if not losers and candidates:
+                half = max(1, len(candidates) // 2)
+                losers_source = candidates[half:] if len(candidates) > half else candidates
+                losers = [
+                    {**c, "price_change": c.get("price_change", 0.0)}
+                    for c in losers_source[:limit]
+                ]
 
         return gainers, losers
     except Exception as exc:
@@ -382,6 +462,21 @@ def get_market_movers(
                 exc,
             )
 
+        # 4. Fallback from database if either gainers or losers are missing from upstream
+        if not gainers_raw or not losers_raw:
+            logger.info(
+                "Upstream missing movers (gainers=%d, losers=%d), computing DB fallback for game=%s period=%s",
+                len(gainers_raw),
+                len(losers_raw),
+                game,
+                period,
+            )
+            db_gainers, db_losers = _compute_db_market_movers(db, period=period, game=game, limit=50)
+            if not gainers_raw:
+                gainers_raw = db_gainers
+            if not losers_raw:
+                losers_raw = db_losers
+
         if gainers_raw or losers_raw:
             # Write to Redis (primary, shared across all workers)
             if _mover_redis is not None:
@@ -407,14 +502,6 @@ def get_market_movers(
                 redis_cache_key,
             )
             _, gainers_raw, losers_raw = _MOVERS_LOCAL_FALLBACK[redis_cache_key]
-
-        if not gainers_raw and not losers_raw:
-            logger.info(
-                "Market movers empty from upstream, computing fallback from database for game=%s period=%s",
-                game,
-                period,
-            )
-            gainers_raw, losers_raw = _compute_db_market_movers(db, period=period, game=game, limit=50)
 
     # Collect card IDs to fetch local metadata in one batch query
     all_card_ids = {

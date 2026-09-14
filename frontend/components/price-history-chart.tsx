@@ -1,10 +1,11 @@
 "use client";
 
 import {
+  Area,
   CartesianGrid,
+  ComposedChart,
   Legend,
   Line,
-  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -192,7 +193,17 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
   return (
     <div className="h-64 w-full" aria-label={`${label} price history chart`} role="img">
       <ResponsiveContainer height="100%" width="100%">
-        <LineChart data={chartData} margin={{ bottom: 0, left: 0, right: 12, top: 4 }}>
+        <ComposedChart data={chartData} margin={{ bottom: 0, left: 0, right: 12, top: 4 }}>
+          <defs>
+            <linearGradient id="rawGradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor="#10b981" stopOpacity={0.16} />
+              <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
+            </linearGradient>
+            <linearGradient id="tcgGradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.12} />
+              <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0.0} />
+            </linearGradient>
+          </defs>
           <CartesianGrid stroke="#e7e5e4" strokeDasharray="3 3" vertical={false} />
           <XAxis
             axisLine={false}
@@ -216,6 +227,7 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
             width={54}
           />
           <Tooltip
+            cursor={{ stroke: "#10b981", strokeWidth: 1, strokeDasharray: "3 3", strokeOpacity: 0.6 }}
             content={
               <MultiLineTooltip
                 currency={currency}
@@ -235,25 +247,43 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
             iconSize={8}
           />
           {hasRaw && (
+            <Area
+              connectNulls
+              dataKey="rawPrice"
+              fill="url(#rawGradient)"
+              isAnimationActive={true}
+              animationDuration={700}
+              animationEasing="ease-out"
+              legendType="none"
+              stroke="none"
+              tooltipType="none"
+              type="monotone"
+            />
+          )}
+          {hasRaw && (
             <Line
-              activeDot={{ fill: "#059669", r: 4, stroke: "#ffffff", strokeWidth: 2 }}
+              activeDot={{ fill: "#059669", r: 5, stroke: "#ffffff", strokeWidth: 2 }}
               connectNulls
               dataKey="rawPrice"
               dot={showDots}
-              isAnimationActive={false}
+              isAnimationActive={true}
+              animationDuration={700}
+              animationEasing="ease-out"
               name="Raw eBay"
               stroke="#10b981"
-              strokeWidth={2}
+              strokeWidth={2.25}
               type="monotone"
             />
           )}
           {hasTcg && (
             <Line
-              activeDot={{ fill: "#7c3aed", r: 4, stroke: "#ffffff", strokeWidth: 2 }}
+              activeDot={{ fill: "#7c3aed", r: 5, stroke: "#ffffff", strokeWidth: 2 }}
               connectNulls
               dataKey="tcgPrice"
               dot={showDots}
-              isAnimationActive={false}
+              isAnimationActive={true}
+              animationDuration={700}
+              animationEasing="ease-out"
               name="TCG API"
               stroke="#8b5cf6"
               strokeWidth={2}
@@ -262,11 +292,13 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
           )}
           {hasPsa10 && (
             <Line
-              activeDot={{ fill: "#d97706", r: 4, stroke: "#ffffff", strokeWidth: 2 }}
+              activeDot={{ fill: "#d97706", r: 5, stroke: "#ffffff", strokeWidth: 2 }}
               connectNulls
               dataKey="psa10Price"
               dot={showDots}
-              isAnimationActive={false}
+              isAnimationActive={true}
+              animationDuration={700}
+              animationEasing="ease-out"
               name="PSA 10 eBay"
               stroke="#f59e0b"
               strokeWidth={2}
@@ -275,11 +307,13 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
           )}
           {hasPsa9 && (
             <Line
-              activeDot={{ fill: "#0369a1", r: 4, stroke: "#ffffff", strokeWidth: 2 }}
+              activeDot={{ fill: "#0369a1", r: 5, stroke: "#ffffff", strokeWidth: 2 }}
               connectNulls
               dataKey="psa9Price"
               dot={showDots}
-              isAnimationActive={false}
+              isAnimationActive={true}
+              animationDuration={700}
+              animationEasing="ease-out"
               name="PSA 9 eBay"
               stroke="#0284c7"
               strokeWidth={2}
@@ -288,18 +322,20 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
           )}
           {hasLegacyPrice && (
             <Line
-              activeDot={{ fill: "#4d7c0f", r: 4, stroke: "#ffffff", strokeWidth: 2 }}
+              activeDot={{ fill: "#4d7c0f", r: 5, stroke: "#ffffff", strokeWidth: 2 }}
               connectNulls
               dataKey="price"
               dot={showDots}
-              isAnimationActive={false}
+              isAnimationActive={true}
+              animationDuration={700}
+              animationEasing="ease-out"
               name={label}
               stroke="#65a30d"
               strokeWidth={2}
               type="monotone"
             />
           )}
-        </LineChart>
+        </ComposedChart>
       </ResponsiveContainer>
     </div>
   );

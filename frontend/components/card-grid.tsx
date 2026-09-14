@@ -4,7 +4,10 @@ import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
 
+import { HoloCard } from "@/components/ui/holo-card";
+import { useCurrency } from "@/context/currency-context";
 import { cardImageUrl } from "@/lib/api";
+import { shimmerBlurDataUrl } from "@/lib/shimmer";
 import type { CardSummary } from "@/types/card";
 
 type CardGridProps = {
@@ -14,15 +17,6 @@ type CardGridProps = {
 
 function numberLabel(card: CardSummary): string {
   return card.printed_total ? `${card.number}/${card.printed_total}` : card.number;
-}
-
-function money(value: number | null, currency: string | null): string {
-  if (value === null) return "Price pending";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: currency ?? "USD",
-    maximumFractionDigits: 2,
-  }).format(value);
 }
 
 function formatRelativeTime(dateStr: string | null | undefined): string | null {
@@ -75,6 +69,8 @@ function CardThumbnail({ card }: { card: CardSummary }) {
           className="object-contain p-3 transition duration-300 group-hover:scale-[1.02]"
           fill
           onError={() => setFailed(true)}
+          placeholder="blur"
+          blurDataURL={shimmerBlurDataUrl(250, 350)}
           quality={75}
           sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, (max-width: 1536px) 25vw, 220px"
           src={cardImageUrl(card.image_url)}
@@ -85,6 +81,8 @@ function CardThumbnail({ card }: { card: CardSummary }) {
 }
 
 export function CardGrid({ cards, query }: CardGridProps) {
+  const { formatPrice } = useCurrency();
+
   if (cards.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center">
@@ -98,14 +96,17 @@ export function CardGrid({ cards, query }: CardGridProps) {
 
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
-      {cards.map((card) => (
+      {cards.map((card, idx) => (
         <Link
-          className="group flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-3 transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_16px_40px_rgba(15,23,42,0.08)] focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          className="card-cv animate-card-cascade group flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-3 transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_16px_40px_rgba(15,23,42,0.08)] focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          style={{ animationDelay: `${Math.min(idx * 25, 350)}ms` }}
           href={`/cards/${encodeURIComponent(card.id)}`}
           key={card.id}
           prefetch={false}
         >
-          <CardThumbnail card={card} />
+          <HoloCard maxTilt={8} rarity={card.rarity} className="w-full">
+            <CardThumbnail card={card} />
+          </HoloCard>
 
           <div className="flex min-w-0 flex-1 flex-col px-1 pb-1 pt-4">
             <h2 className="line-clamp-2 text-sm font-bold leading-5 text-slate-950 sm:text-base">{card.name}</h2>
@@ -115,7 +116,7 @@ export function CardGrid({ cards, query }: CardGridProps) {
             <div className="mt-auto flex items-end justify-between gap-3 pt-5">
               <div className="min-w-0">
                 <p className={`truncate text-base font-bold sm:text-lg ${card.market_price === null ? "text-slate-400" : "text-slate-950"}`}>
-                  {money(card.market_price, card.market_currency)}
+                  {formatPrice(card.market_price, { showPending: true })}
                 </p>
                 <p className="mt-0.5 truncate text-[10px] text-slate-400">TCG market value</p>
               </div>

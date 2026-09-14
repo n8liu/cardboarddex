@@ -4,7 +4,10 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { useCurrency } from "@/context/currency-context";
 import { cardImageUrl, getTrendingDashboard } from "@/lib/api";
+import { shimmerBlurDataUrl } from "@/lib/shimmer";
+import { AnimatedNumber } from "@/components/ui/animated-number";
 import { SearchInput } from "@/components/ui/search-input";
 import { getPokemonByIdOrSlug } from "@/lib/pokedex-data";
 import type {
@@ -38,6 +41,7 @@ function formatRank(rank: number): string {
 // Row Component: Trending Card
 // ---------------------------------------------------------------------------
 function CardRow({ item }: { item: TrendingCardItem }) {
+  const { formatPrice } = useCurrency();
   const isRank1 = item.rank === 1;
   const isRank2 = item.rank === 2;
   const isRank3 = item.rank === 3;
@@ -46,7 +50,7 @@ function CardRow({ item }: { item: TrendingCardItem }) {
     <Link
       href={`/cards/${encodeURIComponent(item.card_id)}?ref=trending`}
       prefetch={false}
-      className="group flex h-[62px] items-center justify-between gap-3 rounded-xl border border-slate-200/80 bg-white px-3 transition duration-150 hover:border-slate-400 hover:bg-slate-50/70"
+      className="card-cv group flex h-[62px] items-center justify-between gap-3 rounded-xl border border-slate-200/80 bg-white px-3 transition duration-150 hover:border-slate-400 hover:bg-slate-50/70"
     >
       {/* Left: Rank, Thumbnail, Card Title & Set */}
       <div className="flex min-w-0 flex-1 items-center gap-2.5">
@@ -72,8 +76,9 @@ function CardRow({ item }: { item: TrendingCardItem }) {
               alt={item.name}
               fill
               className="object-contain transition duration-150 group-hover:scale-105"
+              placeholder="blur"
+              blurDataURL={shimmerBlurDataUrl(64, 90)}
               sizes="32px"
-              unoptimized
             />
           </div>
         </div>
@@ -98,7 +103,7 @@ function CardRow({ item }: { item: TrendingCardItem }) {
       {/* Right: Price & Heat */}
       <div className="w-28 shrink-0 text-right font-mono">
         <div className="truncate text-xs font-bold text-slate-950 sm:text-sm">
-          {formatMoney(item.market_price)}
+          {formatPrice(item.market_price)}
         </div>
         <div className="mt-0.5 truncate text-[10px] font-medium">
           {item.clicks_count > 0 ? (
@@ -306,6 +311,7 @@ function VolumeRow({ item }: { item: PokemonVolumeItem }) {
 // Main Dashboard
 // ---------------------------------------------------------------------------
 export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
+  const { formatPrice, convertPrice, symbol } = useCurrency();
   const [data, setData] = useState<TrendingDashboardResponse>(initialData);
   const [timeframe, setTimeframe] = useState<VolumeTimeframe>("7d");
   const [viewMode, setViewMode] = useState<ViewMode>("overview");
@@ -391,12 +397,13 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
   const topVolume = data.volume_pokemon[0] || null;
 
   const totalVolumeFormatted = useMemo(() => {
-    const sum = data.total_volume_usd ?? 0;
-    if (sum >= 1_000_000_000) return `$${(sum / 1_000_000_000).toFixed(2)}B`;
-    if (sum >= 1_000_000) return `$${(sum / 1_000_000).toFixed(2)}M`;
-    if (sum >= 1_000) return `$${(sum / 1_000).toFixed(1)}K`;
-    return `$${sum.toFixed(2)}`;
-  }, [data.total_volume_usd]);
+    const rawSum = data.total_volume_usd ?? 0;
+    const sum = convertPrice(rawSum) ?? 0;
+    if (sum >= 1_000_000_000) return `${symbol}${(sum / 1_000_000_000).toFixed(2)}B`;
+    if (sum >= 1_000_000) return `${symbol}${(sum / 1_000_000).toFixed(2)}M`;
+    if (sum >= 1_000) return `${symbol}${(sum / 1_000).toFixed(1)}K`;
+    return `${symbol}${sum.toFixed(2)}`;
+  }, [data.total_volume_usd, convertPrice, symbol]);
 
   return (
     <div className="mx-auto max-w-[1600px] px-4 py-8 sm:px-6 lg:px-8">
@@ -426,7 +433,7 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
               <div className="rounded-xl border border-slate-200/80 bg-white p-3 shadow-2xs">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Top Card</div>
                 <div className="mt-0.5 truncate font-bold text-slate-950">{topCard.name}</div>
-                <div className="text-[11px] text-slate-500">{formatMoney(topCard.market_price)}</div>
+                <div className="text-[11px] text-slate-500">{formatPrice(topCard.market_price)}</div>
               </div>
             )}
             {topPokemon && (
@@ -445,8 +452,20 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
             )}
             <div className="rounded-xl border border-slate-200/80 bg-white p-3 shadow-2xs">
               <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Tracked ({timeframe})</div>
-              <div className="mt-0.5 font-bold text-slate-950">{totalVolumeFormatted}</div>
-              <div className="text-[11px] text-slate-500">{(data.total_sales_count || 0).toLocaleString()} comps</div>
+              <div className="mt-0.5 font-bold text-slate-950">
+                <AnimatedNumber
+                  value={convertPrice(data.total_volume_usd) ?? 0}
+                  format={(val) => {
+                    if (val >= 1_000_000_000) return `${symbol}${(val / 1_000_000_000).toFixed(2)}B`;
+                    if (val >= 1_000_000) return `${symbol}${(val / 1_000_000).toFixed(2)}M`;
+                    if (val >= 1_000) return `${symbol}${(val / 1_000).toFixed(1)}K`;
+                    return `${symbol}${val.toFixed(2)}`;
+                  }}
+                />
+              </div>
+              <div className="text-[11px] text-slate-500">
+                <AnimatedNumber value={data.total_sales_count || 0} /> comps
+              </div>
             </div>
           </div>
         </div>

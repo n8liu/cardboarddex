@@ -5,11 +5,24 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { useCurrency } from "@/context/currency-context";
 import { cardImageUrl, getMarketMovers } from "@/lib/api";
+import { shimmerBlurDataUrl } from "@/lib/shimmer";
+import { AnimatedNumber } from "@/components/ui/animated-number";
 import { BackToTop } from "@/components/ui/back-to-top";
 import { InfiniteScrollSentinel } from "@/components/ui/infinite-scroll-sentinel";
 import { SearchInput } from "@/components/ui/search-input";
 import type { MarketMoverItem, MarketMoversResponse, MoverDirection, MoverPeriod } from "@/types/card";
+
+type MoverQuickFilter = "all" | "surge25" | "dip15" | "high50" | "budget15";
+
+const MOVER_QUICK_FILTERS: { id: MoverQuickFilter; label: string }[] = [
+  { id: "all", label: "All Movers" },
+  { id: "surge25", label: "Mega Surge (+25%+)" },
+  { id: "dip15", label: "Steep Dips (-15%+)" },
+  { id: "high50", label: "High Value ($50+)" },
+  { id: "budget15", label: "Budget (<$15)" },
+];
 
 type MarketMoversDashboardProps = {
   initialData: MarketMoversResponse;
@@ -49,6 +62,7 @@ function formatRelativeTime(dateStr: string | null | undefined): string {
 }
 
 function MoverCard({ item }: { item: MarketMoverItem }) {
+  const { formatPrice } = useCurrency();
   const [imageFailed, setImageFailed] = useState(false);
   const isUp = item.direction === "up" || item.price_change_percentage >= 0;
 
@@ -56,7 +70,7 @@ function MoverCard({ item }: { item: MarketMoverItem }) {
     <Link
       href={`/cards/${encodeURIComponent(item.card_id)}`}
       prefetch={false}
-      className="group relative flex flex-col justify-between rounded-2xl border border-slate-200/90 bg-white p-4 shadow-2xs transition duration-150 hover:border-slate-400 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-slate-900"
+      className="card-cv animate-card-cascade group relative flex flex-col justify-between rounded-2xl border border-slate-200/90 bg-white p-4 shadow-2xs transition duration-150 hover:border-slate-400 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-slate-900"
     >
       <div className="flex gap-3.5">
         {/* Card Image Thumbnail */}
@@ -71,6 +85,8 @@ function MoverCard({ item }: { item: MarketMoverItem }) {
               alt={item.name}
               fill
               className="object-contain transition duration-200 group-hover:scale-105"
+              placeholder="blur"
+              blurDataURL={shimmerBlurDataUrl(80, 110)}
               sizes="80px"
               onError={() => setImageFailed(true)}
             />
@@ -109,7 +125,7 @@ function MoverCard({ item }: { item: MarketMoverItem }) {
         <div>
           <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Market</span>
           <p className="font-mono text-sm sm:text-base font-black tracking-tight text-slate-950">
-            {formatMoney(item.market_price)}
+            {formatPrice(item.market_price)}
           </p>
         </div>
 
@@ -127,7 +143,7 @@ function MoverCard({ item }: { item: MarketMoverItem }) {
           {item.price_change_amount !== null && item.price_change_amount !== undefined && (
             <p className="mt-0.5 text-[10px] text-slate-400 font-mono">
               {item.price_change_amount >= 0 ? "+" : ""}
-              {formatMoney(item.price_change_amount)}
+              {formatPrice(item.price_change_amount)}
             </p>
           )}
         </div>
@@ -137,6 +153,124 @@ function MoverCard({ item }: { item: MarketMoverItem }) {
         Updated {formatRelativeTime(item.last_updated_at)}
       </div>
     </Link>
+  );
+}
+
+function MoverTableRow({ item, rank }: { item: MarketMoverItem; rank?: number }) {
+  const { formatPrice } = useCurrency();
+  const [imageFailed, setImageFailed] = useState(false);
+  const isUp = item.direction === "up" || item.price_change_percentage >= 0;
+
+  return (
+    <tr
+      className="table-row-cv animate-card-cascade group transition hover:bg-slate-50/80 focus-within:bg-slate-50 font-mono text-xs"
+      style={{ animationDelay: `${Math.min((rank ?? 0) * 20, 300)}ms` }}
+    >
+      {rank !== undefined && (
+        <td className="py-2.5 pl-4 pr-2 text-slate-400 font-medium w-8">
+          #{rank}
+        </td>
+      )}
+      <td className="py-2.5 px-3">
+        <Link
+          href={`/cards/${encodeURIComponent(item.card_id)}`}
+          prefetch={false}
+          className="flex items-center gap-2.5 focus:outline-none"
+        >
+          <div className="relative h-11 w-8 shrink-0 overflow-hidden rounded border border-slate-100 bg-slate-50">
+            {imageFailed ? (
+              <div className="flex h-full w-full items-center justify-center text-[10px] font-bold text-slate-400">
+                {item.name.slice(0, 1).toUpperCase()}
+              </div>
+            ) : (
+              <Image
+                src={cardImageUrl(item.image_url)}
+                alt={item.name}
+                fill
+                className="object-contain"
+                placeholder="blur"
+                blurDataURL={shimmerBlurDataUrl(80, 110)}
+                sizes="40px"
+                onError={() => setImageFailed(true)}
+              />
+            )}
+          </div>
+          <div className="min-w-0">
+            <p className="font-bold text-slate-950 group-hover:text-emerald-700 transition truncate max-w-[170px] sm:max-w-xs">
+              {item.name}
+            </p>
+            <p className="text-[10px] text-slate-400 truncate max-w-[170px]">
+              {item.set_name} {item.number ? `· #${item.number}` : ""}
+            </p>
+          </div>
+        </Link>
+      </td>
+      <td className="py-2.5 px-3 text-right">
+        <span
+          className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-black ${
+            isUp
+              ? "bg-emerald-50 text-emerald-700 border border-emerald-200/60"
+              : "bg-rose-50 text-rose-700 border border-rose-200/60"
+          }`}
+        >
+          <span>{isUp ? "▲" : "▼"}</span>
+          <span>{formatPercentage(item.price_change_percentage)}</span>
+        </span>
+      </td>
+      <td className="hidden sm:table-cell py-2.5 px-3 text-right font-mono text-[11px] text-slate-500">
+        {item.price_change_amount !== null && item.price_change_amount !== undefined ? (
+          <span>
+            {item.price_change_amount >= 0 ? "+" : ""}
+            {formatPrice(item.price_change_amount)}
+          </span>
+        ) : "—"}
+      </td>
+      <td className="py-2.5 px-3 text-right font-black tracking-tight text-slate-950 sm:text-sm">
+        {formatPrice(item.market_price)}
+      </td>
+      <td className="hidden lg:table-cell py-2.5 px-3 text-right text-[11px] text-slate-400">
+        {formatRelativeTime(item.last_updated_at)}
+      </td>
+      <td className="py-2.5 pr-4 pl-2 text-right w-10">
+        <Link
+          href={`/cards/${encodeURIComponent(item.card_id)}`}
+          prefetch={false}
+          className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 text-xs font-bold text-slate-400 transition group-hover:border-emerald-600 group-hover:bg-emerald-600 group-hover:text-white"
+          aria-label={`View comps for ${item.name}`}
+        >
+          →
+        </Link>
+      </td>
+    </tr>
+  );
+}
+
+function MoverTableList({ items, showRank = true }: { items: MarketMoverItem[]; showRank?: boolean }) {
+  return (
+    <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-2xs">
+      <table className="w-full text-left font-mono text-xs">
+        <thead className="border-b border-slate-200 bg-slate-50/80 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+          <tr>
+            {showRank && <th className="py-3 pl-4 pr-2 w-8">#</th>}
+            <th className="py-3 px-3">Card</th>
+            <th className="py-3 px-3 text-right">Change</th>
+            <th className="hidden sm:table-cell py-3 px-3 text-right">Delta</th>
+            <th className="py-3 px-3 text-right">Market</th>
+            <th className="hidden lg:table-cell py-3 px-3 text-right">Updated</th>
+            <th className="py-3 pr-4 pl-2 text-right w-10">Link</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {items.map((item, idx) => (
+            <MoverTableRow
+              key={`row-${item.card_id}-${item.printing}`}
+              item={item}
+              rank={showRank ? idx + 1 : undefined}
+            />
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -159,6 +293,7 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
     return { period, direction, game, q };
   }, [initialData.period, searchParams]);
 
+  const { formatPrice } = useCurrency();
   const initialParams = getUrlParams();
   const [data, setData] = useState<MarketMoversResponse>(initialData);
   const [gainers, setGainers] = useState<MarketMoverItem[]>(initialData.gainers);
@@ -166,6 +301,7 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
   const [period, setPeriod] = useState<MoverPeriod>(initialParams.period);
   const [direction, setDirection] = useState<MoverDirection>(initialParams.direction);
   const [game, setGame] = useState<"pokemon" | "pokemon-japan">(initialParams.game);
+  const [layoutMode, setLayoutMode] = useState<"cards" | "table">("cards");
   const [searchTerm, setSearchTerm] = useState(initialParams.q);
   const [page, setPage] = useState(initialData.page || 1);
   const [perPage] = useState(initialData.per_page || 24);
@@ -173,6 +309,22 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isInitialized = useRef(false);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("cardboarddex_movers_layout");
+      if (saved === "cards" || saved === "table") {
+        setLayoutMode(saved);
+      }
+    } catch {}
+  }, []);
+
+  const handleLayoutModeChange = (mode: "cards" | "table") => {
+    setLayoutMode(mode);
+    try {
+      localStorage.setItem("cardboarddex_movers_layout", mode);
+    } catch {}
+  };
 
   const fetchFresh = useCallback(
     async (selectedPeriod: MoverPeriod, selectedGame: "pokemon" | "pokemon-japan") => {
@@ -219,8 +371,10 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
       if (
         initialParams.period !== (initialData.period || "24h") ||
         initialParams.game !== "pokemon" ||
-        ((!initialData.gainers || initialData.gainers.length === 0) &&
-          (!initialData.losers || initialData.losers.length === 0))
+        !initialData.gainers ||
+        initialData.gainers.length === 0 ||
+        !initialData.losers ||
+        initialData.losers.length === 0
       ) {
         void fetchFresh(initialParams.period, initialParams.game);
       }
@@ -237,7 +391,7 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
     }, 150);
 
     return () => window.clearTimeout(timer);
-  }, [period, direction, game, searchTerm, fetchFresh, initialParams.period, initialParams.game, initialData.period]);
+  }, [period, direction, game, searchTerm, fetchFresh, initialParams.period, initialParams.game, initialData.period, initialData.gainers, initialData.losers]);
 
   const handlePeriodChange = (newPeriod: MoverPeriod) => {
     setPeriod(newPeriod);
@@ -247,6 +401,15 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
   const handleGameChange = (newGame: "pokemon" | "pokemon-japan") => {
     setGame(newGame);
     void fetchFresh(period, newGame);
+  };
+
+  const handleDirectionChange = (newDirection: MoverDirection) => {
+    setDirection(newDirection);
+    if (newDirection === "down" && (!losers || losers.length === 0)) {
+      void fetchFresh(period, game);
+    } else if (newDirection === "up" && (!gainers || gainers.length === 0)) {
+      void fetchFresh(period, game);
+    }
   };
 
   const hasMore = page < (data.total_pages || 1);
@@ -282,27 +445,53 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
     }
   }, [hasMore, isLoading, isLoadingMore, page, period, game, perPage]);
 
+  const [quickFilter, setQuickFilter] = useState<MoverQuickFilter>("all");
+
   const filteredGainers = useMemo(() => {
+    let list = gainers;
     const term = searchTerm.toLowerCase().trim();
-    if (!term) return gainers;
-    return gainers.filter(
-      (item) =>
-        item.name.toLowerCase().includes(term) ||
-        item.set_name.toLowerCase().includes(term) ||
-        (item.number && item.number.toLowerCase().includes(term)),
-    );
-  }, [gainers, searchTerm]);
+    if (term) {
+      list = list.filter(
+        (item) =>
+          item.name.toLowerCase().includes(term) ||
+          item.set_name.toLowerCase().includes(term) ||
+          (item.number && item.number.toLowerCase().includes(term)),
+      );
+    }
+    if (quickFilter === "surge25") {
+      list = list.filter((item) => item.price_change_percentage >= 25);
+    } else if (quickFilter === "dip15") {
+      list = list.filter((item) => item.price_change_percentage <= -15);
+    } else if (quickFilter === "high50") {
+      list = list.filter((item) => (item.market_price ?? 0) >= 50);
+    } else if (quickFilter === "budget15") {
+      list = list.filter((item) => (item.market_price ?? 0) < 15);
+    }
+    return list;
+  }, [gainers, searchTerm, quickFilter]);
 
   const filteredLosers = useMemo(() => {
+    let list = losers;
     const term = searchTerm.toLowerCase().trim();
-    if (!term) return losers;
-    return losers.filter(
-      (item) =>
-        item.name.toLowerCase().includes(term) ||
-        item.set_name.toLowerCase().includes(term) ||
-        (item.number && item.number.toLowerCase().includes(term)),
-    );
-  }, [losers, searchTerm]);
+    if (term) {
+      list = list.filter(
+        (item) =>
+          item.name.toLowerCase().includes(term) ||
+          item.set_name.toLowerCase().includes(term) ||
+          (item.number && item.number.toLowerCase().includes(term)),
+      );
+    }
+    if (quickFilter === "surge25") {
+      list = list.filter((item) => item.price_change_percentage >= 25);
+    } else if (quickFilter === "dip15") {
+      list = list.filter((item) => item.price_change_percentage <= -15);
+    } else if (quickFilter === "high50") {
+      list = list.filter((item) => (item.market_price ?? 0) >= 50);
+    } else if (quickFilter === "budget15") {
+      list = list.filter((item) => (item.market_price ?? 0) < 15);
+    }
+    return list;
+  }, [losers, searchTerm, quickFilter]);
 
   const topGainer = gainers[0] ?? null;
   const topLoser = losers[0] ?? null;
@@ -334,10 +523,17 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
             Top Surge ({period})
           </div>
           <div className="mt-1 text-xl font-black tracking-tight text-emerald-600">
-            {topGainer ? `+${topGainer.price_change_percentage}%` : "—"}
+            {topGainer ? (
+              <AnimatedNumber
+                value={topGainer.price_change_percentage}
+                format={(val) => `+${val.toFixed(1)}%`}
+              />
+            ) : (
+              "—"
+            )}
           </div>
           <div className="mt-0.5 truncate text-[11px] text-slate-500">
-            {topGainer ? `${topGainer.name} (${formatMoney(topGainer.market_price)})` : "No gainers recorded"}
+            {topGainer ? `${topGainer.name} (${formatPrice(topGainer.market_price)})` : "No gainers recorded"}
           </div>
         </div>
 
@@ -346,10 +542,17 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
             Steepest Drop ({period})
           </div>
           <div className="mt-1 text-xl font-black tracking-tight text-rose-600">
-            {topLoser ? `${topLoser.price_change_percentage}%` : "—"}
+            {topLoser ? (
+              <AnimatedNumber
+                value={topLoser.price_change_percentage}
+                format={(val) => `${val.toFixed(1)}%`}
+              />
+            ) : (
+              "—"
+            )}
           </div>
           <div className="mt-0.5 truncate text-[11px] text-slate-500">
-            {topLoser ? `${topLoser.name} (${formatMoney(topLoser.market_price)})` : "No drops recorded"}
+            {topLoser ? `${topLoser.name} (${formatPrice(topLoser.market_price)})` : "No drops recorded"}
           </div>
         </div>
 
@@ -358,7 +561,7 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
             Total Gainers
           </div>
           <div className="mt-1 text-xl font-black tracking-tight text-slate-950">
-            {data.total_gainers || 0}
+            <AnimatedNumber value={data.total_gainers || 0} />
           </div>
           <div className="mt-0.5 text-[11px] text-slate-500">
             {period} window velocity
@@ -370,7 +573,7 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
             Total Drops
           </div>
           <div className="mt-1 text-xl font-black tracking-tight text-slate-950">
-            {data.total_losers || 0}
+            <AnimatedNumber value={data.total_losers || 0} />
           </div>
           <div className="mt-0.5 text-[11px] text-slate-500">
             {period} window velocity
@@ -432,7 +635,7 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
           <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1 text-xs font-semibold">
             <button
               type="button"
-              onClick={() => setDirection("all")}
+              onClick={() => handleDirectionChange("all")}
               className={`rounded-lg px-3 py-1.5 transition ${
                 direction === "all" ? "bg-white text-slate-950 shadow-sm" : "text-slate-600 hover:text-slate-900"
               }`}
@@ -441,7 +644,7 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
             </button>
             <button
               type="button"
-              onClick={() => setDirection("up")}
+              onClick={() => handleDirectionChange("up")}
               className={`flex items-center gap-1 rounded-lg px-3 py-1.5 transition ${
                 direction === "up" ? "bg-emerald-600 text-white shadow-sm" : "text-emerald-700 hover:bg-emerald-50"
               }`}
@@ -453,7 +656,7 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
             </button>
             <button
               type="button"
-              onClick={() => setDirection("down")}
+              onClick={() => handleDirectionChange("down")}
               className={`flex items-center gap-1 rounded-lg px-3 py-1.5 transition ${
                 direction === "down" ? "bg-rose-600 text-white shadow-sm" : "text-rose-700 hover:bg-rose-50"
               }`}
@@ -465,6 +668,38 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
             </button>
           </div>
 
+          {/* Cards vs Table Layout Switcher */}
+          <div className="flex items-center rounded-xl bg-slate-100 p-1 text-xs font-semibold">
+            <button
+              type="button"
+              onClick={() => handleLayoutModeChange("cards")}
+              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 transition ${
+                layoutMode === "cards"
+                  ? "bg-white text-slate-950 shadow-xs font-bold"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+              title="Visual Cards View"
+              aria-label="Cards view"
+            >
+              <span>⊞</span>
+              <span>Cards</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleLayoutModeChange("table")}
+              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 transition ${
+                layoutMode === "table"
+                  ? "bg-white text-slate-950 shadow-xs font-bold"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+              title="Compact Trader Table View"
+              aria-label="Table view"
+            >
+              <span>☰</span>
+              <span>Table</span>
+            </button>
+          </div>
+
           <div className="w-full sm:w-56">
             <SearchInput
               value={searchTerm}
@@ -473,6 +708,28 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
             />
           </div>
         </div>
+      </div>
+
+      {/* Quick Velocity Filter Chips */}
+      <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
+        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mr-1">Filter:</span>
+        {MOVER_QUICK_FILTERS.map((chip) => {
+          const isActive = quickFilter === chip.id;
+          return (
+            <button
+              key={chip.id}
+              type="button"
+              onClick={() => setQuickFilter(chip.id)}
+              className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
+                isActive
+                  ? "bg-slate-900 text-white shadow-2xs"
+                  : "bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-950"
+              }`}
+            >
+              {chip.label}
+            </button>
+          );
+        })}
       </div>
 
       {error && (
@@ -503,6 +760,8 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
                 <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-10 text-center text-sm text-slate-500">
                   No gainers found for this period.
                 </div>
+              ) : layoutMode === "table" ? (
+                <MoverTableList items={filteredGainers} />
               ) : (
                 <div className="grid gap-4 sm:grid-cols-2">
                   {filteredGainers.map((item) => (
@@ -530,6 +789,8 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
                 <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-10 text-center text-sm text-slate-500">
                   No price drops recorded for this period.
                 </div>
+              ) : layoutMode === "table" ? (
+                <MoverTableList items={filteredLosers} />
               ) : (
                 <div className="grid gap-4 sm:grid-cols-2">
                   {filteredLosers.map((item) => (
@@ -549,11 +810,15 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
                 {filteredGainers.length} of {data.total_gainers || filteredGainers.length} cards loaded
               </span>
             </div>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {filteredGainers.map((item) => (
-                <MoverCard key={`gain-${item.card_id}-${item.printing}`} item={item} />
-              ))}
-            </div>
+            {layoutMode === "table" ? (
+              <MoverTableList items={filteredGainers} />
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {filteredGainers.map((item) => (
+                  <MoverCard key={`gain-${item.card_id}-${item.printing}`} item={item} />
+                ))}
+              </div>
+            )}
           </div>
         ) : (
           <div>
@@ -565,11 +830,15 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
                 {filteredLosers.length} of {data.total_losers || filteredLosers.length} cards loaded
               </span>
             </div>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {filteredLosers.map((item) => (
-                <MoverCard key={`loss-${item.card_id}-${item.printing}`} item={item} />
-              ))}
-            </div>
+            {layoutMode === "table" ? (
+              <MoverTableList items={filteredLosers} />
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {filteredLosers.map((item) => (
+                  <MoverCard key={`loss-${item.card_id}-${item.printing}`} item={item} />
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

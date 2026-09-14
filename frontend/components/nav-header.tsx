@@ -1,12 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+
+import { openCommandPalette } from "@/components/command-palette";
+import { SUPPORTED_CURRENCIES, useCurrency } from "@/context/currency-context";
 
 export function NavHeader() {
   const pathname = usePathname();
   const [isScrolled, setIsScrolled] = useState(false);
+  const { currency, setCurrency } = useCurrency();
 
   useEffect(() => {
     const handleScroll = () => {
@@ -27,17 +31,130 @@ export function NavHeader() {
   const isGrading = pathname.startsWith("/grading-profit");
   const isSealed = pathname.startsWith("/sealed-signals");
 
-  const navLinks = [
-    { href: "/pokedex", label: "Pokédex", active: isPokedex },
-    { href: "/catalog", label: "Catalog", active: isCatalog },
-    { href: "/market-movers", label: "Movers", active: isMovers },
-    { href: "/sealed-signals", label: "Sealed", active: isSealed },
-    { href: "/grading-profit", label: "Grading", active: isGrading },
-    { href: "/top-volume", label: "Trending", active: isTopVolume },
-    { href: "/live-updates", label: "Live Comps", active: isLiveUpdates },
-  ];
+  const navLinks = useMemo(
+    () => [
+      { href: "/pokedex", label: "Pokédex", active: isPokedex },
+      { href: "/catalog", label: "Catalog", active: isCatalog },
+      { href: "/market-movers", label: "Movers", active: isMovers },
+      { href: "/sealed-signals", label: "Sealed", active: isSealed },
+      { href: "/grading-profit", label: "Grading", active: isGrading },
+      { href: "/top-volume", label: "Trending", active: isTopVolume },
+      { href: "/live-updates", label: "Live Comps", active: isLiveUpdates },
+    ],
+    [isPokedex, isCatalog, isMovers, isSealed, isGrading, isTopVolume, isLiveUpdates]
+  );
+
+  const activeLink = navLinks.find((l) => l.active) || null;
+  const [clickedHref, setClickedHref] = useState<string | null>(null);
+
+  // Active target is the clicked item or the current route's link
+  const currentTargetHref = clickedHref || activeLink?.href || null;
+
+  useEffect(() => {
+    setClickedHref(null);
+  }, [pathname]);
+
+  // Desktop slider measurements
+  const desktopNavRef = useRef<HTMLElement | null>(null);
+  const desktopLinkRefs = useRef<Map<string, HTMLAnchorElement>>(new Map());
+  const [desktopPill, setDesktopPill] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+    opacity: number;
+  }>({
+    left: 0,
+    top: 0,
+    width: 0,
+    height: 0,
+    opacity: 0,
+  });
+
+  // Mobile slider measurements
+  const mobileNavRef = useRef<HTMLElement | null>(null);
+  const mobileLinkRefs = useRef<Map<string, HTMLAnchorElement>>(new Map());
+  const [mobilePill, setMobilePill] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+    opacity: number;
+  }>({
+    left: 0,
+    top: 0,
+    width: 0,
+    height: 0,
+    opacity: 0,
+  });
+
+  const updatePills = useCallback(() => {
+    if (!currentTargetHref) {
+      setDesktopPill((prev) => ({ ...prev, opacity: 0 }));
+      setMobilePill((prev) => ({ ...prev, opacity: 0 }));
+      return;
+    }
+
+    // Update desktop
+    const dEl = desktopLinkRefs.current.get(currentTargetHref);
+    if (dEl) {
+      setDesktopPill({
+        left: dEl.offsetLeft,
+        top: dEl.offsetTop,
+        width: dEl.offsetWidth,
+        height: dEl.offsetHeight,
+        opacity: 1,
+      });
+    }
+
+    // Update mobile
+    const mEl = mobileLinkRefs.current.get(currentTargetHref);
+    if (mEl) {
+      setMobilePill({
+        left: mEl.offsetLeft,
+        top: mEl.offsetTop,
+        width: mEl.offsetWidth,
+        height: mEl.offsetHeight,
+        opacity: 1,
+      });
+    }
+  }, [currentTargetHref]);
+
+  useEffect(() => {
+    updatePills();
+    if (typeof document !== "undefined" && document.fonts) {
+      document.fonts.ready.then(updatePills);
+    }
+    window.addEventListener("resize", updatePills);
+    return () => window.removeEventListener("resize", updatePills);
+  }, [updatePills]);
 
   const handleNavClick = (linkHref: string) => {
+    setClickedHref(linkHref);
+
+    // Immediately glide pill to the target link
+    const dEl = desktopLinkRefs.current.get(linkHref);
+    if (dEl) {
+      setDesktopPill({
+        left: dEl.offsetLeft,
+        top: dEl.offsetTop,
+        width: dEl.offsetWidth,
+        height: dEl.offsetHeight,
+        opacity: 1,
+      });
+    }
+
+    const mEl = mobileLinkRefs.current.get(linkHref);
+    if (mEl) {
+      setMobilePill({
+        left: mEl.offsetLeft,
+        top: mEl.offsetTop,
+        width: mEl.offsetWidth,
+        height: mEl.offsetHeight,
+        opacity: 1,
+      });
+    }
+
     try {
       sessionStorage.removeItem("cardboarddex_pokedex_last_viewed");
       sessionStorage.removeItem("cardboarddex_pokedex_scroll");
@@ -76,57 +193,136 @@ export function NavHeader() {
           </Link>
         </div>
 
-        {/* Center: Navigation Bar (Centered, no emojis, renamed, IBM Plex Mono theme) */}
+        {/* Center: Navigation Bar with Animated Sliding Pill */}
         <nav
-          className="hidden md:flex items-center gap-1 rounded-xl bg-slate-100/90 p-1 text-xs font-mono"
+          ref={desktopNavRef}
+          className="relative hidden md:flex items-center gap-1 rounded-xl bg-slate-100/90 p-1 text-xs font-mono"
           aria-label="Main Navigation"
         >
-          {navLinks.map((link) => (
-            <Link
-              key={link.href}
-              href={link.href}
-              prefetch={false}
-              onClick={() => handleNavClick(link.href)}
-              className={`rounded-lg px-3 py-1.5 transition uppercase tracking-wider font-semibold ${
-                link.active
-                  ? "bg-slate-900 text-white shadow-xs font-bold"
-                  : "text-slate-600 hover:text-slate-950 hover:bg-slate-200/60"
-              }`}
-            >
-              {link.label}
-            </Link>
-          ))}
+          {/* Animated Sliding Pill Background */}
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute left-0 top-0 rounded-lg bg-slate-900 shadow-xs transition-all duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)]"
+            style={{
+              transform: `translate3d(${desktopPill.left}px, ${desktopPill.top}px, 0)`,
+              width: `${desktopPill.width}px`,
+              height: `${desktopPill.height}px`,
+              opacity: desktopPill.opacity,
+            }}
+          />
+
+          {navLinks.map((link) => {
+            const isCurrent = link.href === currentTargetHref;
+            return (
+              <Link
+                key={link.href}
+                href={link.href}
+                ref={(el) => {
+                  if (el) desktopLinkRefs.current.set(link.href, el);
+                  else desktopLinkRefs.current.delete(link.href);
+                }}
+                prefetch={false}
+                onClick={() => handleNavClick(link.href)}
+                className={`relative z-10 inline-flex items-center justify-center rounded-lg px-3 py-1.5 text-center text-xs font-mono uppercase font-bold tracking-normal transition-colors duration-200 ${
+                  isCurrent
+                    ? "text-white"
+                    : "text-slate-600 hover:text-slate-950 hover:bg-slate-200/40"
+                }`}
+              >
+                <span>{link.label}</span>
+              </Link>
+            );
+          })}
         </nav>
 
-        {/* Right: Live Market Tag */}
-        <div className="flex shrink-0 items-center gap-3">
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-mono text-slate-700">
+        {/* Right: Search, Currency Switcher & Live Market Tag */}
+        <div className="flex shrink-0 items-center gap-2 sm:gap-2.5">
+          {/* Spotlight Search Trigger */}
+          <button
+            type="button"
+            onClick={openCommandPalette}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2 sm:px-2.5 py-1 text-xs font-mono font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-100 hover:text-slate-950 focus:outline-none focus:ring-1 focus:ring-slate-900"
+            title="Open spotlight search (Cmd+K)"
+            aria-label="Open command palette search"
+          >
+            <span className="text-slate-400">⌕</span>
+            <span className="hidden lg:inline text-[11px] text-slate-500">Search</span>
+            <kbd className="rounded border border-slate-200 bg-white px-1 py-0.2 text-[10px] font-bold text-slate-400">
+              ⌘K
+            </kbd>
+          </button>
+
+          {/* Currency Switcher */}
+          <div className="relative inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 px-1 py-0.5 text-xs font-mono transition hover:border-slate-300">
+            <span className="sr-only">Select display currency</span>
+            <select
+              aria-label="Display currency"
+              value={currency}
+              onChange={(e) => setCurrency(e.target.value as any)}
+              className="cursor-pointer appearance-none bg-transparent pl-1.5 pr-5 py-1 font-mono text-xs font-bold text-slate-800 outline-none hover:text-slate-950 focus:ring-1 focus:ring-emerald-500 rounded"
+            >
+              {SUPPORTED_CURRENCIES.map((curr) => (
+                <option key={curr.code} value={curr.code}>
+                  {curr.symbol} {curr.code}
+                </option>
+              ))}
+            </select>
+            <span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] text-slate-400">
+              ▼
+            </span>
+          </div>
+
+          <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-mono text-slate-700">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            TCG & eBay Comps
+            TCG &amp; eBay Comps
           </span>
         </div>
       </div>
 
-      {/* Mobile Navigation Row (Centered on small screens) */}
+      {/* Mobile Navigation Row (Centered on small screens) with Animated Sliding Pill */}
       <div className="flex md:hidden overflow-x-auto border-t border-slate-200/60 bg-slate-50/90 backdrop-blur-md p-2 scrollbar-none justify-start sm:justify-center">
-        <nav className="flex items-center gap-1 text-xs font-mono" aria-label="Mobile Navigation">
-          {navLinks.map((link) => (
-            <Link
-              key={link.href}
-              href={link.href}
-              prefetch={false}
-              onClick={() => handleNavClick(link.href)}
-              className={`rounded-lg px-2.5 py-1 text-[11px] whitespace-nowrap transition uppercase tracking-wider font-semibold ${
-                link.active
-                  ? "bg-slate-900 text-white font-bold"
-                  : "text-slate-600 hover:text-slate-950"
-              }`}
-            >
-              {link.label}
-            </Link>
-          ))}
+        <nav
+          ref={mobileNavRef}
+          className="relative flex items-center gap-1 text-xs font-mono p-1 rounded-xl bg-slate-100/70"
+          aria-label="Mobile Navigation"
+        >
+          {/* Animated Sliding Pill Background for Mobile */}
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute left-0 top-0 rounded-lg bg-slate-900 shadow-xs transition-all duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)]"
+            style={{
+              transform: `translate3d(${mobilePill.left}px, ${mobilePill.top}px, 0)`,
+              width: `${mobilePill.width}px`,
+              height: `${mobilePill.height}px`,
+              opacity: mobilePill.opacity,
+            }}
+          />
+
+          {navLinks.map((link) => {
+            const isCurrent = link.href === currentTargetHref;
+            return (
+              <Link
+                key={link.href}
+                href={link.href}
+                ref={(el) => {
+                  if (el) mobileLinkRefs.current.set(link.href, el);
+                  else mobileLinkRefs.current.delete(link.href);
+                }}
+                prefetch={false}
+                onClick={() => handleNavClick(link.href)}
+                className={`relative z-10 inline-flex items-center justify-center rounded-lg px-2.5 py-1 text-[11px] whitespace-nowrap text-center text-xs font-mono uppercase font-bold tracking-normal transition-colors duration-200 ${
+                  isCurrent
+                    ? "text-white"
+                    : "text-slate-600 hover:text-slate-950"
+                }`}
+              >
+                <span>{link.label}</span>
+              </Link>
+            );
+          })}
         </nav>
       </div>
     </header>
   );
 }
+

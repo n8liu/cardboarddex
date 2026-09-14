@@ -1,19 +1,21 @@
-import { PageLoadingStatus } from "@/components/page-loading-status";
+import { SectionLoadingBar } from "@/components/section-loading-bar";
 
 export default function CardDetailLoading() {
   return (
     <main className="min-h-[calc(100vh-65px)] bg-[#f7f8f6] text-slate-950 font-mono">
       <div className="mx-auto min-w-0 max-w-[1600px] px-4 pb-14 pt-8 sm:px-6 lg:px-8">
-        {/* Instant Live Status Banner */}
-        <div className="mb-6">
-          <PageLoadingStatus
-            title="Loading Card Market Comps"
-            description="Querying price history, PSA graded comps, and verified eBay sold listings..."
-          />
+        {/* Back Link Shell */}
+        <div className="mb-6 flex items-center gap-2">
+          <div className="h-8 w-24 animate-pulse rounded-lg bg-slate-200" />
         </div>
 
-        {/* Breadcrumb Skeleton */}
-        <div className="mb-6 h-4 w-56 animate-pulse rounded bg-slate-200" />
+        {/* Section Loading Bar */}
+        <div className="mb-8">
+          <SectionLoadingBar
+            label="Loading Card Market Comps..."
+            detail="Querying price history, PSA graded comps, and verified eBay sold listings"
+          />
+        </div>
 
         {/* Card Main Layout Skeleton */}
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-[380px_minmax(0,1fr)] xl:grid-cols-[440px_minmax(0,1fr)]">

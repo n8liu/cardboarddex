@@ -99,17 +99,63 @@ export function buildQueryString(
   return str ? `?${str}` : "";
 }
 
+interface CacheEntry<T> {
+  data: T;
+  timestamp: number;
+}
+
+const clientCache = new Map<string, CacheEntry<unknown>>();
+const clientInflight = new Map<string, Promise<unknown>>();
+const CLIENT_CACHE_TTL_MS = 60_000; // 60s memory cache for browser GET requests
+
+export function clearClientCache(): void {
+  clientCache.clear();
+  clientInflight.clear();
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const baseUrl = resolveApiUrl();
   const fullUrl = `${baseUrl}${path.startsWith("/") ? "" : "/"}${path}`;
-  const response = await fetch(fullUrl, {
-    ...options,
-  });
-  if (!response.ok) {
-    throw new Error(`CardboardDex API ${path} returned ${response.status}`);
+
+  const isClient = typeof window !== "undefined";
+  const isGet = !options.method || options.method.toUpperCase() === "GET";
+
+  if (isClient && isGet) {
+    const cached = clientCache.get(fullUrl);
+    if (cached && Date.now() - cached.timestamp < CLIENT_CACHE_TTL_MS) {
+      return cached.data as T;
+    }
+    const inflight = clientInflight.get(fullUrl);
+    if (inflight) {
+      return inflight as Promise<T>;
+    }
   }
-  return response.json() as Promise<T>;
+
+  const fetchPromise = (async () => {
+    try {
+      const response = await fetch(fullUrl, options);
+      if (!response.ok) {
+        throw new Error(`CardboardDex API ${path} returned ${response.status}`);
+      }
+      const data = (await response.json()) as T;
+      if (isClient && isGet) {
+        clientCache.set(fullUrl, { data, timestamp: Date.now() });
+      }
+      return data;
+    } finally {
+      if (isClient && isGet) {
+        clientInflight.delete(fullUrl);
+      }
+    }
+  })();
+
+  if (isClient && isGet) {
+    clientInflight.set(fullUrl, fetchPromise);
+  }
+
+  return fetchPromise;
 }
+
 
 type SearchCardOptions = {
   limit?: number;
@@ -213,29 +259,30 @@ export async function getCard(
   cardId: string,
   options?: { ref?: string }
 ): Promise<CardDetail | null> {
-  const baseUrl = resolveApiUrl();
   const qs = options?.ref ? `?ref=${encodeURIComponent(options.ref)}` : "";
-  const response = await fetch(`${baseUrl}/cards/${encodeURIComponent(cardId)}${qs}`, {
-    cache: "no-store",
-  });
-  if (response.status === 404) return null;
-  if (!response.ok) {
-    throw new Error(`CardboardDex card request returned ${response.status}`);
+  try {
+    return await request<CardDetail>(`/cards/${encodeURIComponent(cardId)}${qs}`, {
+      cache: "no-store",
+    });
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message.includes("404")) {
+      return null;
+    }
+    throw err;
   }
-  return response.json() as Promise<CardDetail>;
 }
 
 export async function getCardPricing(cardId: string): Promise<CardPricing | null> {
-  const baseUrl = resolveApiUrl();
-  const response = await fetch(
-    `${baseUrl}/cards/${encodeURIComponent(cardId)}/prices?days=365`,
-    { cache: "no-store" },
-  );
-  if (response.status === 404) return null;
-  if (!response.ok) {
-    throw new Error(`CardboardDex pricing request returned ${response.status}`);
+  try {
+    return await request<CardPricing>(`/cards/${encodeURIComponent(cardId)}/prices?days=365`, {
+      cache: "no-store",
+    });
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message.includes("404")) {
+      return null;
+    }
+    throw err;
   }
-  return response.json() as Promise<CardPricing>;
 }
 
 export function getGradingProfit(options: {

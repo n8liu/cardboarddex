@@ -1,17 +1,9 @@
-import { PageLoadingStatus } from "@/components/page-loading-status";
+import { SectionLoadingBar } from "@/components/section-loading-bar";
 
 export default function PokemonDetailLoading() {
   return (
     <main className="min-h-[calc(100vh-65px)] bg-[#f7f8f6] text-slate-950 font-mono">
       <div className="mx-auto min-w-0 max-w-[1600px] px-4 pb-14 pt-8 sm:px-6 lg:px-8">
-        {/* Instant Live Status Banner */}
-        <div className="mb-6">
-          <PageLoadingStatus
-            title="Loading Pokémon Profile"
-            description="Fetching official PokéAPI stats, artwork, and matching trading card market comps..."
-          />
-        </div>
-
         {/* Header Breadcrumb & Cycle Nav Skeleton */}
         <div className="mb-6 flex items-center justify-between">
           <div className="h-8 w-36 animate-pulse rounded-xl bg-slate-200" />
@@ -38,6 +30,14 @@ export default function PokemonDetailLoading() {
               <div className="h-4 w-full max-w-lg animate-pulse rounded bg-slate-100" />
             </div>
           </div>
+        </div>
+
+        {/* Section Loading Bar */}
+        <div className="mb-6">
+          <SectionLoadingBar
+            label="Loading Pokémon Market Comps..."
+            detail="Fetching official PokéAPI stats, artwork, and matching trading card market comps"
+          />
         </div>
 
         {/* Cards Section Header Skeleton */}

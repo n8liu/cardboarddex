@@ -81,7 +81,9 @@ export default async function PokemonDetailPage({ params, searchParams }: PagePr
   };
 
   const primaryType: PokemonType = pokemon.types[0] || "normal";
-  const theme = TYPE_THEMES[primaryType];
+  const secondaryType: PokemonType | undefined = pokemon.types[1];
+  const primaryTheme = TYPE_THEMES[primaryType];
+  const secondaryTheme = secondaryType ? TYPE_THEMES[secondaryType] : undefined;
 
   return (
     <main className="min-h-[calc(100vh-65px)] bg-[#f7f8f6] py-8 text-slate-950">
@@ -98,12 +100,38 @@ export default async function PokemonDetailPage({ params, searchParams }: PagePr
         />
         <PokemonKeyboardCycle prevId={prevPokemon.id} nextId={nextPokemon.id} />
 
-        {/* Hero Showcase Card */}
+        {/* Hero Showcase Card with Atmospheric Type Ambient Lighting */}
         <section className="relative mb-8 overflow-hidden rounded-3xl border border-slate-200/90 bg-white p-6 shadow-sm sm:p-8 lg:p-10">
-          {/* Subtle Ambient Glow */}
+          {/* Top colored accent line matching elemental type */}
           <div
-            className="pointer-events-none absolute -right-16 -top-16 h-96 w-96 rounded-full opacity-20 blur-3xl"
-            style={{ background: theme.glow }}
+            className="absolute inset-x-0 top-0 h-1"
+            style={{
+              background: secondaryTheme
+                ? `linear-gradient(to right, ${primaryTheme.glow.replace(/[\d\.]+\)$/, "0.85)")}, ${secondaryTheme.glow.replace(/[\d\.]+\)$/, "0.85)")})`
+                : primaryTheme.glow.replace(/[\d\.]+\)$/, "0.8)"),
+            }}
+            aria-hidden="true"
+          />
+
+          {/* Atmospheric Ambient Glow Layers */}
+          <div
+            className="pointer-events-none absolute -right-24 -top-24 h-[500px] w-[500px] rounded-full opacity-25 blur-3xl animate-pulse-slow"
+            style={{ background: primaryTheme.glow }}
+            aria-hidden="true"
+          />
+          {secondaryTheme && (
+            <div
+              className="pointer-events-none absolute -left-20 -bottom-20 h-[400px] w-[400px] rounded-full opacity-20 blur-3xl"
+              style={{ background: secondaryTheme.glow }}
+              aria-hidden="true"
+            />
+          )}
+          <div
+            className="pointer-events-none absolute inset-0 opacity-40 mix-blend-multiply"
+            style={{
+              background: `radial-gradient(circle at 18% 32%, ${primaryTheme.glow} 0%, transparent 60%)`,
+            }}
+            aria-hidden="true"
           />
 
           <div className="grid grid-cols-1 gap-8 lg:grid-cols-12 lg:gap-12 items-center">
@@ -112,11 +140,19 @@ export default async function PokemonDetailPage({ params, searchParams }: PagePr
               <div className="relative flex w-full items-center justify-center gap-2 sm:gap-3">
 
                 <div
-                  className="relative flex h-60 w-60 sm:h-72 sm:w-72 items-center justify-center rounded-3xl p-5 sm:p-6"
+                  className="relative flex h-60 w-60 sm:h-72 sm:w-72 items-center justify-center rounded-3xl p-5 sm:p-6 shadow-xs border border-white/80"
                   style={{
-                    background: `radial-gradient(circle, ${theme.glow} 0%, rgba(255,255,255,0) 70%)`,
+                    background: secondaryTheme
+                      ? `radial-gradient(circle at 35% 35%, ${primaryTheme.glow} 0%, ${secondaryTheme.glow} 50%, rgba(255,255,255,0.5) 100%)`
+                      : `radial-gradient(circle at 50% 50%, ${primaryTheme.glow} 0%, rgba(255,255,255,0.7) 60%, rgba(255,255,255,0) 90%)`,
                   }}
                 >
+                  {/* Concentric subtle radar pulse ring behind artwork */}
+                  <div
+                    className="pointer-events-none absolute inset-4 rounded-full border border-dashed opacity-25 animate-pulse-slow"
+                    style={{ borderColor: primaryTheme.glow }}
+                    aria-hidden="true"
+                  />
                   <Image
                     src={pokemon.artwork}
                     alt={pokemon.name}

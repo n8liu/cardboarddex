@@ -9,6 +9,9 @@ import type { PokemonSetCount } from "@/types/pokemon";
 import { cardImageUrl, getPokemonCards } from "@/lib/api";
 import { EmptyState } from "@/components/ui/empty-state";
 import { SearchInput } from "@/components/ui/search-input";
+import { HoloCard } from "@/components/ui/holo-card";
+import { useCurrency } from "@/context/currency-context";
+import { shimmerBlurDataUrl } from "@/lib/shimmer";
 
 type Props = {
   pokemonName: string;
@@ -28,6 +31,7 @@ export function PokemonCardsView({
   lowestPrice,
 }: Props) {
   const searchParams = useSearchParams();
+  const { formatPrice } = useCurrency();
 
   const getUrlParams = useCallback(() => {
     const params = typeof window !== "undefined"
@@ -118,16 +122,6 @@ export function PokemonCardsView({
     );
   }, [cards, searchFilter]);
 
-  const formatPrice = (val: number | null) => {
-    if (val === null || val === undefined || isNaN(val)) return "—";
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      minimumFractionDigits: val < 10 ? 2 : 0,
-      maximumFractionDigits: 2,
-    }).format(val);
-  };
-
   return (
     <div>
       {/* Market Intelligence Bar */}
@@ -147,7 +141,7 @@ export function PokemonCardsView({
             Highest Value Card
           </div>
           <div className="mt-1 font-mono text-2xl font-black text-emerald-600">
-            {formatPrice(highestPrice)}
+            {formatPrice(highestPrice, { showPending: true })}
           </div>
           <div className="mt-1 text-xs text-slate-500">Top market price</div>
         </div>
@@ -157,7 +151,7 @@ export function PokemonCardsView({
             Lowest Entry Price
           </div>
           <div className="mt-1 font-mono text-2xl font-black text-slate-700">
-            {formatPrice(lowestPrice)}
+            {formatPrice(lowestPrice, { showPending: true })}
           </div>
           <div className="mt-1 text-xs text-slate-500">Accessible copy</div>
         </div>
@@ -252,13 +246,27 @@ export function PokemonCardsView({
         </div>
       </div>
 
-      {/* Cards Grid */}
+      {/* Cards Grid with Staggered Cascading Skeletons */}
       {isLoading ? (
-        <div className="flex h-64 items-center justify-center rounded-2xl border border-slate-200 bg-white">
-          <div className="flex flex-col items-center gap-2">
-            <span className="h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-emerald-600" />
-            <span className="text-xs font-bold text-slate-500">Loading {pokemonName} cards...</span>
-          </div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div
+              key={i}
+              className="animate-card-cascade flex flex-col justify-between rounded-2xl border border-slate-200/80 bg-white p-3 shadow-xs"
+              style={{ animationDelay: `${i * 40}ms` }}
+            >
+              <div className="aspect-[5/7] w-full animate-pulse rounded-xl bg-slate-100" />
+              <div className="mt-3 space-y-2">
+                <div className="h-3 w-16 animate-pulse rounded bg-slate-100" />
+                <div className="h-4 w-3/4 animate-pulse rounded bg-slate-200" />
+                <div className="h-3 w-12 animate-pulse rounded bg-slate-100" />
+              </div>
+              <div className="mt-4 pt-2 border-t border-slate-100 flex items-center justify-between">
+                <div className="h-3 w-10 animate-pulse rounded bg-slate-100" />
+                <div className="h-4 w-14 animate-pulse rounded bg-emerald-100/70" />
+              </div>
+            </div>
+          ))}
         </div>
       ) : filteredCards.length === 0 ? (
         <EmptyState
@@ -273,11 +281,11 @@ export function PokemonCardsView({
         />
       ) : (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-          {filteredCards.map((card) => (
+          {filteredCards.map((card, idx) => (
             <CardItem
               key={card.id}
               card={card}
-              formatPrice={formatPrice}
+              idx={idx}
             />
           ))}
         </div>
@@ -288,29 +296,47 @@ export function PokemonCardsView({
 
 function CardItem({
   card,
-  formatPrice,
+  idx,
 }: {
   card: CardSummary;
-  formatPrice: (val: number | null) => string;
+  idx: number;
 }) {
+  const { formatPrice } = useCurrency();
+  const [failed, setFailed] = useState(false);
+
   return (
     <Link
-      href={`/cards/${card.id}`}
+      href={`/cards/${encodeURIComponent(card.id)}`}
       prefetch={false}
-      className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-slate-200/90 bg-white p-3 shadow-xs transition-all duration-300 hover:-translate-y-1 hover:border-emerald-300 hover:shadow-lg"
+      style={{ animationDelay: `${Math.min(idx * 25, 300)}ms` }}
+      className="card-cv animate-card-cascade group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-slate-200/90 bg-white p-3 shadow-xs transition-all duration-300 hover:-translate-y-1 hover:border-emerald-300 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
     >
       <div>
-        {/* Card Image */}
-        <div className="relative aspect-[2.5/3.5] w-full overflow-hidden rounded-xl bg-slate-100 p-1">
-          <Image
-            src={cardImageUrl(card.image_url)}
-            alt={card.name}
-            fill
-            sizes="(max-width: 640px) 150px, (max-width: 1024px) 200px, 250px"
-            className="object-contain transition-transform duration-300 group-hover:scale-105"
-            loading="lazy"
-          />
-        </div>
+        {/* 3D Holo Card Tilt with Rarity Shader */}
+        <HoloCard maxTilt={8} rarity={card.rarity} className="w-full">
+          <div className="relative aspect-[5/7] w-full overflow-hidden rounded-xl bg-slate-100 p-1">
+            {failed ? (
+              <div className="flex h-full w-full flex-col items-center justify-center bg-slate-100 text-center">
+                <span className="flex h-10 w-10 items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 text-xs font-black text-emerald-700">
+                  {card.name.slice(0, 1).toUpperCase()}
+                </span>
+                <span className="mt-2 text-[9px] font-semibold text-slate-400 uppercase">Image pending</span>
+              </div>
+            ) : (
+              <Image
+                src={cardImageUrl(card.image_url)}
+                alt={card.name}
+                fill
+                sizes="(max-width: 640px) 150px, (max-width: 1024px) 200px, 250px"
+                className="object-contain transition-transform duration-300 group-hover:scale-105"
+                placeholder="blur"
+                blurDataURL={shimmerBlurDataUrl(150, 210)}
+                onError={() => setFailed(true)}
+                loading="lazy"
+              />
+            )}
+          </div>
+        </HoloCard>
 
         {/* Set & Number */}
         <div className="mt-2.5 flex items-center justify-between text-[10px] font-semibold text-slate-400">
@@ -338,11 +364,11 @@ function CardItem({
         )}
       </div>
 
-      {/* Price Badge */}
+      {/* Price Badge with Multi-Currency formatting */}
       <div className="mt-3 pt-2 border-t border-slate-100 flex items-center justify-between">
         <div className="text-[10px] text-slate-400 font-medium">Market</div>
         <div className="font-mono text-xs font-black text-emerald-600">
-          {formatPrice(card.market_price)}
+          {formatPrice(card.market_price, { showPending: true })}
         </div>
       </div>
     </Link>
