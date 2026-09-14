@@ -8,6 +8,7 @@ import { CardTableView } from "@/components/card-table-view";
 import { SearchForm } from "@/components/search-form";
 import { AnimatedNumber } from "@/components/ui/animated-number";
 import { BackToTop } from "@/components/ui/back-to-top";
+import { PriceRangeSlider, type PriceRangeValue } from "@/components/ui/price-range-slider";
 import { useCurrency } from "@/context/currency-context";
 import { CARD_PAGE_SIZE, getCardSets, getSetStats, searchCards } from "@/lib/api";
 import type { CardSetOption, CardSort, CardSummary, GameLanguage, SetStats } from "@/types/card";
@@ -34,6 +35,8 @@ const QUICK_FILTERS: { id: CatalogQuickFilter; label: string }[] = [
 type CatalogBrowserProps = {
   initialCards: CardSummary[];
   initialHideSealed?: boolean;
+  initialMinPrice?: number | null;
+  initialMaxPrice?: number | null;
   initialQuery: string;
   initialSetId: string;
   initialSetStats?: SetStats | null;
@@ -44,6 +47,8 @@ type CatalogBrowserProps = {
 export function CatalogBrowser({
   initialCards,
   initialHideSealed = true,
+  initialMinPrice = null,
+  initialMaxPrice = null,
   initialQuery,
   initialSetId,
   initialSetStats = null,
@@ -63,8 +68,14 @@ export function CatalogBrowser({
     const sort = validSorts.includes(rawSort) ? rawSort : initialSortBy;
     const hs = params.get("hide_sealed") === "false" || params.get("sealed") === "true" ? false : true;
     const g = (params.get("game") as GameLanguage) || "all";
-    return { q, s, sort, hs, g };
-  }, [initialHideSealed, initialQuery, initialSetId, initialSortBy, searchParams]);
+    const rawMin = params.get("min_price");
+    const parsedMin = rawMin ? parseFloat(rawMin) : undefined;
+    const minP = parsedMin !== undefined && !isNaN(parsedMin) ? parsedMin : (initialMinPrice ?? null);
+    const rawMax = params.get("max_price");
+    const parsedMax = rawMax ? parseFloat(rawMax) : undefined;
+    const maxP = parsedMax !== undefined && !isNaN(parsedMax) ? parsedMax : (initialMaxPrice ?? null);
+    return { q, s, sort, hs, g, minP, maxP };
+  }, [initialHideSealed, initialMinPrice, initialMaxPrice, initialQuery, initialSetId, initialSortBy, searchParams]);
 
   const { formatPrice } = useCurrency();
   const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
@@ -90,22 +101,18 @@ export function CatalogBrowser({
   const [sortBy, setSortBy] = useState<CardSort>(initialSortBy);
   const [hideSealed, setHideSealed] = useState(initialHideSealed);
   const [game, setGame] = useState<GameLanguage>("all");
-  const [quickFilter, setQuickFilter] = useState<CatalogQuickFilter>("all");
+  const [minPrice, setMinPrice] = useState<number | null>(initialMinPrice ?? null);
+  const [maxPrice, setMaxPrice] = useState<number | null>(initialMaxPrice ?? null);
+
+  const [quickFilter, setQuickFilter] = useState<CatalogQuickFilter>(() => {
+    if ((initialMinPrice === null || initialMinPrice <= 1) && initialMaxPrice === 10) return "under10";
+    if (initialMinPrice === 10 && initialMaxPrice === 50) return "10to50";
+    if (initialMinPrice === 100 && (initialMaxPrice === null || initialMaxPrice === undefined)) return "grails";
+    return "all";
+  });
   const [cards, setCards] = useState(initialCards);
 
   const displayedCards = useMemo(() => {
-    if (quickFilter === "all") return cards;
-    if (quickFilter === "under10") {
-      return cards.filter((c) => c.market_price !== null && c.market_price < 10);
-    }
-    if (quickFilter === "10to50") {
-      return cards.filter(
-        (c) => c.market_price !== null && c.market_price >= 10 && c.market_price <= 50
-      );
-    }
-    if (quickFilter === "grails") {
-      return cards.filter((c) => c.market_price !== null && c.market_price >= 100);
-    }
     if (quickFilter === "specials") {
       return cards.filter((c) => {
         const r = (c.rarity || "").toLowerCase();
@@ -122,6 +129,40 @@ export function CatalogBrowser({
     return cards;
   }, [cards, quickFilter]);
 
+  const handleQuickFilterClick = (filterId: CatalogQuickFilter) => {
+    setQuickFilter(filterId);
+    if (filterId === "all") {
+      setMinPrice(null);
+      setMaxPrice(null);
+    } else if (filterId === "under10") {
+      setMinPrice(0);
+      setMaxPrice(10);
+    } else if (filterId === "10to50") {
+      setMinPrice(10);
+      setMaxPrice(50);
+    } else if (filterId === "grails") {
+      setMinPrice(100);
+      setMaxPrice(null);
+    }
+  };
+
+  const handlePriceRangeChange = useCallback(({ min, max }: PriceRangeValue) => {
+    setMinPrice(min);
+    setMaxPrice(max);
+    if ((min === null || min <= 1) && max === 10) {
+      setQuickFilter("under10");
+    } else if (min === 10 && max === 50) {
+      setQuickFilter("10to50");
+    } else if (min === 100 && max === null) {
+      setQuickFilter("grails");
+    } else if ((min === null || min === 0 || min <= 1) && max === null) {
+      setQuickFilter("all");
+    } else {
+      // Custom range: deselect preset chips
+      setQuickFilter("all");
+    }
+  }, []);
+
   const [setsList, setSetsList] = useState<CardSetOption[]>(sets);
   const [setStats, setSetStats] = useState<SetStats | null>(initialSetStats);
   const [isLoadingStats, setIsLoadingStats] = useState(false);
@@ -135,23 +176,47 @@ export function CatalogBrowser({
   const loadingMoreRef = useRef(false);
 
   useEffect(() => {
-    const { q, s, sort, hs, g } = getUrlParams();
+    const { q, s, sort, hs, g, minP, maxP } = getUrlParams();
     setQuery(q);
     setSetId(s);
     setSortBy(sort);
     setHideSealed(hs);
     setGame(g);
+    setMinPrice(minP);
+    setMaxPrice(maxP);
 
     if (!isInitialized.current) {
       isInitialized.current = true;
-      if (q !== initialQuery || s !== initialSetId || sort !== initialSortBy || hs !== initialHideSealed) {
+      if (
+        q !== initialQuery ||
+        s !== initialSetId ||
+        sort !== initialSortBy ||
+        hs !== initialHideSealed ||
+        minP !== initialMinPrice ||
+        maxP !== initialMaxPrice
+      ) {
         void (async () => {
           setIsSearching(true);
           if (s) setIsLoadingStats(true);
           try {
             const [nextCards, nextStats] = await Promise.all([
-              searchCards(q.trim(), { setId: s, sortBy: sort, hideSealed: hs, game: g }),
-              s ? getSetStats(s, { q: q.trim(), hideSealed: hs, game: g }).catch(() => null) : Promise.resolve(null),
+              searchCards(q.trim(), {
+                setId: s,
+                sortBy: sort,
+                hideSealed: hs,
+                game: g,
+                minPrice: minP,
+                maxPrice: maxP,
+              }),
+              s
+                ? getSetStats(s, {
+                    q: q.trim(),
+                    hideSealed: hs,
+                    game: g,
+                    minPrice: minP,
+                    maxPrice: maxP,
+                  }).catch(() => null)
+                : Promise.resolve(null),
             ]);
             setCards(nextCards);
             setHasMore(nextCards.length === CARD_PAGE_SIZE);
@@ -170,9 +235,22 @@ export function CatalogBrowser({
           if (s && !initialSetStats) setIsLoadingStats(true);
           try {
             const [nextCards, nextStats] = await Promise.all([
-              searchCards(q.trim(), { setId: s, sortBy: sort, hideSealed: hs, game: g }),
+              searchCards(q.trim(), {
+                setId: s,
+                sortBy: sort,
+                hideSealed: hs,
+                game: g,
+                minPrice: minP,
+                maxPrice: maxP,
+              }),
               s && !initialSetStats
-                ? getSetStats(s, { q: q.trim(), hideSealed: hs, game: g }).catch(() => null)
+                ? getSetStats(s, {
+                    q: q.trim(),
+                    hideSealed: hs,
+                    game: g,
+                    minPrice: minP,
+                    maxPrice: maxP,
+                  }).catch(() => null)
                 : Promise.resolve(initialSetStats),
             ]);
             setCards(nextCards);
@@ -187,7 +265,16 @@ export function CatalogBrowser({
         })();
       }
     }
-  }, [getUrlParams, initialCards.length, initialHideSealed, initialQuery, initialSetId, initialSortBy]);
+  }, [
+    getUrlParams,
+    initialCards.length,
+    initialHideSealed,
+    initialMinPrice,
+    initialMaxPrice,
+    initialQuery,
+    initialSetId,
+    initialSortBy,
+  ]);
 
   useEffect(() => {
     setSetsList(sets);
@@ -214,9 +301,22 @@ export function CatalogBrowser({
       setError(null);
       try {
         const [nextCards, nextStats] = await Promise.all([
-          searchCards(query.trim(), { setId, sortBy, hideSealed, game }),
+          searchCards(query.trim(), {
+            setId,
+            sortBy,
+            hideSealed,
+            game,
+            minPrice,
+            maxPrice,
+          }),
           setId
-            ? getSetStats(setId, { q: query.trim(), hideSealed, game }).catch((err) => {
+            ? getSetStats(setId, {
+                q: query.trim(),
+                hideSealed,
+                game,
+                minPrice,
+                maxPrice,
+              }).catch((err) => {
                 console.error("Failed fetching set stats:", err);
                 return null;
               })
@@ -233,6 +333,8 @@ export function CatalogBrowser({
         sortBy !== "price_desc" ? url.searchParams.set("sort", sortBy) : url.searchParams.delete("sort");
         !hideSealed ? url.searchParams.set("hide_sealed", "false") : url.searchParams.delete("hide_sealed");
         game !== "all" ? url.searchParams.set("game", game) : url.searchParams.delete("game");
+        minPrice != null && minPrice > 0 ? url.searchParams.set("min_price", String(minPrice)) : url.searchParams.delete("min_price");
+        maxPrice != null ? url.searchParams.set("max_price", String(maxPrice)) : url.searchParams.delete("max_price");
         window.history.replaceState(null, "", `${url.pathname}${url.search}`);
       } catch (requestError) {
         if (requestVersion.current !== version) return;
@@ -248,7 +350,7 @@ export function CatalogBrowser({
     }, 250);
 
     return () => window.clearTimeout(timer);
-  }, [query, setId, sortBy, hideSealed, game]);
+  }, [query, setId, sortBy, hideSealed, game, minPrice, maxPrice]);
 
   const loadMore = useCallback(async () => {
     if (!hasMore || isSearching || loadingMoreRef.current) return;
@@ -262,6 +364,8 @@ export function CatalogBrowser({
         sortBy,
         hideSealed,
         game,
+        minPrice,
+        maxPrice,
       });
       if (requestVersion.current !== version) return;
       setCards((current) => [...current, ...nextCards]);
@@ -274,7 +378,7 @@ export function CatalogBrowser({
       loadingMoreRef.current = false;
       setIsLoadingMore(false);
     }
-  }, [cards.length, hasMore, isSearching, query, setId, sortBy, hideSealed, game]);
+  }, [cards.length, hasMore, isSearching, query, setId, sortBy, hideSealed, game, minPrice, maxPrice]);
 
   useEffect(() => {
     const sentinel = sentinelRef.current;
@@ -297,6 +401,8 @@ export function CatalogBrowser({
     setHideSealed(true);
     setGame("all");
     setQuickFilter("all");
+    setMinPrice(null);
+    setMaxPrice(null);
   };
 
   const handleSetChange = (newSetId: string) => {
@@ -337,7 +443,7 @@ export function CatalogBrowser({
               <button
                 key={chip.id}
                 type="button"
-                onClick={() => setQuickFilter(chip.id)}
+                onClick={() => handleQuickFilterClick(chip.id)}
                 className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
                   isActive
                     ? "bg-slate-900 text-white shadow-2xs"
@@ -355,7 +461,7 @@ export function CatalogBrowser({
         <aside className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_8px_28px_rgba(15,23,42,0.035)] lg:sticky lg:top-24">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-bold text-slate-950">Browse</h2>
-            {(setId || sortBy !== "price_desc" || !hideSealed || query || game !== "all") ? (
+            {(setId || sortBy !== "price_desc" || !hideSealed || query || game !== "all" || (minPrice != null && minPrice > 0) || maxPrice != null) ? (
               <button className="text-xs font-semibold text-emerald-700 transition hover:text-emerald-900" onClick={clearFilters} type="button">
                 Reset
               </button>
@@ -416,6 +522,15 @@ export function CatalogBrowser({
               {filteredSets.map((cardSet) => <option key={cardSet.id} value={cardSet.id}>{cardSet.name}</option>)}
             </select>
           </label>
+
+          {/* Price Range Slider */}
+          <div className="mt-5 border-t border-slate-100 pt-4">
+            <PriceRangeSlider
+              minPrice={minPrice}
+              maxPrice={maxPrice}
+              onChange={handlePriceRangeChange}
+            />
+          </div>
 
           <label className="mt-5 block">
             <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Sort</span>
@@ -532,7 +647,7 @@ export function CatalogBrowser({
                         <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
                       </span>
                       <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">
-                        {query.trim() || quickFilter !== "all" ? "Filtered Total" : "Set Total"}
+                        {query.trim() || quickFilter !== "all" || (minPrice != null && minPrice > 0) || maxPrice != null ? "Filtered Total" : "Set Total"}
                       </span>
                     </div>
 

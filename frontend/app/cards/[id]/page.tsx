@@ -6,6 +6,7 @@ import { BackButton } from "@/components/back-button";
 import { CardDetailClientFallback } from "@/components/card-detail-client-fallback";
 import { PriceDashboard } from "@/components/price-dashboard";
 import { ShopOnEbayButton } from "@/components/shop-ebay-button";
+import { AddToBinderButton } from "@/components/binder/add-to-binder-button";
 import { HoloCard } from "@/components/ui/holo-card";
 import { cardImageUrl, getCard, getCardPricing } from "@/lib/api";
 import { formatDexNumber } from "@/lib/pokeapi";
@@ -66,8 +67,8 @@ export default async function CardPage({ params, searchParams }: CardPageProps) 
     <main className="mx-auto min-h-[70vh] max-w-7xl px-5 py-9 sm:px-8 sm:py-12">
       <BackButton />
 
-      <div className="mt-8 grid gap-8 rounded-3xl border border-stone-200 bg-white p-5 shadow-[0_18px_55px_rgba(33,45,25,0.06)] md:grid-cols-[320px_1fr] md:gap-12 md:p-8">
-        <div className="overflow-hidden rounded-2xl bg-[radial-gradient(circle_at_top,_#f1fee7,_#f5f5f4_70%)] p-5">
+      <div className="mt-8 grid items-start gap-8 rounded-3xl border border-stone-200 bg-white p-5 shadow-[0_18px_55px_rgba(33,45,25,0.06)] md:grid-cols-[320px_1fr] md:gap-12 md:p-8">
+        <div className="self-start overflow-hidden rounded-2xl bg-[radial-gradient(circle_at_top,_#f1fee7,_#f5f5f4_70%)] p-5">
           <HoloCard maxTilt={14} rarity={card.rarity} className="mx-auto block w-full rounded-xl">
             <Image
               alt={`${card.name} from ${card.set_name}`}
@@ -82,7 +83,7 @@ export default async function CardPage({ params, searchParams }: CardPageProps) 
           </HoloCard>
         </div>
 
-        <section className="pt-1 md:pt-4">
+        <section className="pt-1 md:pt-2">
           <div className="flex flex-wrap items-center gap-2">
             <Link
               href={setCatalogUrl}
@@ -109,18 +110,19 @@ export default async function CardPage({ params, searchParams }: CardPageProps) 
             )}
           </div>
 
-          <h1 className="mt-3 text-4xl font-bold tracking-[-0.035em] text-slate-950 sm:text-5xl">
+          <h1 className="mt-2.5 text-3xl font-bold tracking-[-0.035em] text-slate-950 sm:text-4xl md:text-5xl">
             {card.name}
           </h1>
-          <p className="mt-3 font-mono text-sm text-slate-500">#{number}</p>
+          <p className="mt-2 font-mono text-sm text-slate-500">#{number}</p>
 
-          <div className="mt-6 flex flex-wrap items-center gap-3">
+          <div className="mt-5 flex flex-wrap items-center gap-3">
             <ShopOnEbayButton card={card} variant="hero" />
+            <AddToBinderButton cardId={card.id} cardName={card.name} />
           </div>
 
-          <dl className="mt-8 divide-y divide-stone-200 border-y border-stone-200">
+          <dl className="mt-6 divide-y divide-stone-200 border-y border-stone-200">
             {species && (
-              <div className="grid grid-cols-2 gap-4 py-4">
+              <div className="grid grid-cols-2 gap-4 py-2.5 sm:py-3">
                 <dt className="text-sm text-zinc-500">Pokédex Species</dt>
                 <dd className="text-right text-sm font-medium">
                   <Link
@@ -135,7 +137,7 @@ export default async function CardPage({ params, searchParams }: CardPageProps) 
                 </dd>
               </div>
             )}
-            <div className="grid grid-cols-2 gap-4 py-4">
+            <div className="grid grid-cols-2 gap-4 py-2.5 sm:py-3">
               <dt className="text-sm text-zinc-500">Set</dt>
               <dd className="text-right text-sm font-medium">
                 <Link
@@ -149,19 +151,19 @@ export default async function CardPage({ params, searchParams }: CardPageProps) 
               </dd>
             </div>
 
-            <div className="grid grid-cols-2 gap-4 py-4">
+            <div className="grid grid-cols-2 gap-4 py-2.5 sm:py-3">
               <dt className="text-sm text-zinc-500">Series</dt>
               <dd className="text-right text-sm font-medium text-zinc-950">
                 {card.series ?? "Not provided"}
               </dd>
             </div>
-            <div className="grid grid-cols-2 gap-4 py-4">
+            <div className="grid grid-cols-2 gap-4 py-2.5 sm:py-3">
               <dt className="text-sm text-zinc-500">Rarity</dt>
               <dd className="text-right text-sm font-medium text-zinc-950">
                 {card.rarity || "None"}
               </dd>
             </div>
-            <div className="grid grid-cols-2 gap-4 py-4">
+            <div className="grid grid-cols-2 gap-4 py-2.5 sm:py-3">
               <dt className="text-sm text-zinc-500">Release date</dt>
               <dd className="text-right text-sm font-medium text-zinc-950">
                 {formatDate(card.release_date)}

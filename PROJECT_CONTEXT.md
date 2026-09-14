@@ -42,6 +42,27 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
 
 ### Implemented and verified
 
+- **Interactive Physical Pokémon Portfolio Binder & Valuation Suite (`/binder`)**:
+  - **Authentic White Collector Album Binder Experience** ([`frontend/components/binder/binder-page-view.tsx`](frontend/components/binder/binder-page-view.tsx), [`frontend/app/binder/page.tsx`](frontend/app/binder/page.tsx)):
+    - **Physical Binder Aesthetics (White Theme)**: Rendered in a clean, pristine White Collector's Album theme matching CardboardDex's design language: crisp white leatherette cover textures (`.binder-leather-cover`), perimeter dashed stitching (`.binder-stitch`), refined silver/chrome metallic corner brackets, heavy metallic 3-ring chrome spine with circular hole punches (`.binder-ring`, `.binder-hole-punch`), and welded polypropylene pocket sleeves (3x3 grid) with diagonal gloss reflections (`.binder-sleeve-gloss`).
+    - **Flexible Page Layouts**: Supports **Two-Page Spread (Open Binder)** on desktop displaying 18 slots side-by-side with center rings, as well as **Single Page** 9-pocket mode.
+    - **Multi-Page Management**: Smooth page navigation (`Page 1 of N`), direct page tabs (`[P.1]`, `[P.2]`, `[+ Add Page]`), delete page, and keyboard shortcuts (`[` / `]` or `ArrowLeft` / `ArrowRight`).
+  - **Client-Side `localStorage` Persistence (Card IDs Only)** ([`frontend/context/binder-context.tsx`](frontend/context/binder-context.tsx)):
+    - Guaranteed zero price bloat or stale cache: strictly stores only `{ card_id }` and slot index numbers under `cardboarddex_binder`.
+    - Real-time cross-tab synchronization with `storage` and `cardboarddex_binder_updated` window events.
+  - **Dynamic Portfolio Valuation & Historical Valuation Chart** ([`frontend/components/binder/portfolio-value-chart.tsx`](frontend/components/binder/portfolio-value-chart.tsx), [`backend/app/services/portfolio_service.py`](backend/app/services/portfolio_service.py)):
+    - Aggregates real-time portfolio market value using multi-currency formatting (`USD`, `EUR`, `JPY`, `GBP`) and rolling `AnimatedNumber`.
+    - Computes 24h, 7d, and 30d value deltas ($ and %) and highlights the Crown Jewel (highest-value card in the binder).
+    - Interactive `Recharts` ComposedChart styled in a white card chassis with historical portfolio valuation curves, timeframe filters (`7D`, `1M`, `3M`, `1Y`, `ALL`), SVG emerald gradient fill, dotted crosshair, and date scrubbing.
+    - Single-roundtrip batch backend endpoint `POST /cards/portfolio-valuation` with Redis caching (`cardboarddex:portfolio:{hash}`, TTL 300s) and resilient client-side fallback hydration ([`frontend/lib/portfolio.ts`](frontend/lib/portfolio.ts)).
+  - **Interactive Pocket Sleeves & Card Picker Spotlight Modal** ([`frontend/components/binder/binder-sleeve-slot.tsx`](frontend/components/binder/binder-sleeve-slot.tsx), [`frontend/components/binder/card-picker-modal.tsx`](frontend/components/binder/card-picker-modal.tsx)):
+    - Empty pockets feature dashed slot indicators and glowing `+ Insert Card` actions.
+    - Filled pockets display cards with full 3D `HoloCard` tilt perspective and rarity-reactive foil shaders, slot ribbons, live market price tags, and drag-and-drop reorganization between slots.
+    - Spotlight modal with debounced search across all 54,680+ cards, quick-filter chips (*Charizard*, *Pikachu*, *Gengar*, *Grails $100+*, *Under $20*), language toggles, and 1-click slot insertion.
+  - **Top-Right Toolbar & Card Detail Integration** ([`frontend/components/nav-header.tsx`](frontend/components/nav-header.tsx), [`frontend/components/binder/add-to-binder-button.tsx`](frontend/components/binder/add-to-binder-button.tsx), [`frontend/app/cards/[id]/page.tsx`](frontend/app/cards/[id]/page.tsx)):
+    - Positioned as a dedicated top-right action button in the header toolbar, intentionally isolated from the central page navigation links and replacing the static "TCG & eBay Comps" badge. Features a 9-pocket binder icon, text label, and dynamic card count badge (e.g. `Binder 2`).
+    - Integrated `<AddToBinderButton>` on card detail pages (`/cards/[id]`) and fallback view with quick-add to next available slot and in-binder slot badge.
+
 - **Interactive Micro-Animations & Productivity Quality of Life (QoL) Suite**:
   - **Holographic Foil 3D Tilt Effect & Rarity-Reactive Shaders on Card Hover** ([`frontend/components/ui/holo-card.tsx`](frontend/components/ui/holo-card.tsx)):
     - Integrated across all card grids in [`frontend/components/card-grid.tsx`](frontend/components/card-grid.tsx), [`frontend/components/pokemon-cards-view.tsx`](frontend/components/pokemon-cards-view.tsx), and the hero card on [`frontend/app/cards/[id]/page.tsx`](frontend/app/cards/[id]/page.tsx).
@@ -69,6 +90,11 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
     - Smoothly transitions numeric values using `requestAnimationFrame` and an ease-out cubic curve (`1 - (1 - progress)^3`).
     - Respects `prefers-reduced-motion` and supports custom formatters (multi-currency, percentages, and compact abbreviations).
     - Integrated for Set Totals in [`catalog-browser.tsx`](frontend/components/catalog-browser.tsx), Top Surge %, Steepest Drop %, Gainers, and Drops in [`market-movers-dashboard.tsx`](frontend/components/market-movers-dashboard.tsx), and Tracked Volume & Comps count in [`top-volume-dashboard.tsx`](frontend/components/top-volume-dashboard.tsx).
+  - **Catalog Dual-Handle Price Range Slider & Backend Price Filtering**:
+    - **Dual-Handle Range Slider** ([`frontend/components/ui/price-range-slider.tsx`](frontend/components/ui/price-range-slider.tsx)): Features two draggable styled dots on both ends ($1 to $5,000+ / Any) operating across 12 non-linear stepped price milestones (`[1, 10, 25, 50, 100, 150, 200, 250, 500, 1000, 2500, 5000]`), enabling fine-grained price selection across both budget and mid-tier brackets ($10, $25, $50, $100, $150, $200, $250) while scaling up to grails ($1,000, $2,500, $5,000+). Includes connecting emerald highlight bar, pointer capture dragging, keyboard navigation (`ArrowLeft`/`ArrowRight`/`Home`/`End`), dynamic currency-aware readout badge (`All Prices`, `Under $25`, `$10 – $50`, `$100 – $200`, `$100+`), and milestone tick labels.
+    - **Sidebar Integration & Quick Filter Sync** ([`frontend/components/catalog-browser.tsx`](frontend/components/catalog-browser.tsx)): Positioned in the sidebar filter panel; bi-directionally synchronizes with Quick Filter chips (`Under $10`, `$10 – $50`, `$100+ Grails`, `All`) and browser URL query parameters (`?min_price=X&max_price=Y`).
+    - **Server-Side Price Querying & Pagination** ([`backend/app/routers/cards.py`](backend/app/routers/cards.py), [`backend/app/services/catalog_service.py`](backend/app/services/catalog_service.py)): Supported `min_price` and `max_price` query parameters in `GET /cards/search` and `GET /cards/sets/{set_id}/stats`, executing database-level subquery filtering on latest market prices with Redis caching and live Set Total price aggregation.
+    - **SSR Pre-Fetching** ([`frontend/app/catalog/page.tsx`](frontend/app/catalog/page.tsx)): Pre-fetches filtered cards and set statistics on server components for bookmarked or shared URLs without layout shift.
   - **Quick Filter Chips for Catalog & Movers**:
     - **Catalog Browser** ([`catalog-browser.tsx`](frontend/components/catalog-browser.tsx)): 1-click price filter pills (`All Cards`, `Under $10`, `$10 – $50`, `$100+ Grails`, `Illustration / Specials`) filtering active cards with 0ms reload latency.
     - **Market Movers** ([`market-movers-dashboard.tsx`](frontend/components/market-movers-dashboard.tsx)): 1-click velocity filter pills (`All Movers`, `Mega Surge (+25%+)`, `Steep Dips (-15%+)`, `High Value ($50+)`, `Budget (<$15)`).
@@ -275,8 +301,8 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
 
 - **Informative & Simplistic Landing Page (Default Route `/`)**:
   - The default landing page (`/`) is a dedicated, minimalistic **Landing Page** ([`components/landing-page.tsx`](frontend/components/landing-page.tsx)) embodying the IBM Plex Mono technical terminal design language.
-  - **Live System Telemetry & Status**: Live pulse badge (`LIVE DATA ENGINE ACTIVE | TCG API + EBAY COMPS`) and 5 key metric cards: **54,480+ cards tracked**, **482 sets synchronized**, **1,025 Pokédex species**, **66,500+ active market prices**, and **15-min staggered pricing refresh engine**.
-  - **Universal Quick Search & Jump Bar**: Integrated search input for cards, sets, or species with popular filter chips (*Charizard*, *Pikachu*, *Gengar*, *Umbreon*, *Mewtwo*, *151*, *Evolving Skies*, *Crown Zenith*) and direct CTAs for Pokédex and Catalog.
+  - **Live System Telemetry & Status**: Live pulse badge (`LIVE DATA ENGINE ACTIVE | TCG API + EBAY COMPS`) and 5 key metric cards with animated rolling count-ups ([`animated-number.tsx`](frontend/components/ui/animated-number.tsx)): **54,680+ cards tracked**, **484 sets synchronized** (234 English + 250 Japanese), **1,025 Pokédex species**, **66,500+ active market prices**, and **15-min staggered pricing refresh engine**.
+  - **Universal Quick Search & Jump Bar**: Integrated search input for cards, sets, or species with popular filter chips (*Charizard*, *Pikachu*, *Gengar*, *Umbreon*, *Mewtwo*, *151*, *Evolving Skies*, *Crown Zenith*), direct CTAs for Pokédex and Catalog, and dedicated Command Palette shortcut (`Cmd + K` / `Ctrl + K`).
   - **6 Core Intelligence Modules**: Minimalist interactive cards linking to each core capability:
     1. *National Pokédex* (`/pokedex`)
     2. *Card Catalog* (`/catalog`)
@@ -426,7 +452,7 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
     - **JavaScript URI Injection Sanitization** ([`routers/cards.py`](backend/app/routers/cards.py), [`frontend/components/price-dashboard.tsx`](frontend/components/price-dashboard.tsx), [`frontend/components/live-updates-dashboard.tsx`](frontend/components/live-updates-dashboard.tsx)): Enforced `https://` / `http://` protocols and trusted marketplace domain verification (`ebay.com`, `tcgplayer.com`) for all rendered listing links.
 
 - **Testing & Verification**:
-  - Backend pytest suite: **137 passed** with 100% pass rate (`tests/test_security.py`, `tests/test_trending.py`, `tests/test_services.py`, `tests/test_cards_api.py`, `tests/test_collect_prices.py`, `tests/test_cycle_prices.py`, `tests/test_update_pokemon.py`, `tests/test_foundation.py`, `tests/test_title_matcher.py`, `tests/test_sync_catalog.py`, `tests/test_tcgapi_client.py`, `tests/test_ebay_client.py`).
+  - Backend pytest suite: **143 passed** with 100% pass rate (`tests/test_portfolio.py`, `tests/test_security.py`, `tests/test_trending.py`, `tests/test_services.py`, `tests/test_cards_api.py`, `tests/test_collect_prices.py`, `tests/test_cycle_prices.py`, `tests/test_update_pokemon.py`, `tests/test_foundation.py`, `tests/test_title_matcher.py`, `tests/test_sync_catalog.py`, `tests/test_tcgapi_client.py`, `tests/test_ebay_client.py`).
   - Frontend: TypeScript check (`npm run typecheck`) and Webpack build pass cleanly with **0 errors**. All routes compiled and optimized.
 
 ### Database and catalog state

@@ -659,10 +659,12 @@ def get_set_statistics(
     hide_sealed: bool = True,
     sealed_only: bool = False,
     game: Literal["all", "pokemon", "pokemon-japan"] = "all",
+    min_price: float | None = None,
+    max_price: float | None = None,
 ) -> SetStatsResponse:
     """Calculate aggregate total price and card counts for a set (or filtered set)."""
     clean_q = q.strip()
-    cache_key = f"{set_id}:{game}:{hide_sealed}:{sealed_only}:{clean_q}"
+    cache_key = f"{set_id}:{game}:{hide_sealed}:{sealed_only}:{clean_q}:{min_price}:{max_price}"
     redis_key = f"cardboarddex:set_stats:{cache_key}"
 
     r = get_redis()
@@ -749,6 +751,11 @@ def get_set_statistics(
         subq = subq.where(is_none_or_sealed)
     elif hide_sealed:
         subq = subq.where(not_(is_none_or_sealed))
+
+    if min_price is not None and min_price > 0:
+        subq = subq.where(latest_price.isnot(None), latest_price >= min_price)
+    if max_price is not None:
+        subq = subq.where(latest_price.isnot(None), latest_price <= max_price)
 
     subquery_alias = subq.subquery()
     stats_query = select(

@@ -279,6 +279,39 @@ def test_search_cards_hide_sealed_defaults_to_true(client: TestClient) -> None:
     assert sealed_only.json()[0]["name"] == "Base Set Booster Box"
 
 
+def test_search_cards_price_filter(client: TestClient) -> None:
+    # 1. Price range $10 to $50: matches Pikachu ($12.34), excludes Venusaur ($150) and unpriced Eevee
+    mid_range = client.get("/cards/search", params={"min_price": "10", "max_price": "50", "hide_sealed": "true"})
+    assert mid_range.status_code == 200
+    names = [c["name"] for c in mid_range.json()]
+    assert names == ["Pikachu"]
+
+    # 2. Min price $100: matches Venusaur ($150)
+    high_range = client.get("/cards/search", params={"min_price": "100", "hide_sealed": "true"})
+    assert high_range.status_code == 200
+    names = [c["name"] for c in high_range.json()]
+    assert names == ["Venusaur"]
+
+    # 3. Max price $5: no cards match
+    under_5 = client.get("/cards/search", params={"max_price": "5", "hide_sealed": "true"})
+    assert under_5.status_code == 200
+    assert len(under_5.json()) == 0
+
+
+def test_set_stats_price_filter(client: TestClient) -> None:
+    # Full set 1 has Pikachu ($12.34) and Venusaur ($150.00) = $162.34
+    full_stats = client.get("/cards/sets/1/stats", params={"hide_sealed": "true"})
+    assert full_stats.status_code == 200
+    assert full_stats.json()["priced_cards"] == 2
+    assert full_stats.json()["total_price"] == 162.34
+
+    # Filtered set 1 with price range $10 - $50 should only include Pikachu ($12.34)
+    filtered_stats = client.get("/cards/sets/1/stats", params={"min_price": "10", "max_price": "50", "hide_sealed": "true"})
+    assert filtered_stats.status_code == 200
+    assert filtered_stats.json()["priced_cards"] == 1
+    assert filtered_stats.json()["total_price"] == 12.34
+
+
 def test_get_card_detail_and_image(client: TestClient) -> None:
     detail = client.get("/cards/pikachu-1")
     assert detail.status_code == 200

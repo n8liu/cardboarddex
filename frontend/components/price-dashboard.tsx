@@ -413,7 +413,7 @@ export function PriceDashboard({ pricing, cardMeta }: PriceDashboardProps) {
 
   if (pricing.observations.length === 0) {
     return (
-      <section className="mt-14 border-t border-stone-200 pt-10">
+      <section className="mt-8 border-t border-stone-200 pt-6 sm:mt-10 sm:pt-8">
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-lime-700">Market data</p>
         <div className="mt-4 rounded-2xl border border-stone-200 bg-white p-5 shadow-[0_8px_30px_rgba(33,45,25,0.04)] sm:p-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -432,7 +432,7 @@ export function PriceDashboard({ pricing, cardMeta }: PriceDashboardProps) {
   }
 
   return (
-    <section className="mt-14 border-t border-stone-200 pt-10">
+    <section className="mt-8 border-t border-stone-200 pt-6 sm:mt-10 sm:pt-8">
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-lime-700">Market data</p>

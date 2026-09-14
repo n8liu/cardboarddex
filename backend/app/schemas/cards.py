@@ -310,3 +310,44 @@ class LiveUpdatesResponse(BaseModel):
     items: list[LiveUpdateItem]
     updated_at: datetime
 
+
+class PortfolioValuationRequest(BaseModel):
+    card_ids: list[str] = Field(..., max_length=200)
+    days: int = Field(default=365, ge=7, le=730)
+
+
+class PortfolioCardItem(BaseModel):
+    id: str
+    name: str
+    set_name: str
+    number: str
+    rarity: str | None = None
+    image_url: str
+    market_price: float | None = None
+    market_currency: str | None = None
+    price_change_24h: float | None = None
+    price_change_7d: float | None = None
+    price_change_30d: float | None = None
+
+
+class PortfolioHistoryPoint(BaseModel):
+    date: str  # YYYY-MM-DD
+    total_value: float
+    card_count: int
+
+
+class PortfolioValuationResponse(BaseModel):
+    total_cards: int
+    total_current_value: float
+    currency: str = "USD"
+    delta_24h_amount: float | None = None
+    delta_24h_percent: float | None = None
+    delta_7d_amount: float | None = None
+    delta_7d_percent: float | None = None
+    delta_30d_amount: float | None = None
+    delta_30d_percent: float | None = None
+    highest_value_card: PortfolioCardItem | None = None
+    cards: list[PortfolioCardItem]
+    history: list[PortfolioHistoryPoint]
+    updated_at: datetime
+

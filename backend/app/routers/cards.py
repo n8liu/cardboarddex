@@ -60,8 +60,11 @@ from app.schemas.cards import (
     LiveUpdatesResponse,
     PokemonCardsResponse,
     PokemonSetCount,
+    PortfolioValuationRequest,
+    PortfolioValuationResponse,
 )
 from app.services.catalog_service import match_to_pokemon
+from app.services.portfolio_service import calculate_portfolio_valuation
 from app.services.trending_service import (
     get_trending_dashboard,
     record_action,
@@ -570,6 +573,8 @@ def search_cards(
     ),
     hide_sealed: bool = Query(default=True),
     sealed_only: bool = Query(default=False),
+    min_price: float | None = Query(default=None, ge=0.0),
+    max_price: float | None = Query(default=None, ge=0.0),
     db: Session = Depends(get_db),
 ) -> list[CardSummary]:
     response.headers["Cache-Control"] = "public, max-age=30, s-maxage=60, stale-while-revalidate=120"
@@ -642,6 +647,10 @@ def search_cards(
         statement = statement.where(is_none_or_sealed)
     elif hide_sealed:
         statement = statement.where(not_(is_none_or_sealed))
+    if min_price is not None and min_price > 0:
+        statement = statement.where(latest_price.isnot(None), latest_price >= min_price)
+    if max_price is not None:
+        statement = statement.where(latest_price.isnot(None), latest_price <= max_price)
     is_sealed = case((is_none_or_sealed, 0), else_=1)
 
     if sort_by == "price_asc":
@@ -787,6 +796,8 @@ def get_set_stats(
     hide_sealed: bool = Query(default=True),
     sealed_only: bool = Query(default=False),
     game: Literal["all", "pokemon", "pokemon-japan"] = Query(default="all"),
+    min_price: float | None = Query(default=None, ge=0.0),
+    max_price: float | None = Query(default=None, ge=0.0),
     db: Session = Depends(get_db),
 ) -> SetStatsResponse:
     """Retrieve aggregate market price statistics for a card set."""
@@ -798,6 +809,8 @@ def get_set_stats(
         hide_sealed=hide_sealed,
         sealed_only=sealed_only,
         game=game,
+        min_price=min_price,
+        max_price=max_price,
     )
 
 
@@ -943,6 +956,15 @@ def track_user_action(payload: TrackActionRequest, db: Session = Depends(get_db)
             if poke:
                 record_action("pokemon", poke, payload.action)
     return {"status": "ok"}
+
+
+@router.post("/portfolio-valuation", response_model=PortfolioValuationResponse)
+def get_portfolio_valuation(
+    payload: PortfolioValuationRequest,
+    db: Session = Depends(get_db),
+) -> PortfolioValuationResponse:
+    """Calculates combined current value, deltas, and historical daily curves across a portfolio of cards."""
+    return calculate_portfolio_valuation(db, card_ids=payload.card_ids, days=payload.days)
 
 
 

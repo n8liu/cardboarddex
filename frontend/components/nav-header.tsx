@@ -5,12 +5,14 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { openCommandPalette } from "@/components/command-palette";
+import { useBinder } from "@/context/binder-context";
 import { SUPPORTED_CURRENCIES, useCurrency } from "@/context/currency-context";
 
 export function NavHeader() {
   const pathname = usePathname();
   const [isScrolled, setIsScrolled] = useState(false);
   const { currency, setCurrency } = useCurrency();
+  const { totalCardCount, isHydrated } = useBinder();
 
   useEffect(() => {
     const handleScroll = () => {
@@ -30,6 +32,7 @@ export function NavHeader() {
   const isTopVolume = pathname.startsWith("/top-volume");
   const isGrading = pathname.startsWith("/grading-profit");
   const isSealed = pathname.startsWith("/sealed-signals");
+  const isBinder = pathname.startsWith("/binder");
 
   const navLinks = useMemo(
     () => [
@@ -235,7 +238,7 @@ export function NavHeader() {
           })}
         </nav>
 
-        {/* Right: Search, Currency Switcher & Live Market Tag */}
+        {/* Right: Search, Currency Switcher & Portfolio Binder Button */}
         <div className="flex shrink-0 items-center gap-2 sm:gap-2.5">
           {/* Spotlight Search Trigger */}
           <button
@@ -272,10 +275,47 @@ export function NavHeader() {
             </span>
           </div>
 
-          <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-mono text-slate-700">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            TCG &amp; eBay Comps
-          </span>
+          {/* Portfolio Binder Button (Replacing "TCG & eBay Comps") */}
+          <Link
+            href="/binder"
+            prefetch={false}
+            onClick={() => handleNavClick("/binder")}
+            className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 sm:px-3 py-1 text-xs font-mono font-bold transition focus:outline-none focus:ring-1 focus:ring-slate-900 shadow-2xs ${
+              isBinder
+                ? "border-slate-900 bg-slate-900 text-white shadow-xs"
+                : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950"
+            }`}
+            title="Open Pokémon Portfolio Binder"
+            aria-label="Open portfolio binder"
+          >
+            <svg
+              className="h-3.5 w-3.5"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z" />
+              <path d="M6 2v20" strokeDasharray="1 2" />
+              <path d="M10 7h7" />
+              <path d="M10 12h7" />
+              <path d="M10 17h7" />
+            </svg>
+            <span>Binder</span>
+            <span
+              className={`inline-flex items-center justify-center rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
+                isBinder
+                  ? "bg-emerald-500 text-white"
+                  : totalCardCount > 0
+                  ? "bg-emerald-100 text-emerald-800"
+                  : "bg-slate-100 text-slate-500 border border-slate-200"
+              }`}
+            >
+              {isHydrated ? totalCardCount : "0"}
+            </span>
+          </Link>
         </div>
       </div>
 

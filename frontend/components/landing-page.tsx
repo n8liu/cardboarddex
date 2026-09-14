@@ -5,6 +5,8 @@ import Link from "next/link";
 import { FEATURED_POKEMON } from "@/lib/featured-pokemon";
 import { TYPE_THEMES, formatDexNumber } from "@/lib/pokeapi";
 import { SearchAutocomplete } from "@/components/search-autocomplete";
+import { AnimatedNumber } from "@/components/ui/animated-number";
+import { openCommandPalette } from "@/components/command-palette";
 import type { PokemonType } from "@/types/pokemon";
 
 const POPULAR_SEARCH_CHIPS = [
@@ -18,31 +20,45 @@ const POPULAR_SEARCH_CHIPS = [
   "Crown Zenith",
 ];
 
-const PLATFORM_STATS = [
+interface PlatformStatItem {
+  numericValue?: number;
+  displaySuffix?: string;
+  isText?: boolean;
+  textValue?: string;
+  label: string;
+  detail: string;
+}
+
+const PLATFORM_STATS: PlatformStatItem[] = [
   {
-    value: "54,480+",
+    numericValue: 54682,
+    displaySuffix: "+",
     label: "Cards Cataloged",
     detail: "English & Japanese expansions",
   },
   {
-    value: "482",
+    numericValue: 484,
+    displaySuffix: "",
     label: "Sets Synchronized",
-    detail: "233 English · 249 Japanese",
+    detail: "234 English · 250 Japanese",
   },
   {
-    value: "1,025",
+    numericValue: 1025,
+    displaySuffix: "",
     label: "Pokédex Species",
     detail: "Generations I through IX",
   },
   {
-    value: "66,500+",
+    numericValue: 66500,
+    displaySuffix: "+",
     label: "Active Market Prices",
     detail: "Per-printing observations & comps",
   },
   {
-    value: "15-Min",
+    isText: true,
+    textValue: "15-Min",
     label: "Refresh Cadence",
-    detail: "Staggered TCG API & eBay cycles",
+    detail: "Alternating TCG API & eBay cycles",
   },
 ];
 
@@ -61,8 +77,8 @@ const CORE_MODULES = [
     title: "Card Catalog",
     href: "/catalog",
     description:
-      "Comprehensive database of 54,480+ Pokémon cards across 482 expansions. Filter by English or Japanese printings, chronological release, price sorting, and view live buylist & shipping benchmarks.",
-    metrics: ["482 Sets", "English & Japanese", "Buylist Benchmarks"],
+      "Comprehensive database of 54,680+ Pokémon cards across 484 expansions. Filter by English or Japanese printings, chronological release, price sorting, and view live buylist & shipping benchmarks.",
+    metrics: ["484 Sets", "English & Japanese", "Live Set Totals"],
     cta: "Browse Catalog",
   },
   {
@@ -70,8 +86,8 @@ const CORE_MODULES = [
     title: "Market Movers",
     href: "/market-movers",
     description:
-      "Identify the top gaining and losing cards across 24-hour, 7-day, and 30-day velocity windows. Powered by automated stale-while-revalidate caching to ensure zero user downtime.",
-    metrics: ["24h / 7d / 30d", "Gainers & Losers", "Stale Cache Fallback"],
+      "Identify the top gaining and losing cards across 24-hour, 7-day, and 30-day velocity windows. Powered by automated stale-while-revalidate caching and multi-pass database delta fallbacks.",
+    metrics: ["24h / 7d / 30d", "Gainers & Losers", "Trader Table View"],
     cta: "Track Movers",
   },
   {
@@ -79,7 +95,7 @@ const CORE_MODULES = [
     title: "Grading Profitability",
     href: "/grading-profit",
     description:
-      "Analyze spreads and expected net profits between raw cards and PSA 10 / PSA 9 slabs across 165+ verified pairs. Includes custom grading fee slider and PSA Value tier presets.",
+      "Analyze spreads and expected net profits between raw cards and PSA 10 / PSA 9 slabs across 165+ verified pairs. Includes live custom grading fee slider and PSA Value tier presets.",
     metrics: ["PSA 10 & 9 Spreads", "Custom Fee Slider", "Spread Multipliers"],
     cta: "Calculate Arbitrage",
   },
@@ -98,7 +114,7 @@ const CORE_MODULES = [
     href: "/top-volume",
     description:
       "Leaderboard ranking top Pokémon characters by aggregate observed market volume, paired with a real-time stream of verified eBay sales and PSA/BGS/CGC/SGC graded slab observations.",
-    metrics: ["Top 50 Characters", "Real-Time Comps", "Graded Slabs"],
+    metrics: ["Top 50 Characters", "Real-Time Comps", "Side-by-Side View"],
     cta: "View Volume & Comps",
   },
 ];
@@ -130,8 +146,18 @@ export function LandingPage() {
   return (
     <div className="min-h-screen bg-[#f7f8f6] text-slate-950 font-mono">
       {/* 1. HERO SECTION */}
-      <section className="relative border-b border-slate-200/80 bg-white px-4 pt-12 pb-16 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-[1400px]">
+      <section className="relative overflow-hidden border-b border-slate-200/80 bg-white px-4 pt-12 pb-16 sm:px-6 lg:px-8">
+        {/* Subtle Ambient Radial Mesh Glow */}
+        <div
+          className="pointer-events-none absolute -right-24 -top-24 h-[550px] w-[550px] rounded-full opacity-20 blur-3xl animate-pulse-slow"
+          style={{
+            background:
+              "radial-gradient(circle, rgba(16, 185, 129, 0.45) 0%, rgba(56, 189, 248, 0.25) 50%, transparent 80%)",
+          }}
+          aria-hidden="true"
+        />
+
+        <div className="relative mx-auto max-w-[1400px]">
           {/* Status Badge */}
           <div className="flex items-center gap-2 mb-6">
             <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs">
@@ -150,8 +176,8 @@ export function LandingPage() {
           {/* Subtitle */}
           <p className="mt-4 max-w-3xl text-sm leading-relaxed text-slate-600 sm:text-base">
             The high-precision Pokémon trading card price tracker. Tracking{" "}
-            <span className="font-semibold text-slate-900">54,480+ cards</span> across{" "}
-            <span className="font-semibold text-slate-900">482 English &amp; Japanese expansions</span>
+            <span className="font-semibold text-slate-900">54,680+ cards</span> across{" "}
+            <span className="font-semibold text-slate-900">484 English &amp; Japanese expansions</span>
             , real-time TCG market pricing, PSA 10/9 grading spreads, and verified eBay comps.
           </p>
 
@@ -180,33 +206,57 @@ export function LandingPage() {
           <div className="mt-8 flex flex-wrap items-center gap-3">
             <Link
               href="/pokedex"
-              className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-5 py-3 text-xs font-bold text-white shadow-xs transition hover:bg-slate-800"
+              className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-5 py-3 text-xs font-bold text-white shadow-xs transition hover:bg-slate-800 hover:shadow-md active:scale-95"
             >
               <span>EXPLORE POKÉDEX</span>
               <span>→</span>
             </Link>
             <Link
               href="/catalog"
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-3 text-xs font-bold text-slate-700 shadow-2xs transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950"
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-3 text-xs font-bold text-slate-700 shadow-2xs transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950 active:scale-95"
             >
               <span>BROWSE CARD CATALOG</span>
               <span>→</span>
             </Link>
+            <button
+              type="button"
+              onClick={() => openCommandPalette()}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold text-slate-600 shadow-2xs transition hover:border-slate-300 hover:bg-white hover:text-slate-900 active:scale-95"
+            >
+              <svg className="h-3.5 w-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <span>COMMAND PALETTE</span>
+              <kbd className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[10px] font-bold text-slate-500 shadow-xs">
+                ⌘K
+              </kbd>
+            </button>
           </div>
         </div>
       </section>
 
-      {/* 2. TELEMETRY & SYSTEM METRICS BAR */}
+      {/* 2. TELEMETRY & SYSTEM METRICS BAR WITH ROLLING NUMBERS */}
       <section className="border-b border-slate-200/80 bg-slate-50/70 px-4 py-8 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-[1400px]">
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
             {PLATFORM_STATS.map((stat) => (
               <div
                 key={stat.label}
-                className="rounded-xl border border-slate-200/80 bg-white p-4 shadow-2xs"
+                className="rounded-xl border border-slate-200/80 bg-white p-4 shadow-2xs transition hover:border-slate-300"
               >
-                <div className="text-xl sm:text-2xl font-black tracking-tight text-slate-950">
-                  {stat.value}
+                <div className="text-xl sm:text-2xl font-black tracking-tight text-slate-950 font-mono">
+                  {stat.numericValue !== undefined ? (
+                    <>
+                      <AnimatedNumber
+                        value={stat.numericValue}
+                        duration={600}
+                        format={(v) => Math.round(v).toLocaleString()}
+                      />
+                      {stat.displaySuffix}
+                    </>
+                  ) : (
+                    stat.textValue
+                  )}
                 </div>
                 <div className="mt-1 text-xs font-bold text-slate-800 uppercase tracking-wider">
                   {stat.label}
@@ -242,14 +292,14 @@ export function LandingPage() {
               <Link
                 key={module.title}
                 href={module.href}
-                className="group flex flex-col justify-between rounded-2xl border border-slate-200/90 bg-white p-6 shadow-2xs transition-all hover:border-slate-400 hover:shadow-md"
+                className="group flex flex-col justify-between rounded-2xl border border-slate-200/90 bg-white p-6 shadow-2xs transition-all duration-300 hover:-translate-y-1 hover:border-slate-300 hover:shadow-lg"
               >
                 <div>
                   <div className="flex items-center justify-between">
                     <span className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-bold tracking-wider text-slate-700">
                       {module.badge}
                     </span>
-                    <span className="text-slate-400 transition-transform group-hover:translate-x-1 group-hover:text-slate-900">
+                    <span className="text-slate-400 transition-transform duration-200 group-hover:translate-x-1 group-hover:text-slate-900">
                       →
                     </span>
                   </div>
@@ -286,7 +336,7 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* 4. CANONICAL POKÉDEX SHOWCASE */}
+      {/* 4. CANONICAL POKÉDEX SHOWCASE WITH AMBIENT GLOW PODIUMS */}
       <section className="border-t border-slate-200/80 bg-white px-4 py-16 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-[1400px]">
           <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between mb-8 pb-4 border-b border-slate-200">
@@ -317,27 +367,33 @@ export function LandingPage() {
                 <Link
                   key={pokemon.id}
                   href={`/pokemon/${pokemon.id}`}
-                  className="group flex flex-col items-center rounded-xl border border-slate-200/80 bg-slate-50/50 p-3 text-center transition-all hover:border-slate-400 hover:bg-white hover:shadow-sm"
+                  prefetch={false}
+                  className="group flex flex-col items-center rounded-2xl border border-slate-200/90 bg-white p-3.5 text-center shadow-xs transition-all duration-300 hover:-translate-y-1 hover:border-slate-300 hover:shadow-md"
                 >
-                  <div className="relative h-20 w-20 transition-transform group-hover:scale-105">
+                  <div
+                    className="relative flex h-20 w-20 items-center justify-center rounded-xl p-1.5 transition-transform duration-300 group-hover:scale-110"
+                    style={{
+                      background: `radial-gradient(circle, ${typeTheme.glow} 0%, rgba(255,255,255,0) 70%)`,
+                    }}
+                  >
                     <Image
                       src={pokemon.artwork}
                       alt={pokemon.name}
-                      width={80}
-                      height={80}
-                      className="object-contain drop-shadow-xs"
+                      width={76}
+                      height={76}
+                      className="object-contain drop-shadow-sm"
                       unoptimized
                     />
                   </div>
-                  <span className="mt-2 text-[10px] font-bold text-slate-400">
+                  <span className="mt-2 text-[10px] font-mono font-bold text-slate-400">
                     {formatDexNumber(pokemon.id)}
                   </span>
-                  <span className="text-xs font-black text-slate-950 truncate max-w-full">
+                  <span className="text-xs font-black text-slate-950 truncate max-w-full group-hover:text-emerald-700 transition">
                     {pokemon.name}
                   </span>
                   <div className="mt-1 flex gap-1">
                     <span
-                      className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${typeTheme.badge}`}
+                      className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${typeTheme.badge}`}
                     >
                       {primaryType}
                     </span>
@@ -368,7 +424,7 @@ export function LandingPage() {
             {METHODOLOGY_ITEMS.map((item) => (
               <div
                 key={item.source}
-                className="rounded-xl border border-slate-200 bg-white p-5 shadow-2xs"
+                className="rounded-xl border border-slate-200 bg-white p-5 shadow-2xs transition hover:border-slate-300"
               >
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-black text-slate-950">
@@ -395,19 +451,19 @@ export function LandingPage() {
               Ready to explore CardboardDex?
             </h3>
             <p className="mt-1 text-xs text-slate-300">
-              Start browsing 1,025 species or jump straight into 54,480+ trading card market comps.
+              Start browsing 1,025 species or jump straight into 54,680+ trading card market comps.
             </p>
           </div>
           <div className="flex items-center gap-3 shrink-0">
             <Link
               href="/pokedex"
-              className="rounded-xl bg-white px-5 py-3 text-xs font-bold text-slate-900 shadow-xs transition hover:bg-slate-100"
+              className="rounded-xl bg-white px-5 py-3 text-xs font-bold text-slate-900 shadow-xs transition hover:bg-slate-100 active:scale-95"
             >
               OPEN POKÉDEX
             </Link>
             <Link
               href="/catalog"
-              className="rounded-xl border border-slate-700 bg-slate-800 px-5 py-3 text-xs font-bold text-white shadow-xs transition hover:bg-slate-700"
+              className="rounded-xl border border-slate-700 bg-slate-800 px-5 py-3 text-xs font-bold text-white shadow-xs transition hover:bg-slate-700 active:scale-95"
             >
               SEARCH CATALOG
             </Link>

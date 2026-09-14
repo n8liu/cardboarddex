@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { CommandPalette } from "@/components/command-palette";
 import { NavHeader } from "@/components/nav-header";
 import { CurrencyProvider } from "@/context/currency-context";
+import { BinderProvider } from "@/context/binder-context";
 import "./globals.css";
 
 export const runtime = "edge";
@@ -32,14 +33,16 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       </head>
       <body suppressHydrationWarning>
         <CurrencyProvider>
-          <CommandPalette />
-          <NavHeader />
-          {children}
-          <footer className="border-t border-slate-200 bg-white">
-            <div className="mx-auto max-w-[1600px] px-5 py-8 text-xs text-slate-500 sm:px-8">
-              Pokémon catalog and market pricing via TCG API. Sold-market analytics via verified eBay listings.
-            </div>
-          </footer>
+          <BinderProvider>
+            <CommandPalette />
+            <NavHeader />
+            {children}
+            <footer className="border-t border-slate-200 bg-white">
+              <div className="mx-auto max-w-[1600px] px-5 py-8 text-xs text-slate-500 sm:px-8">
+                Pokémon catalog and market pricing via TCG API. Sold-market analytics via verified eBay listings.
+              </div>
+            </footer>
+          </BinderProvider>
         </CurrencyProvider>
       </body>
     </html>

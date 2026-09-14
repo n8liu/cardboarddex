@@ -15,6 +15,8 @@ type CatalogProps = {
     hide_sealed?: string;
     sealed?: string;
     game?: string;
+    min_price?: string;
+    max_price?: string;
   }>;
 };
 
@@ -29,16 +31,34 @@ export default async function CatalogPage({ searchParams }: CatalogProps) {
     ? (params.sort as CardSort)
     : "price_desc";
 
+  const rawMinPrice = params.min_price ? parseFloat(params.min_price) : undefined;
+  const initialMinPrice = rawMinPrice !== undefined && !isNaN(rawMinPrice) ? rawMinPrice : null;
+  const rawMaxPrice = params.max_price ? parseFloat(params.max_price) : undefined;
+  const initialMaxPrice = rawMaxPrice !== undefined && !isNaN(rawMaxPrice) ? rawMaxPrice : null;
+
   let cards: Awaited<ReturnType<typeof searchCards>> = [];
   let sets: Awaited<ReturnType<typeof getCardSets>> = [];
   let initialSetStats: SetStats | null = null;
 
   try {
     const [fetchedCards, fetchedSets, fetchedSetStats] = await Promise.all([
-      searchCards(query, { setId, sortBy, hideSealed, game }),
+      searchCards(query, {
+        setId,
+        sortBy,
+        hideSealed,
+        game,
+        minPrice: initialMinPrice,
+        maxPrice: initialMaxPrice,
+      }),
       getCardSets(),
       setId
-        ? getSetStats(setId, { q: query, hideSealed, game }).catch((err) => {
+        ? getSetStats(setId, {
+            q: query,
+            hideSealed,
+            game,
+            minPrice: initialMinPrice,
+            maxPrice: initialMaxPrice,
+          }).catch((err) => {
             console.error("Failed fetching initial set stats:", err);
             return null;
           })
@@ -57,6 +77,8 @@ export default async function CatalogPage({ searchParams }: CatalogProps) {
         <CatalogBrowser
           initialCards={cards}
           initialHideSealed={hideSealed}
+          initialMinPrice={initialMinPrice}
+          initialMaxPrice={initialMaxPrice}
           initialQuery={query}
           initialSetId={setId}
           initialSetStats={initialSetStats}

@@ -25,6 +25,7 @@ import type {
   SetStats,
 } from "@/types/card";
 import type { PokemonCardsResponse } from "@/types/pokemon";
+import type { PortfolioValuationResponse } from "@/types/binder";
 
 export const AWS_PRODUCTION_API_URL =
   "https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws";
@@ -165,6 +166,8 @@ type SearchCardOptions = {
   hideSealed?: boolean;
   sealedOnly?: boolean;
   game?: GameLanguage;
+  minPrice?: number | null;
+  maxPrice?: number | null;
 };
 
 export function searchCards(query: string, options: SearchCardOptions = {}): Promise<CardSummary[]> {
@@ -177,6 +180,8 @@ export function searchCards(query: string, options: SearchCardOptions = {}): Pro
     set_id: options.setId,
     sealed_only: options.sealedOnly ? "true" : undefined,
     game: options.game && options.game !== "all" ? options.game : undefined,
+    min_price: options.minPrice != null && options.minPrice > 0 ? options.minPrice : undefined,
+    max_price: options.maxPrice != null ? options.maxPrice : undefined,
   });
   return request<CardSummary[]>(`/cards/search${qs}`, { cache: "no-store" });
 }
@@ -188,6 +193,8 @@ export function getSetStats(
     hideSealed?: boolean;
     sealedOnly?: boolean;
     game?: GameLanguage;
+    minPrice?: number | null;
+    maxPrice?: number | null;
   } = {}
 ): Promise<SetStats> {
   const qs = buildQueryString({
@@ -195,6 +202,8 @@ export function getSetStats(
     hide_sealed: options.hideSealed === false ? "false" : "true",
     sealed_only: options.sealedOnly ? "true" : undefined,
     game: options.game && options.game !== "all" ? options.game : undefined,
+    min_price: options.minPrice != null && options.minPrice > 0 ? options.minPrice : undefined,
+    max_price: options.maxPrice != null ? options.maxPrice : undefined,
   });
   return request<SetStats>(`/cards/sets/${encodeURIComponent(setId)}/stats${qs}`, {
     cache: "no-store",
@@ -401,6 +410,35 @@ export function getLiveUpdates(options: {
     q: options.query,
   });
   return request<LiveUpdatesResponse>(`/cards/live-updates${qs}`, {
+    cache: "no-store",
+  });
+}
+
+export async function getPortfolioValuation(
+  cardIds: string[],
+  days: number = 365
+): Promise<PortfolioValuationResponse> {
+  if (!cardIds || cardIds.length === 0) {
+    return {
+      total_cards: 0,
+      total_current_value: 0,
+      currency: "USD",
+      delta_24h_amount: 0,
+      delta_24h_percent: 0,
+      delta_7d_amount: 0,
+      delta_7d_percent: 0,
+      delta_30d_amount: 0,
+      delta_30d_percent: 0,
+      highest_value_card: null,
+      cards: [],
+      history: [],
+    };
+  }
+
+  return request<PortfolioValuationResponse>("/cards/portfolio-valuation", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ card_ids: cardIds, days }),
     cache: "no-store",
   });
 }
