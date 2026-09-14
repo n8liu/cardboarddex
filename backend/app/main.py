@@ -1,13 +1,19 @@
 import logging
 import re
+from datetime import UTC, datetime
+from typing import Any
 
-from fastapi import FastAPI, Request, Response, status
+from fastapi import Depends, FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.common.rate_limiter import check_rate_limit, get_client_ip
+from app.common.redis import get_redis as _get_redis
 from app.config import get_settings
-from app.routers import cards
+from app.database import get_db
+from app.routers import analytics, cards, catalog, market
 
 logging.basicConfig(
     level=logging.INFO,
@@ -110,6 +116,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(catalog.router)
+app.include_router(market.router)
+app.include_router(analytics.router)
 app.include_router(cards.router)
 
 
@@ -137,5 +146,68 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health(
+    details: bool = False,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Active health probe verifying status with optional component diagnostics."""
+    if not details:
+        return {"status": "ok"}
+
+    db_ok = False
+    try:
+        db.execute(select(1)).scalar()
+        db_ok = True
+    except Exception as exc:
+        logging.debug("Health probe database query failed: %s", exc)
+
+    redis_ok = False
+    try:
+        r = _get_redis()
+        if r is not None:
+            redis_ok = bool(r.ping())
+    except Exception as exc:
+        logging.debug("Health probe Redis ping failed: %s", exc)
+
+    return {
+        "status": "ok",
+        "database": "connected" if db_ok else "unreachable",
+        "redis": "connected" if redis_ok else "unavailable",
+        "timestamp": datetime.now(UTC).isoformat(),
+    }
+
+
+@app.get("/health/quotas")
+def get_quotas() -> dict[str, Any]:
+    """Report daily provider quota limits, requests used, and remaining headroom."""
+    tcg_limit = settings.tcgapi_daily_request_limit
+    ebay_limit = settings.ebay_daily_request_limit
+    tcg_used = 0
+    ebay_used = 0
+    r = _get_redis()
+    if r is not None:
+        try:
+            today_str = datetime.now(UTC).strftime("%Y-%m-%d")
+            tcg_val = r.get(f"cardboarddex:tcgapi:daily_count:{today_str}")
+            if tcg_val:
+                tcg_used = int(tcg_val)
+            ebay_val = r.get(f"cardboarddex:ebay:daily_count:{today_str}")
+            if ebay_val:
+                ebay_used = int(ebay_val)
+        except Exception as exc:
+            logging.warning("Failed reading quota counters from Redis: %s", exc)
+
+    return {
+        "tcgapi": {
+            "daily_limit": tcg_limit,
+            "requests_used": tcg_used,
+            "requests_remaining": max(0, tcg_limit - tcg_used),
+        },
+        "ebay": {
+            "daily_limit": ebay_limit,
+            "requests_used": ebay_used,
+            "requests_remaining": max(0, ebay_limit - ebay_used),
+        },
+        "timestamp": datetime.now(UTC).isoformat(),
+    }
+

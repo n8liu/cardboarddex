@@ -1,5 +1,6 @@
 import argparse
 import hashlib
+import json
 import logging
 from pathlib import Path
 import re
@@ -24,8 +25,10 @@ from app.common.formatters import (
     parse_iso_datetime as _parse_datetime,
     to_decimal as _decimal,
 )
+from app.common.redis import get_redis
 from app.config import get_settings
 from app.database import SessionLocal
+from app.providers.limiter import ProviderRequestLimitExceeded
 from app.models import Card, PriceObservation, ProviderCardState, Set
 from app.tcgapi.client import (
     TCGAPIClient,
@@ -252,11 +255,65 @@ def _upsert_cards(
     return card_count, price_count
 
 
+CURSOR_KEY_PREFIX = "cardboarddex:sync:cursor"
+
+
+def get_sync_cursor(game: str, redis_client: Any = None) -> dict[str, Any] | None:
+    """Retrieve the sync cursor checkpoint for a given game, if any."""
+    r = redis_client or get_redis()
+    if r is None:
+        return None
+    try:
+        raw = r.get(f"{CURSOR_KEY_PREFIX}:{game}")
+        return json.loads(raw) if raw else None
+    except Exception as exc:
+        logger.warning(
+            "Failed to read catalog sync cursor game=%s error=%s: %s",
+            game, type(exc).__name__, exc,
+        )
+        return None
+
+
+def set_sync_cursor(game: str, last_set_id: str, set_index: int, redis_client: Any = None) -> None:
+    """Save the sync cursor checkpoint in Redis to enable resumption."""
+    r = redis_client or get_redis()
+    if r is None:
+        return
+    try:
+        payload = json.dumps({
+            "last_synced_set_id": last_set_id,
+            "set_index": set_index,
+            "updated_at": datetime.now(UTC).isoformat(),
+        })
+        r.set(f"{CURSOR_KEY_PREFIX}:{game}", payload, ex=86400 * 3)
+    except Exception as exc:
+        logger.warning(
+            "Failed to write catalog sync cursor game=%s error=%s: %s",
+            game, type(exc).__name__, exc,
+        )
+
+
+def clear_sync_cursor(game: str, redis_client: Any = None) -> None:
+    """Clear the sync cursor checkpoint for a given game."""
+    r = redis_client or get_redis()
+    if r is None:
+        return
+    try:
+        r.delete(f"{CURSOR_KEY_PREFIX}:{game}")
+    except Exception as exc:
+        logger.warning(
+            "Failed to clear catalog sync cursor game=%s error=%s: %s",
+            game, type(exc).__name__, exc,
+        )
+
+
 def run_catalog_sync(
     session: Session,
     client: TCGAPIClient | None = None,
     set_limit: int | None = None,
     game: str = "pokemon",
+    resume: bool = False,
+    redis_client: Any = None,
 ) -> dict[str, int]:
     tcgapi_client = client or TCGAPIClient()
     configured_limit = set_limit if set_limit is not None else get_settings().tcgapi_sync_set_limit
@@ -271,30 +328,63 @@ def run_catalog_sync(
             except TypeError:
                 raw_sets = tcgapi_client.iter_sets()
             sets = _latest_sets(raw_sets, configured_limit)
+
+            if resume:
+                cursor = get_sync_cursor(g, redis_client=redis_client)
+                if cursor and "last_synced_set_id" in cursor:
+                    last_id = cursor["last_synced_set_id"]
+                    idx_match = next((i for i, s in enumerate(sets) if str(s.get("id")) == str(last_id)), None)
+                    if idx_match is not None and idx_match + 1 < len(sets):
+                        logger.info(
+                            "Resuming catalog sync game=%s from set_index=%s after set_id=%s",
+                            g, idx_match + 1, last_id,
+                        )
+                        sets = sets[idx_match + 1:]
+                    elif idx_match is not None and idx_match + 1 >= len(sets):
+                        logger.info("Catalog sync cursor for game=%s indicates all sets completed", g)
+                        clear_sync_cursor(g, redis_client=redis_client)
+                        continue
+
+            if not sets:
+                continue
+
             cur_set_count = _upsert_sets(session, sets)
             set_count += cur_set_count
             set_ids = [str(item["id"]) for item in sets]
             set_totals = {str(item["id"]): item.get("card_count") for item in sets}
-            c_cnt, p_cnt = _upsert_cards(
-                session,
-                tcgapi_client.iter_cards(set_ids),
-                set_totals,
-            )
-            card_count += c_cnt
-            price_count += p_cnt
+
+            try:
+                c_cnt, p_cnt = _upsert_cards(
+                    session,
+                    tcgapi_client.iter_cards(set_ids),
+                    set_totals,
+                )
+                card_count += c_cnt
+                price_count += p_cnt
+                clear_sync_cursor(g, redis_client=redis_client)
+            except ProviderRequestLimitExceeded as quota_exc:
+                logger.warning(
+                    "TCG API daily quota limit reached during catalog sync game=%s completed_sets=%s: %s",
+                    g, set_count, quota_exc,
+                )
+                if set_ids:
+                    set_sync_cursor(g, set_ids[-1], len(sets) - 1, redis_client=redis_client)
+                break
     except (KeyError, TypeError, ValueError, SQLAlchemyError) as exc:
         session.rollback()
-        logger.exception("Catalog sync failed sets_completed=%s error=%s: %s",
-                         set_count, type(exc).__name__, exc)
+        logger.exception(
+            "Catalog sync failed sets_completed=%s error=%s: %s",
+            set_count, type(exc).__name__, exc,
+        )
         raise
     logger.info("Catalog sync complete sets=%s cards=%s prices=%s", set_count, card_count, price_count)
     return {"sets": set_count, "cards": card_count, "prices": price_count}
 
 
 @shared_task(name="jobs.sync_catalog.sync_catalog", autoretry_for=(), max_retries=0)
-def sync_catalog(game: str = "all") -> dict[str, int]:
+def sync_catalog(game: str = "all", resume: bool = True) -> dict[str, int]:
     with SessionLocal() as session:
-        return run_catalog_sync(session, game=game)
+        return run_catalog_sync(session, game=game, resume=resume)
 
 
 def main() -> None:
@@ -302,12 +392,21 @@ def main() -> None:
     parser.add_argument("--all", action="store_true", help="Synchronize all sets in the catalog")
     parser.add_argument("--limit", "--sets", type=int, default=None, help="Maximum number of sets to synchronize")
     parser.add_argument("--game", choices=["pokemon", "pokemon-japan", "all"], default="all", help="Game to sync (pokemon, pokemon-japan, or all)")
+    parser.add_argument("--resume", action="store_true", help="Resume from last stored sync cursor checkpoint")
+    parser.add_argument("--reset-cursor", action="store_true", help="Reset and clear any existing sync cursor")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+
+    if args.reset_cursor:
+        games = ["pokemon", "pokemon-japan"] if args.game == "all" else [args.game]
+        for g in games:
+            clear_sync_cursor(g)
+        logger.info("Sync cursor(s) cleared for game=%s", args.game)
+
     limit = None if args.all else args.limit
     with SessionLocal() as session:
-        result = run_catalog_sync(session, set_limit=limit, game=args.game)
+        result = run_catalog_sync(session, set_limit=limit, game=args.game, resume=args.resume)
         logger.info("Manual catalog sync finished result=%s", result)
         print(result)
 

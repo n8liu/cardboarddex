@@ -1,12 +1,11 @@
 import type { Metadata } from "next";
 
-import { CommandPalette } from "@/components/command-palette";
+import { CommandPalette } from "@/components/command-palette-lazy";
 import { NavHeader } from "@/components/nav-header";
 import { CurrencyProvider } from "@/context/currency-context";
 import { BinderProvider } from "@/context/binder-context";
 import "./globals.css";
 
-export const runtime = "edge";
 
 export const metadata: Metadata = {
   title: "CardboardDex - Pokémon Card Price Tracker & Market Analytics",

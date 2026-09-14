@@ -22,6 +22,8 @@ class TestNegativeKeywordRejections:
             "Pokemon Charizard Base Set Gold Metal Custom Card PSA 10",
             "Charizard 4/102 Orica Bootleg Replica",
             "Charizard Base Set Reprint Handmade",
+            "Charizard 4/102 Base Set Facsimile Art Card",
+            "Charizard 4/102 Base Set Fan-Art Bootleg",
         ]
         for title in titles:
             result = parse_ebay_title(title, "Charizard", "4", "Base Set")

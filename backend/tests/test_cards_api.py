@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from app.database import Base, get_db
 from app.main import app
 from app.models import Card, PriceObservation, ProviderCardState, Set
-from app.routers.cards import get_tcgapi_client
+from app.routers.cards import get_tcgapi_client, clear_catalog_caches
 from app.common.redis import get_redis
 from app.services.catalog_service import _pokemon_volume_cache
 from app.services.trending_service import (
@@ -31,6 +31,7 @@ class FakeImageClient:
 
 
 def _clean_test_caches() -> None:
+    clear_catalog_caches()
     _pokemon_volume_cache.clear()
     _IN_MEMORY_CARD_CLICKS.clear()
     _IN_MEMORY_POKE_CLICKS.clear()
@@ -40,7 +41,12 @@ def _clean_test_caches() -> None:
     r = get_redis()
     if r is not None:
         try:
-            for prefix in ["cardboarddex:top_volume:*", "cardboarddex:trending:*", "cardboarddex:analytics:*"]:
+            for prefix in [
+                "cardboarddex:top_volume:*",
+                "cardboarddex:trending:*",
+                "cardboarddex:analytics:*",
+                "cardboarddex:catalog:*",
+            ]:
                 keys = r.keys(prefix)
                 if keys:
                     r.delete(*keys)

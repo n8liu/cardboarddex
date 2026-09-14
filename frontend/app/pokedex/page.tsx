@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { PokedexBrowser } from "@/components/pokedex-browser";
 
-export const runtime = "edge";
+export const revalidate = 86400;
 
 export const metadata: Metadata = {
   title: "Pokédex | CardboardDex",

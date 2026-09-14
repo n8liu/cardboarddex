@@ -168,6 +168,7 @@ type SearchCardOptions = {
   game?: GameLanguage;
   minPrice?: number | null;
   maxPrice?: number | null;
+  revalidate?: number;
 };
 
 export function searchCards(query: string, options: SearchCardOptions = {}): Promise<CardSummary[]> {
@@ -183,7 +184,11 @@ export function searchCards(query: string, options: SearchCardOptions = {}): Pro
     min_price: options.minPrice != null && options.minPrice > 0 ? options.minPrice : undefined,
     max_price: options.maxPrice != null ? options.maxPrice : undefined,
   });
-  return request<CardSummary[]>(`/cards/search${qs}`, { cache: "no-store" });
+  const isServer = typeof window === "undefined";
+  const reqOptions: RequestInit = isServer
+    ? { next: { revalidate: options.revalidate ?? 60 } }
+    : { cache: "no-store" };
+  return request<CardSummary[]>(`/cards/search${qs}`, reqOptions);
 }
 
 export function getSetStats(
@@ -195,6 +200,7 @@ export function getSetStats(
     game?: GameLanguage;
     minPrice?: number | null;
     maxPrice?: number | null;
+    revalidate?: number;
   } = {}
 ): Promise<SetStats> {
   const qs = buildQueryString({
@@ -205,9 +211,11 @@ export function getSetStats(
     min_price: options.minPrice != null && options.minPrice > 0 ? options.minPrice : undefined,
     max_price: options.maxPrice != null ? options.maxPrice : undefined,
   });
-  return request<SetStats>(`/cards/sets/${encodeURIComponent(setId)}/stats${qs}`, {
-    cache: "no-store",
-  });
+  const isServer = typeof window === "undefined";
+  const reqOptions: RequestInit = isServer
+    ? { next: { revalidate: options.revalidate ?? 120 } }
+    : { cache: "no-store" };
+  return request<SetStats>(`/cards/sets/${encodeURIComponent(setId)}/stats${qs}`, reqOptions);
 }
 
 export function getPokemonCards(

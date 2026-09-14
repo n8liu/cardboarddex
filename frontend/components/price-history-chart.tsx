@@ -60,10 +60,10 @@ function MultiLineTooltip({
   if (!point) return null;
 
   const seriesConfigs = [
-    { key: "rawPrice", name: "Raw eBay", color: "#10b981", val: point.rawPrice, active: hasRaw },
-    { key: "tcgPrice", name: "TCG API", color: "#8b5cf6", val: point.tcgPrice, active: hasTcg },
     { key: "psa10Price", name: "PSA 10 eBay", color: "#f59e0b", val: point.psa10Price, active: hasPsa10 },
     { key: "psa9Price", name: "PSA 9 eBay", color: "#0284c7", val: point.psa9Price, active: hasPsa9 },
+    { key: "tcgPrice", name: "TCG API", color: "#8b5cf6", val: point.tcgPrice, active: hasTcg },
+    { key: "rawPrice", name: "Raw eBay", color: "#10b981", val: point.rawPrice, active: hasRaw },
   ];
 
   const activeSeries = seriesConfigs.filter((s) => s.active);

@@ -1,8 +1,6 @@
 import type { Metadata } from "next";
 import { LandingPage } from "@/components/landing-page";
 
-export const runtime = "edge";
-
 export const metadata: Metadata = {
   title: "CardboardDex - Pokémon Card Price Tracker & Market Analytics",
   description:

@@ -108,3 +108,95 @@ def test_catalog_sync_records_price_observations() -> None:
     assert obs.provider == "tcgapi"
     assert obs.printing == "Normal"
     assert state is not None and state.match_status == "matched"
+
+
+class TwoSetResumeClient:
+    def iter_sets(self, game="pokemon"):
+        yield {"id": "set-1", "name": "Set One", "card_count": 1, "release_date": "2024-01-01"}
+        yield {"id": "set-2", "name": "Set Two", "card_count": 1, "release_date": "2024-02-01"}
+
+    def iter_cards(self, set_ids):
+        # When resuming from set-1, only set-2 should be requested
+        assert set_ids == ["set-1"] or set_ids == ["set-2"]
+        for s_id in set_ids:
+            yield {
+                "id": f"card-{s_id}",
+                "_set_id": s_id,
+                "name": f"Card for {s_id}",
+                "number": "1/1",
+                "rarity": "Common",
+                "image_url": f"https://img.test/{s_id}.jpg",
+            }
+
+
+class FakeRedis:
+    def __init__(self, initial: dict[str, str] | None = None):
+        self.store = dict(initial or {})
+
+    def get(self, key: str) -> str | None:
+        return self.store.get(key)
+
+    def set(self, key: str, value: str, ex: int | None = None) -> bool:
+        self.store[key] = value
+        return True
+
+    def delete(self, key: str) -> bool:
+        self.store.pop(key, None)
+        return True
+
+
+def test_catalog_sync_resumes_from_checkpoint_cursor() -> None:
+    import json
+
+    fake_redis = FakeRedis({
+        "cardboarddex:sync:cursor:pokemon": json.dumps({"last_synced_set_id": "set-2", "set_index": 0})
+    })
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        # Client orders set-2 (newest) then set-1 (older)
+        # Cursor says set-2 was already synced, so resume should only sync set-1
+        result = run_catalog_sync(
+            session,
+            TwoSetResumeClient(),
+            game="pokemon",
+            resume=True,
+            redis_client=fake_redis,
+        )
+
+    assert result == {"sets": 1, "cards": 1, "prices": 0}
+    # When all sets complete, cursor must be cleared
+    assert "cardboarddex:sync:cursor:pokemon" not in fake_redis.store
+
+
+def test_catalog_sync_checkpoints_on_quota_exceeded() -> None:
+    from app.providers.limiter import ProviderRequestLimitExceeded
+
+    class QuotaExceededClient:
+        def iter_sets(self, game="pokemon"):
+            yield {"id": "set-10", "name": "Set Ten", "card_count": 1, "release_date": "2024-01-01"}
+
+        def iter_cards(self, set_ids):
+            raise ProviderRequestLimitExceeded("TCG API daily limit of 500 requests reached")
+
+    fake_redis = FakeRedis()
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        result = run_catalog_sync(
+            session,
+            QuotaExceededClient(),
+            game="pokemon",
+            resume=False,
+            redis_client=fake_redis,
+        )
+
+    # Sets were upserted before cards failed
+    assert result["sets"] == 1
+    assert result["cards"] == 0
+    # Checkpoint cursor was written to Redis
+    assert "cardboarddex:sync:cursor:pokemon" in fake_redis.store
+    assert "set-10" in fake_redis.store["cardboarddex:sync:cursor:pokemon"]
+
