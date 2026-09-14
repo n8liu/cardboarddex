@@ -49,14 +49,23 @@ async def security_and_rate_limit_middleware(request: Request, call_next: object
     # 1. Skip rate limiting for health check and preflight OPTIONS requests
     if request.method != "OPTIONS" and request.url.path != "/health":
         client_ip = get_client_ip(request)
+        clean_path = request.url.path.rstrip("/")
+        is_image_request = clean_path.endswith("/image")
+        bucket = "images" if is_image_request else "global"
+        max_requests = 6000 if is_image_request else settings.rate_limit_per_minute
         allowed, retry_after = check_rate_limit(
             client_ip=client_ip,
-            bucket="global",
-            max_requests=settings.rate_limit_per_minute,
+            bucket=bucket,
+            max_requests=max_requests,
             window_seconds=60,
         )
         if not allowed:
-            logging.warning("Global rate limit exceeded for client_ip=%s on path=%s", client_ip, request.url.path)
+            logging.warning(
+                "Rate limit exceeded for client_ip=%s on bucket=%s path=%s",
+                client_ip,
+                bucket,
+                request.url.path,
+            )
             origin = request.headers.get("origin")
             headers: dict[str, str] = {
                 "Retry-After": str(retry_after),

@@ -55,6 +55,7 @@ function MoverCard({ item }: { item: MarketMoverItem }) {
   return (
     <Link
       href={`/cards/${encodeURIComponent(item.card_id)}`}
+      prefetch={false}
       className="group relative flex flex-col justify-between rounded-2xl border border-slate-200/90 bg-white p-4 shadow-2xs transition duration-150 hover:border-slate-400 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-slate-900"
     >
       <div className="flex gap-3.5">

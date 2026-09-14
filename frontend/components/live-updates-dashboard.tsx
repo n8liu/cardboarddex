@@ -115,6 +115,7 @@ function LiveUpdateRow({ item }: { item: LiveUpdateItem }) {
           <div className="flex flex-wrap items-center gap-2">
             <Link
               href={`/cards/${encodeURIComponent(item.card_id)}`}
+              prefetch={false}
               className="truncate text-sm font-bold text-slate-950 transition hover:text-emerald-700 hover:underline"
             >
               {item.card_name}
@@ -174,6 +175,7 @@ function LiveUpdateRow({ item }: { item: LiveUpdateItem }) {
           )}
           <Link
             href={`/cards/${encodeURIComponent(item.card_id)}`}
+            prefetch={false}
             className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-900 transition hover:bg-emerald-600 hover:text-white"
           >
             <span>View Card</span>

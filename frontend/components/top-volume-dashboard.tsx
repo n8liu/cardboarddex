@@ -45,6 +45,7 @@ function CardRow({ item }: { item: TrendingCardItem }) {
   return (
     <Link
       href={`/cards/${encodeURIComponent(item.card_id)}?ref=trending`}
+      prefetch={false}
       className="group flex h-[62px] items-center justify-between gap-3 rounded-xl border border-slate-200/80 bg-white px-3 transition duration-150 hover:border-slate-400 hover:bg-slate-50/70"
     >
       {/* Left: Rank, Thumbnail, Card Title & Set */}
@@ -131,6 +132,7 @@ function PokemonRow({ item }: { item: TrendingPokemonItem }) {
   return (
     <Link
       href={pokemonHref}
+      prefetch={false}
       className="group flex h-[62px] items-center justify-between gap-3 rounded-xl border border-slate-200/80 bg-white px-3 transition duration-150 hover:border-slate-400 hover:bg-slate-50/70"
     >
       {/* Left: Rank, Sprite, Pokémon Name & Dex */}
@@ -223,6 +225,7 @@ function VolumeRow({ item }: { item: PokemonVolumeItem }) {
   return (
     <Link
       href={pokemonHref}
+      prefetch={false}
       className="group flex h-[62px] items-center justify-between gap-3 rounded-xl border border-slate-200/80 bg-white px-3 transition duration-150 hover:border-slate-400 hover:bg-slate-50/70"
     >
       {/* Left: Rank, Sprite, Pokémon Name & Dex */}

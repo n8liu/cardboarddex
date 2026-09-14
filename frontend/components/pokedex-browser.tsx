@@ -798,6 +798,7 @@ function PokemonCard({
         {/* Artwork with 3D scale hover */}
         <Link
           href={`/pokemon/${pokemon.id}`}
+          prefetch={false}
           onClick={() => {
             onSelect?.(pokemon.id);
           }}
@@ -839,6 +840,7 @@ function PokemonCard({
           )}
           <Link
             href={`/pokemon/${pokemon.id}`}
+            prefetch={false}
             onClick={() => {
               onSelect?.(pokemon.id);
             }}
@@ -868,6 +870,7 @@ function PokemonCard({
       <div className="mt-4 pt-2.5 border-t border-slate-100">
         <Link
           href={`/pokemon/${pokemon.id}`}
+          prefetch={false}
           onClick={() => onSelect?.(pokemon.id)}
           className="flex items-center justify-between rounded-xl bg-slate-50 px-2.5 py-1.5 text-[11px] font-bold text-slate-700 transition hover:bg-emerald-600 hover:text-white group/btn"
         >

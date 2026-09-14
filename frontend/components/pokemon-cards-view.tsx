@@ -296,6 +296,7 @@ function CardItem({
   return (
     <Link
       href={`/cards/${card.id}`}
+      prefetch={false}
       className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-slate-200/90 bg-white p-3 shadow-xs transition-all duration-300 hover:-translate-y-1 hover:border-emerald-300 hover:shadow-lg"
     >
       <div>

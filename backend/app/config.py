@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     cloudfront_domain: str | None = None
     admin_api_key: str | None = None
     enable_api_docs: bool = False
-    rate_limit_per_minute: int = 120
+    rate_limit_per_minute: int = 300
     rate_limit_track_action_per_minute: int = 30
     rate_limit_heavy_per_minute: int = 60
 

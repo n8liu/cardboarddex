@@ -455,7 +455,7 @@ export function SealedSignalsDashboard({ initialData }: SealedSignalsDashboardPr
                           {item.set_name}
                         </div>
                         <h2 className="text-xs sm:text-sm font-bold text-slate-950 line-clamp-2 leading-snug">
-                          <Link href={`/cards/${encodeURIComponent(item.card_id)}`} className="hover:underline group-hover:text-slate-900">
+                          <Link href={`/cards/${encodeURIComponent(item.card_id)}`} prefetch={false} className="hover:underline group-hover:text-slate-900">
                             {item.name}
                           </Link>
                         </h2>
@@ -513,6 +513,7 @@ export function SealedSignalsDashboard({ initialData }: SealedSignalsDashboardPr
                 <div className="mt-3 border-t border-slate-100 pt-2.5">
                   <Link
                     href={`/cards/${encodeURIComponent(item.card_id)}`}
+                    prefetch={false}
                     className="flex w-full items-center justify-between text-xs font-bold text-slate-700 transition hover:text-slate-950"
                   >
                     <span>View Comps &amp; Details</span>
