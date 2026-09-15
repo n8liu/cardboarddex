@@ -7,11 +7,9 @@ This guide details how to configure GitHub Actions, Cloudflare Pages, and AWS to
 ## Architecture Summary
 
 - **Frontend**: Next.js 16 App Router hosted on **Cloudflare Pages**.
-- **Backend API**: FastAPI (Uvicorn) container running on **AWS ECS Fargate** behind an Application Load Balancer (ALB).
-- **Async Workers**: Celery worker container on **AWS ECS Fargate**.
-- **Scheduler**: Celery beat container on **AWS ECS Fargate** (running alternating 15-minute price cycling).
+- **Backend API & Workers**: Single unified multi-container service on **AWS ECS Fargate** (`cardboarddex-backend-205a`, `desiredCount=1`) running FastAPI, Redis, and Celery Worker+Beat together behind an Application Load Balancer (ALB). See [`docs/single-ecs-service-setup.md`](single-ecs-service-setup.md).
 - **Database**: PostgreSQL 16 on **Amazon RDS**.
-- **Queue / Limiter**: Redis 7 on **Amazon ElastiCache**.
+- **Queue / Limiter**: In-task Redis 7 on `localhost:6379`.
 - **CI/CD**: **GitHub Actions** with OpenID Connect (OIDC) authentication to AWS and API token authentication to Cloudflare.
 
 ---
@@ -120,13 +118,15 @@ Using OIDC avoids storing long-lived AWS keys in GitHub.
    ```
 
 2. **Backend Services Architecture**:
-   - `cardboarddex-api-service`: Runs FastAPI with default CMD (`uvicorn app.main:app --host 0.0.0.0 --port 8000`). Attached to Application Load Balancer target group on port 8000 with healthcheck on `/health`.
-   - `cardboarddex-worker-service`: Runs Celery worker with container command override:
-     `["celery", "-A", "app.celery_app", "worker", "--loglevel=info"]`
-   - `cardboarddex-beat-service`: Runs Celery beat scheduler with container command override:
-     `["celery", "-A", "app.celery_app", "beat", "--loglevel=info"]`
+   - `cardboarddex-backend-205a`: Single unified multi-container ECS service hosting:
+     - `api`: FastAPI (port 8000, mapped to ALB target group)
+     - `redis`: Redis 7 alpine (`localhost:6379`)
+     - `celery`: Celery worker + beat (`celery -A app.celery_app worker --beat --loglevel=info`)
+     - Must run with `desiredCount=1` to prevent duplicate beat schedulers.
    - `cardboarddex-migration`: Task definition for one-off Alembic migrations:
      `["alembic", "upgrade", "head"]`
+
+   > See [`docs/single-ecs-service-setup.md`](single-ecs-service-setup.md) for full configuration details and decommissioning legacy standalone worker services.
 
 3. **Environment & Secrets in ECS Task Definition**:
    Inject database and provider secrets via AWS Secrets Manager:
@@ -177,10 +177,8 @@ In your GitHub repository (`n8liu/cardboarddex`), navigate to **Settings** > **S
 | --- | --- | --- |
 | `AWS_REGION` | `us-east-1` | Target AWS region |
 | `ECR_REPOSITORY` | `cardboarddex-backend` | ECR repository name |
-| `ECS_CLUSTER` | `cardboarddex-cluster` | ECS Cluster name |
-| `ECS_API_SERVICE` | `cardboarddex-api-service` | ECS FastAPI service name |
-| `ECS_WORKER_SERVICE` | `cardboarddex-worker-service` | ECS Celery worker service name |
-| `ECS_BEAT_SERVICE` | `cardboarddex-beat-service` | ECS Celery beat service name |
+| `ECS_CLUSTER` | `cardboarddex-cluster` (or `default`) | ECS Cluster name |
+| `ECS_API_SERVICE` | `cardboarddex-backend-205a` | Unified ECS service name (FastAPI + Redis + Celery) |
 | `ECS_MIGRATION_TASK_FAMILY` | `cardboarddex-migration` | Task definition name for Alembic migrations |
 | `ECS_SUBNET_IDS` | `subnet-abc,subnet-xyz` | Comma-separated private subnet IDs for migration task |
 | `ECS_SECURITY_GROUP_IDS` | `sg-0123456` | Security group allowing access to RDS |

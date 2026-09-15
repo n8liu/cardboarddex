@@ -32,9 +32,9 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
 
 - Repository: [https://github.com/n8liu/cardboarddex.git](https://github.com/n8liu/cardboarddex.git)
 - Frontend: Next.js 16 App Router, Tailwind CSS, Recharts, dynamic client/server cache synchronization, IBM Plex Mono typography. Deployed to **Cloudflare Pages** ([https://cardboarddex.pages.dev](https://cardboarddex.pages.dev)).
-- Backend: Python 3.11+, FastAPI, SQLAlchemy 2, Alembic. Deployed to **AWS ECS Fargate** (configured via `NEXT_PUBLIC_API_URL`).
+- Backend: Python 3.11+, FastAPI, SQLAlchemy 2, Alembic. Deployed to **AWS ECS Fargate** (`cardboarddex-backend-205a`, configured via `NEXT_PUBLIC_API_URL`). Downscaled to 0.25 vCPU / 0.5 GB RAM.
 - Data: PostgreSQL 16 on **AWS RDS** (`cardboarddex-db.c7gc44wq4clr.us-west-2.rds.amazonaws.com:5432`, `db.t4g.micro`, 20GB gp3, `us-west-2`) and local development DB (`cardboarddex`).
-- Background work: Celery and Redis running 24/7 passively on **AWS ECS Fargate** (`cardboarddex-celery-worker` service) with dual-layer rate limiter (burst pacing + daily safety ceiling) and alternating 15-minute price cycling.
+- Background work: Celery and Redis running 24/7 as a dedicated ECS Fargate service (`cardboarddex-celery-worker`, `desiredCount=1`, downscaled to 0.25 vCPU / 0.5 GB RAM) with dual-layer rate limiter (burst pacing + daily safety ceiling) and alternating 15-minute price cycling.
 - Media & Storage: **Amazon S3 Card Asset Bucket** (`cardboarddex-card-assets-349558247779`, `us-west-2`) with read-through caching in FastAPI (`/cards/:id/image`) and batch sync CLI (`jobs/sync_images_to_s3.py`).
 - External sources: [PokéAPI](https://pokeapi.co/), [TCG API Cards](https://tcgapi.dev/api/cards/), [TCG API Prices](https://tcgapi.dev/api/prices/), and eBay Developers APIs only.
 - Live Infrastructure: Hybrid architecture active with Cloudflare Edge (Pages frontend, DNS, DDoS WAF) + AWS Core (RDS PostgreSQL, S3 Asset Bucket, ECS Fargate for API, ECS Fargate for Celery Worker + Redis).
@@ -147,12 +147,14 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
     - Implemented read-through caching in [`backend/app/routers/cards.py`](backend/app/routers/cards.py) (`get_card_image`): checks S3 first; if absent, fetches from TCG API CDN, asynchronously uploads to S3, and streams image to client.
     - Built batch synchronization CLI [`backend/jobs/sync_images_to_s3.py`](backend/jobs/sync_images_to_s3.py) with concurrent async downloads and multi-threaded S3 uploads (`--limit`, `--all`, `--concurrency`). Over 740+ card images synced directly to S3.
     - Added S3 bucket domain to Next.js `images.remotePatterns` in [`frontend/next.config.ts`](frontend/next.config.ts).
-  - **Passive 24/7 Celery Background Worker & Redis on AWS ECS Fargate**:
-    - Created multi-container ECS task definition `cardboarddex-celery-worker:1` pairing `redis:7-alpine` on `localhost:6379` with `celery -A app.celery_app.celery_app worker -B --loglevel=info`.
-    - Deployed ECS Fargate service `cardboarddex-celery-worker` running 24/7 in ECS cluster `default` with CloudWatch logging (`/ecs/cardboarddex-celery-worker`).
-    - Passively executes alternating 15-minute price updates (TCG API at :00, :30; eBay comps at :15, :45) and daily catalog synchronization at 02:00 UTC without manual intervention.
-  - **AWS ECS Fargate Backend Service**:
-    - FastAPI app running on ECS Fargate (endpoint configured via environment variable `NEXT_PUBLIC_API_URL`).
+  - **Downscaled 24/7 Celery Background Worker & Redis on AWS ECS Fargate** (`cardboarddex-celery-worker`):
+    - Multi-container ECS task definition `cardboarddex-celery-worker` pairing `redis:7-alpine` on `localhost:6379` with `celery -A app.celery_app worker --beat --loglevel=info`.
+    - Downscaled to `0.25 vCPU` and `0.5 GB RAM` (~$8.89/mo), running with `desiredCount=1`.
+    - **Must not exceed 1 replica** — multiple replicas cause duplicate beat schedulers that double-fire tasks and burn API quota.
+    - Passively executes alternating 15-minute price updates (TCG API at :00, :30; eBay comps at :15, :45) and daily catalog synchronization at 03:00 UTC without manual intervention.
+    - Logs to CloudWatch (`/ecs/cardboarddex-celery-worker`).
+  - **AWS ECS Fargate Backend Service** (`cardboarddex-backend-205a`):
+    - FastAPI app running on ECS Fargate behind ALB, downscaled to `0.25 vCPU` and `0.5 GB RAM` (~$8.89/mo).
     - Implemented hardened global exception handler and CORS middleware in [`backend/app/main.py`](backend/app/main.py) with strict origin verification (`ALLOWED_ORIGIN_REGEX` for `cardboarddex.pages.dev`, `cardboarddex.app`, and localhost) and internal exception detail masking (`"An internal server error occurred"`), preventing CORS origin spoofing and tech stack leakage.
   - **Idempotent Catalog Ingestion**:
     - Updated [`backend/jobs/sync_catalog.py`](backend/jobs/sync_catalog.py) to check existing price observation fingerprints before inserting, resolving `UniqueViolation: uq_price_observations_fingerprint` when re-syncing sets.

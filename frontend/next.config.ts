@@ -70,11 +70,6 @@ const nextConfig: NextConfig = {
     remotePatterns: [
       {
         protocol: "https",
-        hostname: "api.cardboarddex.app",
-        pathname: "/**",
-      },
-      {
-        protocol: "https",
         hostname: "*.cardboarddex.app",
         pathname: "/**",
       },
