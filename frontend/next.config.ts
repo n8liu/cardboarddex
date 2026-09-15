@@ -22,13 +22,17 @@ function loadRootEnvApi(): string | undefined {
         return val;
       }
     }
-  } catch {}
+  } catch (error) {
+    console.warn("Could not read root .env API URL", error);
+  }
   return undefined;
 }
 
-const AWS_PRODUCTION_API_URL =
-  "https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws";
-const PRODUCTION_API_URL = AWS_PRODUCTION_API_URL;
+const PRODUCTION_API_URL = "https://api.cardboarddex.app";
+
+function isProductionApiSubdomain(url: string): boolean {
+  return /^https:\/\/api\.cardboarddex\.app\/?$/i.test(url);
+}
 
 const envApi = loadRootEnvApi();
 const isProd = process.env.NODE_ENV === "production" || !!process.env.CF_PAGES;
@@ -39,7 +43,7 @@ function isInvalidOrLocalhost(url: string | undefined): boolean {
   return (
     lower.includes("cardboarddex.com") ||
     lower.includes("cardboard.com") ||
-    lower.includes("cardboarddex.app") ||
+    (lower.includes("cardboarddex.app") && !isProductionApiSubdomain(url)) ||
     (isProd && (lower.includes("localhost") || lower.includes("127.0.0.1")))
   );
 }
@@ -48,7 +52,7 @@ const DEFAULT_API_URL =
   envApi && !isInvalidOrLocalhost(envApi)
     ? envApi
     : isProd
-      ? AWS_PRODUCTION_API_URL
+      ? PRODUCTION_API_URL
       : "http://localhost:8000";
 
 const resolvedApi = DEFAULT_API_URL;

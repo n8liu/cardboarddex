@@ -29,7 +29,11 @@ import type { PortfolioValuationResponse } from "@/types/binder";
 
 export const AWS_PRODUCTION_API_URL =
   "https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws";
-export const PRODUCTION_API_URL = AWS_PRODUCTION_API_URL;
+export const PRODUCTION_API_URL = "https://api.cardboarddex.app";
+
+function isProductionApiSubdomain(url: string): boolean {
+  return /^https:\/\/api\.cardboarddex\.app\/?$/i.test(url);
+}
 
 function isInvalidOrLocalhost(url: string | undefined): boolean {
   if (!url) return true;
@@ -39,7 +43,7 @@ function isInvalidOrLocalhost(url: string | undefined): boolean {
     lower.includes("127.0.0.1") ||
     lower.includes("cardboarddex.com") ||
     lower.includes("cardboard.com") ||
-    lower.includes("cardboarddex.app")
+    (lower.includes("cardboarddex.app") && !isProductionApiSubdomain(url))
   );
 }
 
@@ -58,7 +62,7 @@ export function resolveApiUrl(): string {
       host.endsWith(".cardboarddex.app");
     if (isProdHost) {
       if (isInvalidOrLocalhost(url)) {
-        return AWS_PRODUCTION_API_URL;
+        return PRODUCTION_API_URL;
       }
     }
   }
@@ -69,16 +73,16 @@ export function resolveApiUrl(): string {
 
   if (isProdEnv) {
     if (isInvalidOrLocalhost(url)) {
-      return AWS_PRODUCTION_API_URL;
+      return PRODUCTION_API_URL;
     }
   }
 
   if (
     url.includes("cardboarddex.com") ||
     url.includes("cardboard.com") ||
-    url.includes("cardboarddex.app")
+    (url.includes("cardboarddex.app") && !isProductionApiSubdomain(url))
   ) {
-    return AWS_PRODUCTION_API_URL;
+    return PRODUCTION_API_URL;
   }
 
   return (url || "http://localhost:8000").replace(/\/+$/, "");

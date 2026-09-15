@@ -39,7 +39,18 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
 - External sources: [PokéAPI](https://pokeapi.co/), [TCG API Cards](https://tcgapi.dev/api/cards/), [TCG API Prices](https://tcgapi.dev/api/prices/), and eBay Developers APIs only.
 - Live Infrastructure: Hybrid architecture active with Cloudflare Edge (Pages frontend, DNS, DDoS WAF) + AWS Core (RDS PostgreSQL, S3 Asset Bucket, ECS Fargate for API, ECS Fargate for Celery Worker + Redis).
 
-## Current state as of 2026-09-14 (updated 2026-09-14)
+## Current state as of 2026-09-15 (updated 2026-09-15)
+
+### Production API hostname migration (2026-09-15)
+
+- `https://api.cardboarddex.app/health` now returns HTTP 200 through Cloudflare after previously returning error 1033 from an inactive Tunnel. A real `/cards/search` request and a browser CORS preflight from `https://cardboarddex.app` also return HTTP 200. The generated AWS endpoint remains healthy and available for rollback. Cloudflare's active route type has not yet been confirmed from this workspace.
+- AWS ECS Express Mode already has an internet-facing ALB at `ecs-express-gateway-alb-c461d967-2090746418.us-west-2.elb.amazonaws.com`. Its existing listener rule now accepts both the generated AWS hostname and `api.cardboarddex.app`; a direct ALB health request with the new Host header returned HTTP 200. The original hostname and target-group routing remain intact.
+- An ACM certificate was requested for `api.cardboarddex.app` in `us-west-2` (`arn:aws:acm:us-west-2:349558247779:certificate/8bd404b5-3e68-42ab-bc64-f66916e1cca5`). It is pending DNS validation. Create this **DNS-only** Cloudflare CNAME, and retain it for renewal:
+  - Name: `_8129738704b35a73dc1c6c8ab78dfcf7.api` (full name `_8129738704b35a73dc1c6c8ab78dfcf7.api.cardboarddex.app`)
+  - Target: `_21d90571bb3d61c63e57045313cf5ec4.wzccmgtwzk.acm-validations.aws`
+- If Cloudflare should connect directly to the ALB, first publish the validation CNAME, wait for ACM to issue the certificate, add it to the ALB HTTPS listener, then point a proxied Cloudflare CNAME named `api` at the ALB DNS name and use Full (strict) SSL/TLS. The custom hostname's current HTTP 200 alone does not prove that direct ALB TLS is configured; ACM is still pending and its validation CNAME is not publicly visible.
+- The frontend code and GitHub Actions build fallback now use `https://api.cardboarddex.app` for production, and a Next.js production build passes locally. The live `cardboarddex.app/catalog` page still exposes the generated AWS API URL, so the frontend cutover requires a new Cloudflare Pages deployment. Cloudflare Pages' production `NEXT_PUBLIC_API_URL`, if explicitly set to the old AWS URL, must also be updated to the custom URL before rebuilding and deploying; Next.js bakes public environment variables into the browser build. Local development remains `http://localhost:8000`.
+- A DNS subdomain does **not** replace AWS-owned public IPv4 addresses or remove their hourly fee. This migration reuses the existing ALB without adding another load balancer. An AWS inventory on 2026-09-15 found four public IPv4 addresses on the ALB, one on the active backend task, one on the Celery worker, and one on a deactivating backend task. Six persistent addresses at AWS VPC's $0.005 per address-hour rate would cost about $21.60 per 30-day month; rolling deployments temporarily add more. AWS supports an IPv6-only public ALB that could remove the four ALB public IPv4 addresses, but this VPC's four ALB subnets currently have no IPv6 ranges, and the current generated AWS endpoint plus frontend still depend on IPv4. Assess that as a separate network migration after the Pages cutover and verified Cloudflare origin routing; do not change the ALB IP mode during this hostname migration.
 
 ### Implemented and verified
 
@@ -613,7 +624,7 @@ Never commit `.env` or API credentials.
 
 - **Completed**: PostgreSQL 16 on AWS RDS, ECS Fargate backend API, S3 card asset bucket with read-through caching and batch sync worker, and 24/7 passive Celery worker with Redis broker on ECS Fargate are fully deployed and operational.
 - **Pending CloudFront Custom Domain**: Complete AWS Support verification to deploy CloudFront CDN distribution in front of S3 bucket `cardboarddex-card-assets-349558247779` for global edge caching and custom domain HTTPS.
-- **Backend API Endpoint**: Direct AWS ECS endpoint `https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws` is used directly across production frontend and CI/CD.
+- **Backend API Endpoint**: `https://api.cardboarddex.app` is healthy through Cloudflare and is now the production code default; the generated AWS ECS endpoint `https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws` remains healthy for rollback. The custom-domain ACM certificate is pending validation for any direct-ALB route. See the production hostname migration above.
 
 ### 4. Product-quality pass
 
