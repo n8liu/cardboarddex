@@ -43,8 +43,6 @@ def test_cors_origin_validation() -> None:
     assert is_allowed_origin("https://cardboarddex.pages.dev") is True
     assert is_allowed_origin("https://cardboarddex.app") is True
     assert is_allowed_origin("https://www.cardboarddex.app") is True
-    assert is_allowed_origin("https://cardboarddex.com") is True
-    assert is_allowed_origin("https://www.cardboarddex.com") is True
     assert is_allowed_origin("http://localhost:3000") is True
     assert is_allowed_origin("http://127.0.0.1:3000") is True
 

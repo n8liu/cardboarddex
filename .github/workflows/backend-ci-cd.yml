@@ -146,26 +146,19 @@ jobs:
           aws-region: us-west-2
           audience: sts.amazonaws.com
 
-      - name: Trigger Rolling Update on Unified ECS Service
+      - name: Deploy API and Celery services
         run: |
           CLUSTER="default"
-          # Single unified ECS service hosting FastAPI, Redis, and Celery Worker+Beat.
-          # Must run with desiredCount=1 — running multiple replicas causes duplicate
-          # beat scheduler instances that double-fire tasks and burn API quota.
-          SERVICE="${{ vars.ECS_API_SERVICE || 'cardboarddex-backend-205a' }}"
+          API_SERVICE="cardboarddex-api-tunnel-service"
+          WORKER_SERVICE="cardboarddex-celery-worker-service-51wjzn39"
 
-          if [ -z "$CLUSTER" ]; then
-            echo "Notice: ECS_CLUSTER variable is not defined. Skipping ECS service deployment."
-            echo "ECR image has been pushed successfully: ${{ needs.build-and-push.outputs.ecr_registry }}/${{ vars.ECR_REPOSITORY || 'cardboarddex-backend' }}:${{ needs.build-and-push.outputs.image_tag }}"
-            exit 0
-          fi
+          echo "Updating FastAPI Tunnel Service: $API_SERVICE..."
+          aws ecs update-service --cluster "$CLUSTER" --service "$API_SERVICE" --force-new-deployment
+          aws ecs wait services-stable --cluster "$CLUSTER" --services "$API_SERVICE"
 
-          echo "Updating FastAPI Web Service: $SERVICE..."
-          aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" --force-new-deployment
+          echo "Updating Celery Worker Service: $WORKER_SERVICE..."
+          aws ecs update-service --cluster "$CLUSTER" --service "$WORKER_SERVICE" --force-new-deployment
+          aws ecs wait services-stable --cluster "$CLUSTER" --services "$WORKER_SERVICE"
 
-          echo "Updating Celery Worker Service: cardboarddex-celery-worker..."
-          if aws ecs describe-services --cluster "$CLUSTER" --services "cardboarddex-celery-worker" 2>/dev/null | grep -q '"status": "ACTIVE"'; then
-            aws ecs update-service --cluster "$CLUSTER" --service "cardboarddex-celery-worker" --force-new-deployment
-          fi
-
-          echo "Deployment initiated successfully!"
+          curl --fail --silent --show-error --retry 5 --retry-delay 10 https://api.cardboarddex.app/health
+          echo "Deployment verified successfully."

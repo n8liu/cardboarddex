@@ -28,3 +28,6 @@ include = ["app*", "jobs*", "parsers*"]
 pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+  "live: calls deployed services and requires RUN_LIVE_DEPLOYMENT_TESTS=1",
+]

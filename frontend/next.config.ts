@@ -29,6 +29,12 @@ function loadRootEnvApi(): string | undefined {
 }
 
 const PRODUCTION_API_URL = "https://api.cardboarddex.app";
+const LEGACY_AWS_API_URL =
+  "https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws";
+
+function isLegacyAwsApiUrl(url: string): boolean {
+  return url.replace(/\/+$/, "").toLowerCase() === LEGACY_AWS_API_URL;
+}
 
 function isProductionApiSubdomain(url: string): boolean {
   return /^https:\/\/api\.cardboarddex\.app\/?$/i.test(url);
@@ -41,9 +47,8 @@ function isInvalidOrLocalhost(url: string | undefined): boolean {
   if (!url) return true;
   const lower = url.toLowerCase();
   return (
-    lower.includes("cardboarddex.com") ||
-    lower.includes("cardboard.com") ||
     (lower.includes("cardboarddex.app") && !isProductionApiSubdomain(url)) ||
+    (isProd && isLegacyAwsApiUrl(url)) ||
     (isProd && (lower.includes("localhost") || lower.includes("127.0.0.1")))
   );
 }
@@ -75,11 +80,6 @@ const nextConfig: NextConfig = {
       {
         protocol: "https",
         hostname: "*.cardboarddex.app",
-        pathname: "/**",
-      },
-      {
-        protocol: "https",
-        hostname: "*.on.aws",
         pathname: "/**",
       },
       {

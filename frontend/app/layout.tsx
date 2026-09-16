@@ -23,8 +23,8 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           rel="stylesheet"
         />
         {/* Performance Resource Hints */}
-        <link rel="preconnect" href="https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws" />
-        <link rel="dns-prefetch" href="https://ca-72b07140e03c4335a2d28f0e1c81f161.ecs.us-west-2.on.aws" />
+        <link rel="preconnect" href="https://api.cardboarddex.app" />
+        <link rel="dns-prefetch" href="https://api.cardboarddex.app" />
         <link rel="preconnect" href="https://product-images.tcgplayer.com" />
         <link rel="dns-prefetch" href="https://product-images.tcgplayer.com" />
         <link rel="preconnect" href="https://raw.githubusercontent.com" />
