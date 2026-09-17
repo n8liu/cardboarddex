@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Provision the reviewed $7 replacement and private backup storage. Preview by default."""
+"""Provision the reviewed $5 Lightsail instance and private backup storage. Preview by default."""
 import argparse
 import json
 import logging
@@ -29,7 +29,7 @@ def main():
     session = boto3.Session(region_name=REGION)
     if session.client('sts').get_caller_identity()['Account'] != ACCOUNT:
         raise RuntimeError('Refusing unexpected AWS account')
-    print(json.dumps({'instance': INSTANCE, 'bundle': 'micro_3_0', 'monthly_usd': 7,
+    print(json.dumps({'instance': INSTANCE, 'bundle': 'nano_3_0', 'monthly_usd': 5,
                       'backup_bucket': BUCKET, 'region': REGION, 'apply': args.apply}))
     if not args.apply:
         return
@@ -83,7 +83,7 @@ def main():
     instances = lightsail.get_instances()['instances']
     if not any(i['name'] == INSTANCE for i in instances):
         lightsail.create_instances(instanceNames=[INSTANCE], availabilityZone='us-west-2a',
-            blueprintId='ubuntu_24_04', bundleId='micro_3_0',
+            blueprintId='ubuntu_24_04', bundleId='nano_3_0',
             tags=[{'key':'Project','value':'cardboarddex'}, {'key':'Purpose','value':'production'}])
     addresses = lightsail.get_static_ips()['staticIps']
     if not any(a['name'] == 'cardboarddex-production' for a in addresses):

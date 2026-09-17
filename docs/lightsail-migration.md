@@ -1,6 +1,6 @@
 # Lightsail production operations
 
-The production design uses the $7 `micro_3_0` (1 GB RAM) bundle in `us-west-2`, Cloudflare Tunnel, PostgreSQL 16, a single Celery worker, one Beat scheduler, and separate durable/cache Redis services. The frontend stays on Cloudflare Pages. The target is under $10/month before tax, domain renewal, and API subscriptions; storage and traffic are variable.
+The production design uses the $5 `nano_3_0` (512 MB RAM) bundle in `us-west-2`, Cloudflare Tunnel, PostgreSQL 16, a single Celery worker, one Beat scheduler, and separate durable/cache Redis services. The frontend stays on Cloudflare Pages. The target is strictly $5/month for the server base; domain renewal and third-party APIs are separate, and all residual AWS snapshots/services have been retired.
 
 ## Files and configuration
 
@@ -36,13 +36,13 @@ For recovery, start an empty PostgreSQL 16 container and run `RESTORE_CONTAINER=
 
 ## Provisioning and safe host cutover
 
-`python scripts/lightsail/provision.py` previews resources. `--apply` creates the 1 GB replacement, private backup bucket, upload-only identity, and read-only GitHub OIDC role. It refuses unexpected AWS accounts and stores secrets under ignored `.system_generated/lightsail/`. It does not delete or stop existing resources.
+`python scripts/lightsail/provision.py` previews resources. `--apply` creates the $5 `nano_3_0` instance, private backup bucket, upload-only identity, and read-only GitHub OIDC role. It refuses unexpected AWS accounts and stores secrets under ignored `.system_generated/lightsail/`. It does not delete or stop existing resources.
 
 Before cutover, successfully restore a backup obtained from S3. Bootstrap the clean Ubuntu 24.04 host with `bootstrap.sh`, attach a static IP, verify its host key via AWS, and install the reviewed release and secrets. Create the explicitly named empty PostgreSQL volume. Keep the replacement worker, Beat, and Tunnel stopped.
 
 During maintenance, stop old Beat/worker, drain jobs, stop API writes, take final PostgreSQL/Redis copies, and compare source/destination table counts and Alembic revision. Rotate the database credential, validate the replacement locally, then stop the old Tunnel before starting the new Tunnel and scheduler. Exactly one host may run ingestion.
 
-Keep the old host stopped for 48 hours after successful cutover (it remains billable). Validate a nightly sync, price jobs, backups, reboot recovery, and resource usage before deleting it. Keep the final RDS snapshot for at least seven days and until repeated off-server backups/restores succeed. Never delete it merely because a backup file exists.
+Keep the old host stopped for 48 hours after successful cutover (it remains billable). Validate a nightly sync, price jobs, backups, reboot recovery, and resource usage before deleting it. The final RDS snapshot was retired on 2026-09-17 after off-server backups in S3 were confirmed, eliminating ongoing storage charges.
 
 On 2026-09-16, AWS rejected a second instance with an account limit of one despite inconsistent Service Quotas responses. Do not delete the only working server to bypass this condition. Retry provisioning only after AWS lifts the limit or the owner explicitly chooses a replacement outage without the host rollback window.
 

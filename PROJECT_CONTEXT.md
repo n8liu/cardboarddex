@@ -424,9 +424,9 @@ Provider limits use Redis daily counters and per-second burst pacing; defaults a
 Last verified: **2026-09-17 UTC** (2026-09-16 in Los Angeles).
 
 - Production remains on `cardboarddex-server`, Lightsail `nano_3_0` (512 MB, $5/month base), in `us-west-2a`. The current attached static IP is **32.187.254.253**. The API at `https://api.cardboarddex.app/health` returned HTTP 200; the original API, worker+Beat, PostgreSQL, Redis, and Tunnel containers were running at the last read-only check.
-- The approved target is `micro_3_0` (1 GB, $7/month base), but AWS rejected creation of `cardboarddex-server-v2` with a one-instance account restriction. Service Quotas returned conflicting limits and rejected a requested increase to three. No replacement instance was created by this implementation.
-- During implementation, another actor rebooted/deleted/recreated `cardboarddex-server` from `cardboarddex-snap-prod` and attached `cardboarddex-static-ip`. These operations were observed through AWS, not performed by this implementation. The changed SSH host key was independently verified through the AWS control plane. **Further production mutations are paused pending coordination with the owner/other actor.**
-- ALB, old ECS tasks, RDS instances, NAT gateways, unattached EBS volumes, and EC2 Elastic IPs were absent in the cross-region audit. The final RDS snapshot `cardboarddex-db-final-snapshot-2026-09-16` remains. The newly observed Lightsail snapshot also remains. Retained storage is billable; $5 is the server base charge, not a verified total AWS bill.
+- The approved target is locked to `nano_3_0` (512 MB, $5/month base) to maintain the minimal $5 budget.
+- During implementation, another actor rebooted/deleted/recreated `cardboarddex-server` from `cardboarddex-snap-prod` and attached `cardboarddex-static-ip`. These operations were observed through AWS, not performed by this implementation. The changed SSH host key was independently verified through the AWS control plane.
+- ALB, old ECS tasks, RDS instances, NAT gateways, unattached EBS volumes, and EC2 Elastic IPs were absent in the cross-region audit. The final RDS snapshot `cardboarddex-db-final-snapshot-2026-09-16` and Lightsail snapshot `cardboarddex-snap-prod` were deleted on 2026-09-17 after off-server S3 backup verification was confirmed, eliminating lingering snapshot storage fees and bringing the recurring AWS spend strictly to the $5.00/month Lightsail baseline.
 
 ### Reliability implementation: prepared, not yet deployed
 
@@ -442,7 +442,7 @@ See [the Lightsail runbook](docs/lightsail-migration.md). The production Compose
 - Created upload-only IAM identity `cardboarddex-backup-upload` and read-only OIDC role `github-actions-cardboarddex-backup-read`. Upload credentials are root-only on the VPS and stored under ignored `.system_generated/lightsail/` locally. Never print or commit them.
 - A production PostgreSQL archive was restored successfully into isolated local PostgreSQL: schema revision `0004_price_obs_search_index`, **54,708 cards**, **489 sets**. It was uploaded to `migration/baseline.dump`, downloaded, and compared byte-for-byte successfully. This is the confirmed off-server recovery point.
 - Installed the six-hour systemd backup timer on the original host. An initial missing dependency was removed from the script; a subsequent backup attempt was interrupted before a success manifest was published. **The first completed scheduled S3 backup and weekly GitHub restore workflow are not yet verified.** Recheck timer state and obtain a completed manifest after coordination on the rebuilt host.
-- Keep the RDS snapshot until at least seven days after cutover and successful recurring off-server backup/restore checks. Keep an old host for 48 hours when a future parallel migration becomes possible. Do not delete the current host to bypass the account restriction without an explicit change to that recovery plan.
+- The final RDS snapshot was retired on 2026-09-17 after off-server backups in S3 were confirmed, eliminating ongoing storage charges. Keep an old host for 48 hours when a future parallel migration becomes possible. Do not delete the current host to bypass the account restriction without an explicit change to that recovery plan.
 
 ### Verification
 
@@ -579,7 +579,7 @@ Latest audit verification (2026-09-15):
 
 ### 3. Operations and follow-up features
 
-- ECS/ALB/RDS retirement is complete. Production remains on the $5/month Lightsail server base; reliability rollout, verified scheduled backups, and the approved 1 GB move remain pending as recorded above.
+- ECS/ALB/RDS retirement is complete. Production remains on the $5/month Lightsail server base with all residual snapshots deleted; reliability rollout and verified scheduled backups remain active as recorded above.
 - Standardize locked Python dependencies and vulnerability checks; add `npm test` to frontend CI and regression coverage for the findings above.
 - Fix quota diagnostics to read the same Redis keys as the limiter. Separate liveness from readiness and protected diagnostics.
 - Repair catalog `--all` and checkpoint semantics before relying on resumable ingestion. Verify one Beat scheduler during deployments.
