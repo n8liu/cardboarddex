@@ -1,0 +1,41 @@
+name: Verify off-server backups
+on:
+  schedule:
+    - cron: '45 * * * *'
+  workflow_dispatch:
+    inputs:
+      restore:
+        type: boolean
+        default: true
+        description: Restore newest backup into disposable PostgreSQL
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: backup-verification
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::349558247779:role/github-actions-cardboarddex-backup-read
+          aws-region: us-west-2
+      - run: pip install boto3
+      - name: Check age and weekly restore
+        env:
+          BACKUP_BUCKET: ${{ vars.BACKUP_BUCKET }}
+          RESTORE_REQUESTED: ${{ inputs.restore }}
+        run: |
+          set -euo pipefail
+          : "${BACKUP_BUCKET:?Configure BACKUP_BUCKET}"
+          args=(--bucket "$BACKUP_BUCKET")
+          if [[ "$RESTORE_REQUESTED" == true || "$(date -u +%u%H)" == 700 ]]; then
+            args+=(--restore)
+          fi
+          python scripts/lightsail/verify_backup.py "${args[@]}"

@@ -19,6 +19,11 @@ celery_app.conf.update(
     accept_content=["json"],
     result_serializer="json",
     task_track_started=True,
+    result_expires=3600,
+    broker_connection_timeout=2,
+    broker_transport_options={"socket_timeout": 2, "socket_connect_timeout": 2},
+    redis_socket_timeout=2,
+    redis_socket_connect_timeout=2,
     # Acknowledge tasks only after completion so a crashed worker doesn't silently drop work.
     task_acks_late=True,
     # Fetch one task at a time — prevents a slow job from blocking the queue behind it.

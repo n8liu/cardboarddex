@@ -23,7 +23,9 @@ class DailyRequestLimiter:
         sleep: Callable[[float], None] = time.sleep,
         redis_client: Redis | None = None,
     ) -> None:
-        self.redis = redis_client or Redis.from_url(redis_url, decode_responses=True)
+        self.redis = redis_client or Redis.from_url(
+            redis_url, decode_responses=True, socket_connect_timeout=2, socket_timeout=2,
+        )
         self.provider = provider
         self.limit = limit
         self.max_per_second = max_per_second
@@ -52,7 +54,7 @@ class DailyRequestLimiter:
                         type(exc).__name__,
                         exc,
                     )
-                    break
+                    raise
 
                 if burst_count > self.max_per_second:
                     sleep_time = max(0.1, 1.0 - (current_time - second_bucket))

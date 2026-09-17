@@ -1,3 +1,4 @@
+from app.common.cache import TTLCache
 import logging
 import re
 from datetime import UTC, datetime
@@ -34,7 +35,7 @@ _MAX_ANALYTICS_ENTRIES = 2000
 _IN_MEMORY_CARD_CLICKS: dict[str, int] = {}
 _IN_MEMORY_POKE_CLICKS: dict[str, int] = {}
 _IN_MEMORY_SEARCHES: dict[str, int] = {}
-_TRENDING_CACHE: dict[str, tuple[datetime, TrendingDashboardResponse]] = {}
+_TRENDING_CACHE = TTLCache(max_entries=64, ttl=180)
 
 
 def _safe_increment_in_memory(store: dict[str, int], key: str) -> None:

@@ -43,13 +43,10 @@ The eBay phase must introduce a typed adapter, raw immutable ingestion, conserva
 
 Do not classify active eBay Browse listings as completed sales. Confirm the available eBay program and scopes before implementing ingestion.
 
-## Deployment direction
+## Production deployment
 
-- FastAPI and Celery: ECS/Fargate or App Runner.
-- PostgreSQL: RDS with automated backups and a staging database for provider migrations.
-- Redis: ElastiCache.
-- Images: versioned S3 bucket plus CloudFront.
-- Secrets: AWS Secrets Manager.
-- Schedules and alerts: Celery Beat initially; EventBridge and CloudWatch as operational needs mature.
+The frontend runs on Cloudflare Pages. FastAPI, PostgreSQL 16, Celery worker/Beat, and Redis run on one Lightsail VPS behind Cloudflare Tunnel. The reviewed target is the $7/month 1 GB bundle; AWS account limits currently block creation of the replacement for the existing 512 MB host.
 
-See `PROJECT_CONTEXT.md` for commands, current verification status, environment variables, and the prioritized roadmap.
+The production Compose configuration separates durable Redis (broker, quotas, ingestion checkpoints) from disposable caches, bounds database pools and logs, and uses immutable AMD64 images. Schema revisions are checked before deployment; migrations are reviewed separately. Six-hourly encrypted S3 backups and weekly isolated restore checks replace reliance on backups stored only on the VPS.
+
+See [the Lightsail runbook](docs/lightsail-migration.md) for configuration, cutover, rollback, recovery, and billing checks. `PROJECT_CONTEXT.md` records what is actually deployed versus prepared.

@@ -1,0 +1,10 @@
+{
+  "rules": [
+    {
+      "rulePriority": 1,
+      "description": "Expire unreferenced untagged images after seven days; tagged releases are protected by explicit cleanup",
+      "selection": {"tagStatus": "untagged", "countType": "sinceImagePushed", "countUnit": "days", "countNumber": 7},
+      "action": {"type": "expire"}
+    }
+  ]
+}

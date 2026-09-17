@@ -1,4 +1,6 @@
-# Tunnel-only API service migration
+# Historical Tunnel-only ECS migration
+
+Production has since moved to Lightsail. Use [the Lightsail runbook](lightsail-migration.md) for current deployment and recovery; the ECS steps below are historical.
 
 The production API is published at `https://api.cardboarddex.app` through Cloudflare Tunnel. The `cloudflared` container runs beside FastAPI in the AWS ECS task, so inbound API traffic reaches FastAPI locally without an AWS Application Load Balancer. This was verified by starting the replacement task, observing four registered Tunnel connections, requesting the production `/health` endpoint, and finding that request in the replacement FastAPI log. A route aimed at the generated `*.on.aws` URL would still need the ALB.
 
@@ -36,6 +38,13 @@ cd backend
 RUN_LIVE_DEPLOYMENT_TESTS=1 pytest -m live tests/test_deployment_endpoints.py -v
 ```
 
-Before deletion, rollback is simple: keep the Express task running, scale the standard service to zero, and restore the prior frontend build if needed. After deletion, restoring the generated AWS endpoint requires recreating an Express service and ALB; the Tunnel-only service remains the primary API path. The Celery/Redis service and RDS stay running throughout.
+## Migration status: COMPLETED (2026-09-16)
 
-The current ALB usage rate is about $0.0225/hour and AWS public IPv4 is $0.005/address-hour. Removing the ALB and its currently observed four addresses would avoid roughly $30.60 per 30-day month before variable LCU charges. This is an estimate, not a bill credit; the API task, its own public IPv4 address, the Celery worker, and RDS remain billable.
+The migration to `cardboarddex-api-tunnel-service` is complete:
+- `cardboarddex-api-tunnel-service` is active with desired count 1.
+- `cardboarddex-backend-205a` (Express Mode service) has been deleted.
+- The managed ALB (`ecs-express-gateway-alb-c461d967`) and its 4 public IPv4 addresses (including 2 Elastic IPs) have been deleted and released.
+- ECR lifecycle policy has been configured for `cardboarddex-backend` to expire untagged images and retain only the last 3 tagged images.
+- All deployment smoke tests pass cleanly against `https://api.cardboarddex.app`.
+
+The current ALB usage rate of ~$0.0225/hour and four public IPv4 addresses at $0.005/address-hour have been eliminated, saving ~$31–$36/month. The API task, Celery worker, and RDS remain active.

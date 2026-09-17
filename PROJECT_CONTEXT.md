@@ -1,77 +1,75 @@
 # CardboardDex Project Context
 
-This is the handoff document for agents working in this repository. Read this file and `AGENTS.md` before changing code. `ARCHITECTURE.md` describes the system boundaries in more detail.
+Updated: 2026-09-16. This handoff retains detailed product and implementation context, with dated deployment records and explicit known limitations. Repository: [n8liu/cardboarddex](https://github.com/n8liu/cardboarddex).
 
-- **GitHub Repository**: [https://github.com/n8liu/cardboarddex.git](https://github.com/n8liu/cardboarddex.git)
+Read [AGENTS.md](AGENTS.md) before changing code, including the installed Next.js documentation requirement. Treat source code and dated verification as authoritative when older documents disagree. [ARCHITECTURE.md](ARCHITECTURE.md) describes the system boundaries but still contains outdated deployment and eBay implementation notes.
 
-## Product goal
+## Project rules
 
-CardboardDex is a focused Pokémon trading-card price tracker and National Pokédex browser. PokéAPI serves as the canonical Pokédex and species reference (names, dex IDs, generations, audio cries, and high-resolution official artwork). TCG API is the single catalog and market-price API. eBay is the primary source of verified market comps and graded-card comps.
+1. Log the exact error and useful request/card context for third-party failures; do not silently swallow exceptions. Keep credentials and sensitive response fields out of logs.
+2. Do not change the existing `cards` or `sets` columns, constraints, indexes, or migrations without explicit permission.
+3. Keep all eBay title interpretation in [backend/parsers/title_matcher.py](backend/parsers/title_matcher.py), with edge-case unit tests.
+4. Before implementing a feature, publish a Markdown plan listing the files to change. Deliver one tested, runnable phase at a time.
+5. Ask before committing or pushing unless already authorized.
+6. Update this handoff after implementation when behavior, configuration, verification, or outstanding work changes. Do not append repeated feature histories.
 
-```text
-PokéAPI -> 1,025 Pokémon species + stats + audio cries + official artwork
-TCG API -> canonical sets/cards + comprehensive market observations -> PostgreSQL
-eBay -> raw listings -> conservative title matching -> verified comps
-PostgreSQL -> FastAPI -> Next.js
-Card images -> FastAPI cache headers -> Next image optimizer -> Cloudflare R2 / AWS S3 + CDN
-```
+## Product and data boundaries
 
-The browser communicates only with FastAPI (and direct PokéAPI detail caching via Next.js ISR). API keys and provider calls remain server-side.
+CardboardDex provides an English/Japanese Pokémon card catalog, price comparisons, a National Pokédex, and a browser-based collection binder.
 
-## Non-negotiable project rules
+- **TCG API:** canonical card/set catalog and per-printing market-price observations.
+- **eBay Browse API:** active asking-price listings matched by title, including raw cards, graded slabs, and sealed products. A matched title is not proof of authenticity or a completed sale.
+- **PokéAPI:** Pokémon details; a bundled registry supports browsing 1,025 species and evolution families.
+- **PostgreSQL:** catalog, provider state, price observations, and raw eBay listing records.
+- **Redis:** Celery broker/results, provider quotas, analytics, caches, and the eBay application-token cache.
 
-1. Never use generic or bare `try/except`. Third-party failures must log the exact exception type, message, request path, parameters, status, and useful card context.
-2. The existing `sets` and `cards` schemas are sacred. Do not change their columns, constraints, indexes, or migrations without explicit permission.
-3. All eBay title interpretation must live in `backend/parsers/title_matcher.py`, with comprehensive edge-case tests.
-4. Before implementing a feature, publish a Markdown plan listing every file intended to change.
-5. Implement one tested, runnable phase at a time.
-6. Do not commit and push every code fix, ask user first.
-7. Always update file PROJECT_CONTEXT or this file after finishing a program.
+Provider credentials stay server-side. The browser calls FastAPI and also loads external fonts/media; PokéAPI detail fetching is implemented in the frontend's server-rendering path. Binder names/pages/slot-to-card-ID mappings persist in localStorage. Card IDs are sent to the backend for valuation and the resulting valuation is cached server-side.
 
-## Technology
+Catalog image responses use `/cards/{id}/image`. The backend downloads provider images or redirects to configured S3/CDN assets; the Next image optimizer is configured for supported origins. S3 URLs may therefore be visible to clients. CloudFront/custom-domain delivery remains a deployment follow-up, not a verified requirement for existing image delivery.
 
-- Repository: [https://github.com/n8liu/cardboarddex.git](https://github.com/n8liu/cardboarddex.git)
-- Frontend: Next.js 16 App Router, Tailwind CSS, Recharts, dynamic client/server cache synchronization, IBM Plex Mono typography. Deployed to **Cloudflare Pages** ([https://cardboarddex.pages.dev](https://cardboarddex.pages.dev)).
-- Backend: Python 3.11+, FastAPI, SQLAlchemy 2, Alembic. Deployed to **AWS ECS Fargate** (`cardboarddex-backend-205a`, with staged replacement `cardboarddex-api-tunnel-service`, configured via `NEXT_PUBLIC_API_URL`). Downscaled to 0.25 vCPU / 0.5 GB RAM.
-- Data: PostgreSQL 16 on **AWS RDS** (`cardboarddex-db.c7gc44wq4clr.us-west-2.rds.amazonaws.com:5432`, `db.t4g.micro`, 20GB gp3, `us-west-2`) and local development DB (`cardboarddex`).
-- Background work: Celery and Redis running 24/7 as a dedicated ECS Fargate service (`cardboarddex-celery-worker`, `desiredCount=1`, downscaled to 0.25 vCPU / 0.5 GB RAM) with dual-layer rate limiter (burst pacing + daily safety ceiling) and alternating 15-minute price cycling.
-- Media & Storage: **Amazon S3 Card Asset Bucket** (`cardboarddex-card-assets-349558247779`, `us-west-2`) with read-through caching in FastAPI (`/cards/:id/image`) and batch sync CLI (`jobs/sync_images_to_s3.py`).
-- External sources: [PokéAPI](https://pokeapi.co/), [TCG API Cards](https://tcgapi.dev/api/cards/), [TCG API Prices](https://tcgapi.dev/api/prices/), and eBay Developers APIs only.
-- Live Infrastructure: Hybrid architecture active with Cloudflare Edge (Pages frontend, DNS, DDoS WAF) + AWS Core (RDS PostgreSQL, S3 Asset Bucket, ECS Fargate for API, ECS Fargate for Celery Worker + Redis).
+## Stack and source map
 
-## Current state as of 2026-09-15 (updated 2026-09-15)
+- Frontend: Next.js 16 App Router, React 19, Tailwind CSS 4, Recharts, TypeScript, Vitest. Exact versions: [frontend/package.json](frontend/package.json).
+- Backend: Python 3.11+ declared; Docker/CI use Python 3.12. FastAPI, SQLAlchemy 2, Alembic, Celery, Redis, HTTPX, boto3.
+- Production deployment: Cloudflare Pages (frontend) with AWS Lightsail Linux VPS ($5.00/month server base; Docker Compose running FastAPI, Celery worker+Beat, PostgreSQL 16 Alpine, Redis 7 Alpine, Cloudflare Tunnel connector) in `us-west-2`, and S3 card asset bucket.
+- Local PostgreSQL/Redis: [docker-compose.yml](docker-compose.yml). Backend Docker/CI install [backend/requirements.txt](backend/requirements.txt); they do not currently consume `backend/uv.lock`.
 
-### Production API hostname migration (2026-09-15)
+| Area | Entry points |
+| --- | --- |
+| API setup, CORS, health, headers | [backend/app/main.py](backend/app/main.py) |
+| Settings, database, Redis, rate limiting | [backend/app/config.py](backend/app/config.py), [backend/app/database.py](backend/app/database.py), [backend/app/common](backend/app/common) |
+| Search, sets, Pokémon card queries | [backend/app/routers/catalog.py](backend/app/routers/catalog.py), [backend/app/services/catalog_service.py](backend/app/services/catalog_service.py) |
+| Card detail, prices, images | [backend/app/routers/cards.py](backend/app/routers/cards.py) |
+| Movers, grading, sealed signals, live updates | [backend/app/routers/market.py](backend/app/routers/market.py), [backend/app/services](backend/app/services) |
+| Trending, action tracking, portfolio valuation | [backend/app/routers/analytics.py](backend/app/routers/analytics.py), [backend/app/services/portfolio_service.py](backend/app/services/portfolio_service.py) |
+| Provider adapters and quotas | [backend/app/tcgapi/client.py](backend/app/tcgapi/client.py), [backend/app/ebay/client.py](backend/app/ebay/client.py), [backend/app/providers/limiter.py](backend/app/providers/limiter.py) |
+| Catalog, pricing, image jobs | [backend/jobs](backend/jobs), [backend/app/celery_app.py](backend/app/celery_app.py) |
+| Browser/server API access and fallback valuation | [frontend/lib/api.ts](frontend/lib/api.ts), [frontend/lib/portfolio.ts](frontend/lib/portfolio.ts) |
+| Binder state and UI | [frontend/context/binder-context.tsx](frontend/context/binder-context.tsx), [frontend/components/binder](frontend/components/binder) |
+| Pokédex data and species details | [frontend/lib/pokedex-data.ts](frontend/lib/pokedex-data.ts), [frontend/lib/pokeapi.ts](frontend/lib/pokeapi.ts) |
+| Deployment workflows | [.github/workflows/backend-ci-cd.yml](.github/workflows/backend-ci-cd.yml), [.github/workflows/frontend-ci-cd.yml](.github/workflows/frontend-ci-cd.yml) |
 
-- **Cost-reduction migration now in progress:** The user confirmed that `api.cardboarddex.app` is served through Cloudflare Tunnel. The live ECS API task includes `Main` (FastAPI) and a `cloudflared` sidecar at 0.25 vCPU / 0.5 GB RAM. The standard Fargate service `cardboarddex-api-tunnel-service` and task definition `cardboarddex-api-tunnel:1` are staged with no load balancer. Its task ran successfully, registered four Tunnel connections, and received a production `/health` request through `api.cardboarddex.app`; it was returned to `desiredCount=0` to avoid overlap cost until deployment. Its outbound-only security group is `sg-08030298585b352b4`, with TCP 5432 access to RDS, and its logs use `/ecs/cardboarddex-api-tunnel` with 14-day retention. This service will replace Express Mode so the managed ALB and four observed public IPv4 addresses can be retired. See [`docs/ecs-tunnel-migration.md`](docs/ecs-tunnel-migration.md) for the cutover and rollback checks. The currently deployed Pages frontend still emits the generated AWS API URL, so the ALB must remain until that build changes.
+## Implemented features and interaction details
 
-- `https://api.cardboarddex.app/health` now returns HTTP 200 through Cloudflare after previously returning error 1033 from an inactive Tunnel. A real `/cards/search` request and a browser CORS preflight from `https://cardboarddex.app` also return HTTP 200. The generated AWS endpoint remains healthy and available for rollback. A production health request appeared in the replacement task's FastAPI log, proving the active Tunnel route reaches the sidecar's local origin without the ALB.
-- AWS ECS Express Mode still has the internet-facing ALB `ecs-express-gateway-alb-c461d967-2090746418.us-west-2.elb.amazonaws.com`. Its listener accepts both the generated AWS hostname and `api.cardboarddex.app`; the original hostname and target-group routing remain intact until the final cutover. Do not delete the Express service or ALB while the deployed Pages build still references the generated hostname.
-- The pending ACM certificate `arn:aws:acm:us-west-2:349558247779:certificate/8bd404b5-3e68-42ab-bc64-f66916e1cca5` is unnecessary for the Tunnel-only design and can be removed after the cutover. No Cloudflare ACM validation record is required unless the architecture returns to a direct ALB origin.
-- Local frontend and CI/CD changes now use `https://api.cardboarddex.app`, remove the generated AWS preconnect/image allowance, and point backend deployments at `cardboarddex-api-tunnel-service`. A production build succeeds even when the old AWS URL is supplied as `NEXT_PUBLIC_API_URL`; the resolved build configuration uses the Tunnel hostname. TypeScript checking, all 20 frontend tests, workflow YAML parsing, and `git diff --check` pass. These changes remain uncommitted and unpushed pending authorization.
-- Opt-in deployment smoke tests in [`backend/tests/test_deployment_endpoints.py`](backend/tests/test_deployment_endpoints.py) cover Cloudflare health, catalog search, production CORS, direct AWS health, and Cloudflare/AWS catalog parity. All five passed against the live endpoints on 2026-09-15. The complete backend suite passes with 151 tests and five expected live-test skips. Live tests require `RUN_LIVE_DEPLOYMENT_TESTS=1`; direct AWS checks additionally require `AWS_BACKEND_URL`, so those cases skip after Express Mode is retired. Commands are documented in [`docs/ecs-tunnel-migration.md`](docs/ecs-tunnel-migration.md).
-- The live `cardboarddex.app/catalog` deployment still contains the generated AWS API URL. Complete the cutover in this order: commit and push the prepared changes, confirm a successful Cloudflare Pages rebuild, set the replacement service to `desiredCount=1`, repeat API/CORS/image checks, then delete the Express service and verify that its ALB and four public IPv4 addresses are released. Cloudflare Pages' production `NEXT_PUBLIC_API_URL` should also be set to `https://api.cardboarddex.app`; Next.js public environment variables are fixed at build time. Local development remains `http://localhost:8000`.
-- A DNS subdomain by itself does **not** remove AWS-owned public IPv4 charges. The savings come from deleting the Express-managed ALB after the Tunnel-only task and frontend deployment are live. The ALB currently contributes about $0.0225/hour plus four public IPv4 addresses at $0.005/address-hour, roughly $30.60 per 30-day month before LCU charges. The API task retains one public IPv4 address for outbound Tunnel and provider access, while the Celery worker and RDS stay running.
-
-### Implemented and verified
+The following retains the product's visual specifications, interaction behavior, and component locations. These descriptions do not override the pricing, privacy, caching, or deployment limitations recorded below.
 
 - **Interactive Physical Pokémon Portfolio Binder & Valuation Suite (`/binder`)**:
   - **Authentic White Collector Album Binder Experience** ([`frontend/components/binder/binder-page-view.tsx`](frontend/components/binder/binder-page-view.tsx), [`frontend/app/binder/page.tsx`](frontend/app/binder/page.tsx)):
     - **Physical Binder Aesthetics (White Theme)**: Rendered in a clean, pristine White Collector's Album theme matching CardboardDex's design language: crisp white leatherette cover textures (`.binder-leather-cover`), perimeter dashed stitching (`.binder-stitch`), refined silver/chrome metallic corner brackets, heavy metallic 3-ring chrome spine with circular hole punches (`.binder-ring`, `.binder-hole-punch`), and welded polypropylene pocket sleeves (3x3 grid) with diagonal gloss reflections (`.binder-sleeve-gloss`).
     - **Flexible Page Layouts**: Supports **Two-Page Spread (Open Binder)** on desktop displaying 18 slots side-by-side with center rings, as well as **Single Page** 9-pocket mode.
     - **Multi-Page Management**: Smooth page navigation (`Page 1 of N`), direct page tabs (`[P.1]`, `[P.2]`, `[+ Add Page]`), delete page, and keyboard shortcuts (`[` / `]` or `ArrowLeft` / `ArrowRight`).
-  - **Client-Side `localStorage` Persistence (Card IDs Only)** ([`frontend/context/binder-context.tsx`](frontend/context/binder-context.tsx)):
-    - Guaranteed zero price bloat or stale cache: strictly stores only `{ card_id }` and slot index numbers under `cardboarddex_binder`.
+  - **Client-Side `localStorage` Persistence (Binder Metadata and Card IDs)** ([`frontend/context/binder-context.tsx`](frontend/context/binder-context.tsx)):
+    - Stores binder/page names, page IDs, version, and slot-index-to-card-ID mappings under `cardboarddex_binder`; prices are fetched separately. Card IDs are uploaded for backend valuation.
     - Real-time cross-tab synchronization with `storage` and `cardboarddex_binder_updated` window events.
-  - **Dynamic Portfolio Valuation & Historical Valuation Chart** ([`frontend/components/binder/portfolio-value-chart.tsx`](frontend/components/binder/portfolio-value-chart.tsx), [`backend/app/services/portfolio_service.py`](backend/app/services/portfolio_service.py)):
-    - Aggregates real-time portfolio market value using multi-currency formatting (`USD`, `EUR`, `JPY`, `GBP`) and rolling `AnimatedNumber`.
+  - **Portfolio Valuation & Historical Valuation Chart (known correctness issues below)** ([`frontend/components/binder/portfolio-value-chart.tsx`](frontend/components/binder/portfolio-value-chart.tsx), [`backend/app/services/portfolio_service.py`](backend/app/services/portfolio_service.py)):
+    - Aggregates portfolio market value from cached provider observations using multi-currency formatting (`USD`, `EUR`, `JPY`, `GBP`; fixed conversion rates) and rolling `AnimatedNumber`.
     - Computes 24h, 7d, and 30d value deltas ($ and %) and highlights the Crown Jewel (highest-value card in the binder).
     - Interactive `Recharts` ComposedChart styled in a white card chassis with historical portfolio valuation curves, timeframe filters (`7D`, `1M`, `3M`, `1Y`, `ALL`), SVG emerald gradient fill, dotted crosshair, and date scrubbing.
     - Single-roundtrip batch backend endpoint `POST /cards/portfolio-valuation` with Redis caching (`cardboarddex:portfolio:{hash}`, TTL 300s) and resilient client-side fallback hydration ([`frontend/lib/portfolio.ts`](frontend/lib/portfolio.ts)).
   - **Interactive Pocket Sleeves & Card Picker Spotlight Modal** ([`frontend/components/binder/binder-sleeve-slot.tsx`](frontend/components/binder/binder-sleeve-slot.tsx), [`frontend/components/binder/card-picker-modal.tsx`](frontend/components/binder/card-picker-modal.tsx)):
     - Empty pockets feature dashed slot indicators and glowing `+ Insert Card` actions.
     - Filled pockets display cards with full 3D `HoloCard` tilt perspective and rarity-reactive foil shaders, slot ribbons, live market price tags, and drag-and-drop reorganization between slots.
-    - Spotlight modal with debounced search across all 54,680+ cards, quick-filter chips (*Charizard*, *Pikachu*, *Gengar*, *Grails $100+*, *Under $20*), language toggles, and 1-click slot insertion.
+    - Spotlight modal with debounced search across the ingested card catalog, quick-filter chips (*Charizard*, *Pikachu*, *Gengar*, *Grails $100+*, *Under $20*), language toggles, and 1-click slot insertion.
   - **Top-Right Toolbar & Card Detail Integration** ([`frontend/components/nav-header.tsx`](frontend/components/nav-header.tsx), [`frontend/components/binder/add-to-binder-button.tsx`](frontend/components/binder/add-to-binder-button.tsx), [`frontend/app/cards/[id]/page.tsx`](frontend/app/cards/[id]/page.tsx)):
     - Positioned as a dedicated top-right action button in the header toolbar, intentionally isolated from the central page navigation links and replacing the static "TCG & eBay Comps" badge. Features a 9-pocket binder icon, text label, and dynamic card count badge (e.g. `Binder 2`).
     - Integrated `<AddToBinderButton>` on card detail pages (`/cards/[id]`) and fallback view with quick-add to next available slot and in-binder slot badge.
@@ -109,7 +107,7 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
     - **Server-Side Price Querying & Pagination** ([`backend/app/routers/cards.py`](backend/app/routers/cards.py), [`backend/app/services/catalog_service.py`](backend/app/services/catalog_service.py)): Supported `min_price` and `max_price` query parameters in `GET /cards/search` and `GET /cards/sets/{set_id}/stats`, executing database-level subquery filtering on latest market prices with Redis caching and live Set Total price aggregation.
     - **SSR Pre-Fetching** ([`frontend/app/catalog/page.tsx`](frontend/app/catalog/page.tsx)): Pre-fetches filtered cards and set statistics on server components for bookmarked or shared URLs without layout shift.
   - **Quick Filter Chips for Catalog & Movers**:
-    - **Catalog Browser** ([`catalog-browser.tsx`](frontend/components/catalog-browser.tsx)): 1-click price filter pills (`All Cards`, `Under $10`, `$10 – $50`, `$100+ Grails`, `Illustration / Specials`) filtering active cards with 0ms reload latency.
+    - **Catalog Browser** ([`catalog-browser.tsx`](frontend/components/catalog-browser.tsx)): 1-click price filter pills (`All Cards`, `Under $10`, `$10 – $50`, `$100+ Grails`, `Illustration / Specials`) filtering cards through the catalog query state.
     - **Market Movers** ([`market-movers-dashboard.tsx`](frontend/components/market-movers-dashboard.tsx)): 1-click velocity filter pills (`All Movers`, `Mega Surge (+25%+)`, `Steep Dips (-15%+)`, `High Value ($50+)`, `Budget (<$15)`).
   - **Global Command Palette (`Cmd + K` / `Ctrl + K`)** ([`frontend/components/command-palette.tsx`](frontend/components/command-palette.tsx)):
     - Full-screen spotlight modal listening for `Cmd + K`, `Ctrl + K`, or clicking the header search shortcut.
@@ -125,124 +123,29 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
     - Implemented [`frontend/context/currency-context.tsx`](frontend/context/currency-context.tsx) supporting `USD` ($), `EUR` (€), `JPY` (¥), and `GBP` (£) with localized formatting and persistence in `localStorage`.
     - Integrated selector in [`frontend/components/nav-header.tsx`](frontend/components/nav-header.tsx) and connected site-wide across all cards, deltas, and aggregated set totals.
   - **Sliding Gliding Pill Navigation Header**:
-    - Hardware-accelerated sliding background pill in [`frontend/components/nav-header.tsx`](frontend/components/nav-header.tsx) that glides to destination buttons with 0ms click latency and responsive resize tracking.
+    - Hardware-accelerated sliding background pill in [`frontend/components/nav-header.tsx`](frontend/components/nav-header.tsx) that glides to destination buttons with responsive resize tracking.
 
 - **Zero-Shift Route Loading with Instant Headers & In-Section Indeterminate Progress**:
-  - Eliminated layout-shifting top progress banner and gray skeleton boxes across all 11 routes.
+  - Route shells use stable headings and in-section progress indicators; data grids can still render skeleton placeholders.
   - Route loading states render the final page title, pill badge, and description immediately.
   - Created [`frontend/components/section-loading-bar.tsx`](frontend/components/section-loading-bar.tsx) positioned directly above the data grid, displaying an animated pulse indicator, status label, and continuous indeterminate progress bar (`.section-progress-indeterminate`).
-
-- **Production Edge Isolation & Image Throttling Resolution (HTTP 429 & 404)**:
-  - **Image Rate Limiter Bucket**: In [`backend/app/main.py`](backend/app/main.py), separated `/image` requests into a dedicated bucket with a capacity of 6,000 requests/minute, insulating Next.js image optimization from general API rate limiting.
-  - **Eliminated RSC Prefetch Storms**: Added `prefetch={false}` across all high-density card and Pokédex links to prevent stale RSC build ID 404s and backend traffic spikes during deploys.
-
-- **Production Market Movers & Dual-Direction Delta Fallback**:
-  - Bypassed Celery batch request limiter for real-time cached interactive endpoints (`/cards/market-movers` and `/cards/{id}/image`).
-  - Rewrote `_compute_db_market_movers` in [`backend/app/routers/cards.py`](backend/app/routers/cards.py) with multi-pass resolution extracting real price changes and historical `PriceObservation` deltas, guaranteeing `losers` is never empty.
-  - Added resilient hydration recovery in [`frontend/components/market-movers-dashboard.tsx`](frontend/components/market-movers-dashboard.tsx).
-
-- **Rendering Performance & Catalog Latency Optimizations**:
-  - **Eliminated 3-Second Catalog Loading Delay**:
-    - Implemented 2-tier caching for `GET /cards/search` combining sub-millisecond in-process process cache (`_SEARCH_LOCAL_CACHE`, TTL 60s) with cluster-wide Redis caching (`cardboarddex:catalog:search:{params}`, TTL 300s), reducing repeat query latency from **~2,500ms to <5ms**.
-    - Implemented 2-tier caching for `GET /cards/sets` (`_SETS_LOCAL_CACHE`, TTL 300s; Redis `cardboarddex:catalog:sets:{game}`, TTL 3,600s), eliminating redundant 54,682-row sequential scans for booster thumbnails on the AWS RDS `db.t4g.micro` instance.
-    - Aligned correlated price subqueries in `search_cards` with composite index `ix_price_observations_search_lookup`, accelerating database execution.
-    - Updated `searchCards()` and `getSetStats()` in [`frontend/lib/api.ts`](frontend/lib/api.ts) to enable Next.js edge revalidation (`next: { revalidate: 60 }` and `next: { revalidate: 120 }`), allowing Cloudflare Pages edge workers to absorb traffic instantly.
-  - **Content Visibility**: Added `.card-cv` and `.table-row-cv` with `content-visibility: auto` in [`frontend/app/globals.css`](frontend/app/globals.css), skipping offscreen layout/paint and locking framerates at 60fps.
-  - **SVG Shimmer Placeholders**: Created [`frontend/lib/shimmer.ts`](frontend/lib/shimmer.ts) with animated base64 SVG shimmer blur data URLs, eliminating white pop-in.
-  - **Client SWR Memory Cache**: Implemented in-memory browser client cache (60s TTL) and in-flight request deduplication in [`frontend/lib/api.ts`](frontend/lib/api.ts), enabling instant 0ms tab switching.
-  - **Resource Hints**: Added preconnect and dns-prefetch hints in [`frontend/app/layout.tsx`](frontend/app/layout.tsx).
-
-- **Live AWS Production Infrastructure (RDS, S3 Asset Pipeline, ECS Fargate, & 24/7 Passive Celery Worker)**:
-  - **AWS RDS PostgreSQL 16**: Provisioned and active at `cardboarddex-db.c7gc44wq4clr.us-west-2.rds.amazonaws.com:5432` (`db.t4g.micro`, 20GB gp3, `us-west-2`). All database migrations applied cleanly via Alembic. Live database holds **484 expansion sets** (234 English + 250 Japanese), **54,682 cards** (32,795 English + 21,887 Japanese), and **61,687 price observations** committed. Both English and Japanese sets and cards are fully supported.
-  - **Amazon S3 Card Asset Pipeline & Read-Through Cache**:
-    - S3 bucket `cardboarddex-card-assets-349558247779` created in `us-west-2` with public read access.
-    - Implemented read-through caching in [`backend/app/routers/cards.py`](backend/app/routers/cards.py) (`get_card_image`): checks S3 first; if absent, fetches from TCG API CDN, asynchronously uploads to S3, and streams image to client.
-    - Built batch synchronization CLI [`backend/jobs/sync_images_to_s3.py`](backend/jobs/sync_images_to_s3.py) with concurrent async downloads and multi-threaded S3 uploads (`--limit`, `--all`, `--concurrency`). Over 740+ card images synced directly to S3.
-    - Added S3 bucket domain to Next.js `images.remotePatterns` in [`frontend/next.config.ts`](frontend/next.config.ts).
-  - **Downscaled 24/7 Celery Background Worker & Redis on AWS ECS Fargate** (`cardboarddex-celery-worker`):
-    - Multi-container ECS task definition `cardboarddex-celery-worker` pairing `redis:7-alpine` on `localhost:6379` with `celery -A app.celery_app worker --beat --loglevel=info`.
-    - Downscaled to `0.25 vCPU` and `0.5 GB RAM` (~$8.89/mo), running with `desiredCount=1`.
-    - **Must not exceed 1 replica** — multiple replicas cause duplicate beat schedulers that double-fire tasks and burn API quota.
-    - Passively executes alternating 15-minute price updates (TCG API at :00, :30; eBay comps at :15, :45) and daily catalog synchronization at 03:00 UTC without manual intervention.
-    - Logs to CloudWatch (`/ecs/cardboarddex-celery-worker`).
-  - **AWS ECS Fargate Backend Service** (`cardboarddex-backend-205a`):
-    - FastAPI app running on ECS Fargate behind ALB, downscaled to `0.25 vCPU` and `0.5 GB RAM` (~$8.89/mo).
-    - Implemented hardened global exception handler and CORS middleware in [`backend/app/main.py`](backend/app/main.py) with strict origin verification (`ALLOWED_ORIGIN_REGEX` for `cardboarddex.pages.dev`, `cardboarddex.app`, and localhost) and internal exception detail masking (`"An internal server error occurred"`), preventing CORS origin spoofing and tech stack leakage.
-  - **Idempotent Catalog Ingestion**:
-    - Updated [`backend/jobs/sync_catalog.py`](backend/jobs/sync_catalog.py) to check existing price observation fingerprints before inserting, resolving `UniqueViolation: uq_price_observations_fingerprint` when re-syncing sets.
-    - Handles TCG API daily account quota (1,000 req/day limit) gracefully; passive worker resumes automatically when quota refreshes at midnight UTC.
 
 - **Cloudflare Pages Production Resilience & Error Isolation**:
   - Live production frontend deployed at `https://cardboarddex.app` and `https://cardboarddex.pages.dev`.
   - Added smart API endpoint resolution in [`frontend/lib/api.ts`](frontend/lib/api.ts) and [`frontend/next.config.ts`](frontend/next.config.ts): production targets `https://api.cardboarddex.app` through Cloudflare Tunnel, including when a stale Pages environment variable still supplies the generated AWS URL. Local development retains `http://localhost:8000`; generated `*.on.aws` image access has been removed.
   - Dynamic API URL resolution with trailing slash normalization inside `request<T>()`, `getCard()`, `getCardPricing()`, `trackUserAction()`, and `cardImageUrl()` prevents stale module-level hostnames in edge/serverless runtimes.
-  - Added [`frontend/components/card-detail-client-fallback.tsx`](frontend/components/card-detail-client-fallback.tsx) with resilient client-side fallback hydration: if Edge SSR encounters a network or runtime error, the card profile dynamically loads data and pricing comps directly from the browser rather than failing with a hard 404 `notFound()`.
+  - Added [`frontend/components/card-detail-client-fallback.tsx`](frontend/components/card-detail-client-fallback.tsx) with client-side fallback hydration: if Edge SSR encounters a network or runtime error, the card profile dynamically loads data and pricing comps directly from the browser rather than failing with a hard 404 `notFound()`.
   - Added client-side fallback fetching on mount across all dashboards ([`catalog-browser.tsx`](frontend/components/catalog-browser.tsx), [`pokemon-cards-view.tsx`](frontend/components/pokemon-cards-view.tsx), [`market-movers-dashboard.tsx`](frontend/components/market-movers-dashboard.tsx), and [`top-volume-dashboard.tsx`](frontend/components/top-volume-dashboard.tsx)) so that if an initial SSR payload is empty or errored (e.g. edge timeouts, provider quota limits), fresh data is fetched client-side immediately upon mount.
   - Instant default load for Live Comps ([`live-updates-dashboard.tsx`](frontend/components/live-updates-dashboard.tsx)): removed the first-mount skip guard so recent comps load immediately on initial page open rather than waiting 15 seconds or requiring filter interaction.
   - Implemented comprehensive error boundary in [`frontend/app/error.tsx`](frontend/app/error.tsx) with technical details toggle, direct action buttons (`Retry Action`, `Reload Application`, `Return to Pokédex`), and API health status check.
   - Added graceful SSR error catching on `/catalog`, `/cards/[id]`, `/live-updates`, and `/top-volume` routes, rendering UI shells rather than 500 error pages on transient backend outages.
   - Disabled navigation prefetching (`prefetch={false}`) in [`frontend/components/nav-header.tsx`](frontend/components/nav-header.tsx) to prevent burst 404 / RSC fetch floods on Cloudflare Pages edge, and added `wrangler.toml` specifying `compatibility_flags = ["nodejs_compat"]`.
 
-- **Automated CI/CD & Hybrid Cloud Deployment Architecture (Cloudflare + AWS)**:
-  - Containerized backend using multi-stage [`backend/Dockerfile`](backend/Dockerfile) and [`backend/.dockerignore`](backend/.dockerignore) supporting FastAPI (`uvicorn`), Celery Worker, Celery Beat scheduler, and Alembic database migrations.
-  - Implemented GitHub Actions CI/CD workflows with monorepo path-filtering:
-    1. [`.github/workflows/backend-ci-cd.yml`](.github/workflows/backend-ci-cd.yml): Bytecode compilation checks and 136 `pytest` unit tests (100% pass rate); on `main`, authenticates to AWS via keyless OIDC (`sts:AssumeRoleWithWebIdentity`), builds & pushes to Amazon ECR (`cardboarddex-backend`) with GHA build caching, executes Alembic migrations, and deploys zero-downtime rolling updates across ECS Fargate services (`cardboarddex-api-service`, `cardboarddex-worker-service`, `cardboarddex-beat-service`).
-    2. [`.github/workflows/frontend-ci-cd.yml`](.github/workflows/frontend-ci-cd.yml): Node 22 environment running TypeScript typechecking (`tsc --noEmit`) and Next.js build validation on PRs and pushes to `main`.
-  - Configured Cloudflare Pages Git integration with Next.js edge adapter (`npx @cloudflare/next-on-pages` with build output `.vercel/output/static` and `nodejs_compat`).
-  - Added [`frontend/.npmrc`](frontend/.npmrc) (`legacy-peer-deps=true`) and explicit `react-is` in [`frontend/package.json`](frontend/package.json) ensuring clean Webpack module resolution for `recharts`.
-  - Added `respx` and `pytest-cov` in [`backend/requirements.txt`](backend/requirements.txt) for robust HTTP mocking across eBay and TCG API unit tests.
-  - Authored comprehensive setup guide [`docs/ci-cd-setup-guide.md`](docs/ci-cd-setup-guide.md) detailing IAM OIDC trust policy, ECR repository, ECS Fargate cluster, Secrets Manager, and Cloudflare Pages setup.
-
-- **Japanese eBay Comp Ingestion & Title Parser Suffix Normalization**:
-  - Resolved parameter pass-through in [`backend/jobs/collect_ebay_prices.py`](backend/jobs/collect_ebay_prices.py) passing `is_target_japanese=bool(card.set and card.set.series == "Pokemon Japan")` to `parse_ebay_title`.
-  - Refined foreign language filtering in [`backend/parsers/title_matcher.py`](backend/parsers/title_matcher.py) with `RE_NON_JAPANESE_FOREIGN` so Japanese titles (`"Japanese"`, `"Japan"`, `"JP"`, `"JPN"`) are retained while other foreign languages remain rejected.
-  - Implemented `extract_core_card_name()` to normalize Japanese titles with set-number suffixes (e.g. `Ivysaur - 002/165`) and parentheticals (`(Master Ball Pattern)`, `(Mirror Holofoil)`), increasing Japanese comp match rates by up to **14.5x** (e.g. SV2a Ivysaur AR jumped from 2 to 29 verified comps).
-  - Added dedicated unit tests in `backend/tests/test_title_matcher.py`, bringing the test suite to **109 passing tests** (100% pass rate).
-
-- **Shared Redis Analytics Caching Layer**:
-  - Centralized shared `get_redis()` connection factory with graceful degradation in [`backend/app/common/redis.py`](backend/app/common/redis.py).
-  - Added shared Redis caching with in-process fallbacks (TTL 300s) to:
-    1. [`grading_service.py`](backend/app/services/grading_service.py) (`cardboarddex:grading_profit:{hash}`).
-    2. [`sealed_service.py`](backend/app/services/sealed_service.py) (`cardboarddex:sealed_signals:{hash}`).
-    3. [`catalog_service.py`](backend/app/services/catalog_service.py) (`cardboarddex:top_volume:{key}`), migrating process-local `_pokemon_volume_cache` across all API workers.
-
 - **Card Detail ➔ National Pokédex Species Bridge**:
   - Added `findPokemonForCardName()` in [`frontend/lib/pokedex-data.ts`](frontend/lib/pokedex-data.ts) matching card names to canonical Pokédex species entries.
   - Integrated into [`frontend/app/cards/[id]/page.tsx`](frontend/app/cards/[id]/page.tsx) with hero species badge (`[#0002 Ivysaur] →`), dedicated `Pokédex (Ivysaur)` action button, and a new `Pokédex Species` row in the specifications table linking directly to `/pokemon/[dex_id]`.
   - Updated logo avatar in [`frontend/components/nav-header.tsx`](frontend/components/nav-header.tsx) from `"T"` to `"CD"` (CardboardDex).
   - Guarded client-side `getCardSets()` in [`frontend/components/catalog-browser.tsx`](frontend/components/catalog-browser.tsx) to eliminate redundant set re-fetching on mount, and added 24-hour ISR caching in [`frontend/lib/api.ts`](frontend/lib/api.ts).
-
-- **Backend Architecture & Service Layer Decomposition**:
-  - Extracted business logic from `backend/app/routers/cards.py` (reduced from 1,819 lines to 864 lines, a >52% reduction) into dedicated services under `backend/app/services/`:
-    1. [`catalog_service.py`](backend/app/services/catalog_service.py): Card summaries, species query matchers, word-boundary isolation, and top volume rankings.
-    2. [`grading_service.py`](backend/app/services/grading_service.py): Arbitrage spreads, raw vs. PSA 10/9 comps, ROI calculations, fee simulation, and sorting.
-    3. [`sealed_service.py`](backend/app/services/sealed_service.py): 4-factor quantitative sealed scoring and product classification.
-  - Centralized shared data formatters in [`backend/app/common/formatters.py`](backend/app/common/formatters.py) (`to_decimal`, `parse_iso_datetime`, `normalize_text`, `normalize_card_number`, `escape_like`, `extract_float`), eliminating copy-pasted helpers across ingestion jobs and routers.
-  - Added dedicated unit tests in `backend/tests/test_services.py`, `backend/tests/test_title_matcher.py`, `backend/tests/test_cards_api.py`, `backend/tests/test_collect_prices.py`, `backend/tests/test_cycle_prices.py`, and `backend/tests/test_update_pokemon.py`, bringing the test suite to **109 passing tests** (100% pass rate).
-
-
-- **Single-Command & Batch Pokémon Price Ingestion (TCG API + eBay)**:
-  - Added dedicated single-card updater CLI [`backend/jobs/update_card.py`](backend/jobs/update_card.py) to sequentially update both TCG API market prices and eBay comps with a single command:
-    ```bash
-    .venv/bin/python jobs/update_card.py 28402
-    .venv/bin/python jobs/update_card.py 2158854
-    .venv/bin/python jobs/update_card.py "Rayquaza Legends Awakened"
-    ```
-  - Added dedicated Pokémon character updater CLI [`backend/jobs/update_pokemon.py`](backend/jobs/update_pokemon.py) to update all cards for a specific Pokémon character across both TCG API market prices and eBay comps with progress tracking, rate-limit delays, and error handling:
-    ```bash
-    .venv/bin/python jobs/update_pokemon.py "Pikachu"
-    .venv/bin/python jobs/update_pokemon.py "Charizard" --limit 20
-    ```
-  - Added `--pokemon <NAME>` and `card_ids: list[str]` support to [`backend/jobs/cycle_prices.py`](backend/jobs/cycle_prices.py), [`backend/jobs/collect_prices.py`](backend/jobs/collect_prices.py), [`backend/jobs/collect_ebay_prices.py`](backend/jobs/collect_ebay_prices.py), and [`backend/jobs/update_card.py`](backend/jobs/update_card.py).
-  - Added canonical card resolver `get_cards_for_pokemon()` in [`backend/app/services/catalog_service.py`](backend/app/services/catalog_service.py) with character search-term expansion, digital code-card filtering, and Mew/Mewtwo boundary isolation.
-  - Added dedicated unit tests in `backend/tests/test_update_pokemon.py`, bringing the test suite to **105 passing tests** (100% pass rate).
-
-- **Sealed Product eBay Comp Matching Engine**:
-  - Implemented dedicated sealed merchandise title resolution in [`backend/parsers/title_matcher.py`](backend/parsers/title_matcher.py) and [`backend/jobs/collect_ebay_prices.py`](backend/jobs/collect_ebay_prices.py).
-  - Enforces strict form-factor matching (Booster Boxes, ETBs, Booster Bundles, Collection Cases, Binder Collections, Tins, Blister Packs, UPCs).
-  - Isolates sealed cases from single units (`case_mismatch`), filters out single promo extractions from sealed boxes, rejects empty/opened boxes, and separates Pokémon Center exclusive ETBs.
-  - Generates verified observations with `condition="Sealed"`, `printing="Sealed"`, and `variant_id=ebay:{card_id}:sealed`.
-  - Added 8 dedicated unit tests (32 tests in `test_title_matcher.py`).
 
 - **"Shop on eBay" Direct Marketplace Routing**:
   - Built reusable [`components/shop-ebay-button.tsx`](frontend/components/shop-ebay-button.tsx) featuring a custom 4-color vector eBay logo (`e` red, `b` blue, `a` yellow, `y` green) and white background with a crisp black border (`bg-white border border-black`).
@@ -256,13 +159,9 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
   - Displays the full species profile, audio cry, stats, and `<PokemonCardsView>` containing all matching database trading cards with set filters and price comps.
   - Added universal `← Back` navigation in [`components/back-to-pokedex-button.tsx`](frontend/components/back-to-pokedex-button.tsx).
 
-- **Live Comps Ingestion & Freshness Optimization**:
-  - Set `{ cache: "no-store" }` on `getCardPricing()` in `frontend/lib/api.ts`, eliminating the 10-minute Next.js static cache delay when new eBay comps are recorded.
-  - Preserved individual distinct eBay listings in `latestByVariant` in `frontend/components/price-dashboard.tsx` using `provider_card_id`.
-
 - **Card Profiles Raw eBay Isolation, Volatility Metric & Multi-Series Chart**:
-  - Strictly isolated card profile telemetry cards (`Lowest Verified (Raw)`, `Avg Listing (Raw)`, and `Median Listing (Raw)`) in [`components/price-dashboard.tsx`](frontend/components/price-dashboard.tsx) to active raw (ungraded) eBay listings only, removing catalog estimates and graded slabs from unauthenticated baseline pricing.
-  - Replaced legacy "Store Buylist" with a quantitative **"Volatility"** metric calculating active seller price dispersion ($CV = \sigma / \mu \times 100\%$) alongside standard deviation ($\sigma = \$X.XX$) and financial risk classification (`Low`, `Moderate`, `High`).
+  - Strictly isolated card profile telemetry cards (`Lowest Verified (Raw)`, `Avg Listing (Raw)`, and `Median Listing (Raw)`) in [`components/price-dashboard.tsx`](frontend/components/price-dashboard.tsx) to raw (ungraded) eBay listing observations, removing catalog estimates and graded slabs from the raw-listing baseline.
+  - Replaced legacy "Store Buylist" with a quantitative **"Volatility"** metric calculating seller asking-price dispersion ($CV = \sigma / \mu \times 100\%$) alongside standard deviation ($\sigma = \$X.XX$) and financial risk classification (`Low`, `Moderate`, `High`).
   - Upgraded [`components/price-history-chart.tsx`](frontend/components/price-history-chart.tsx) to support 4 synchronized, color-coded lines across dates:
     - 🟢 **Raw eBay Listings** (`#10b981`, Emerald)
     - 🟣 **TCG API Updated Listing** (`#8b5cf6`, Violet)
@@ -273,13 +172,13 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
   - Implemented `<MultiLineTooltip />` displaying all active series simultaneously on hover with individual color dots and formatted currency amounts, ordered hierarchically from PSA 10 eBay at the top down to Raw eBay at the bottom.
   - Added an interactive timeframe filter button group directly below the chart with instant client-side date slicing for **1 Month (1M)**, **3 Month (3M)**, and **1 Year (1Y)**, with left-edge baseline anchoring.
   - Added interactive sorting for the "Latest variants & pricing data" table allowing one-click sorting by **Date**, **Price**, **Printing Name** (A–Z / Z–A), and **Variant / Condition** with bidirectional toggles (`↑` / `↓`), quick filter toolbar buttons, and clickable table headers.
-  - Set `export const dynamic = "force-dynamic"` on [`frontend/app/cards/[id]/page.tsx`](frontend/app/cards/[id]/page.tsx) to guarantee instant reflection of new eBay scraping runs without static cache delay.
+  - Set `export const dynamic = "force-dynamic"` on [`frontend/app/cards/[id]/page.tsx`](frontend/app/cards/[id]/page.tsx) to request dynamic rendering. Backend response caching and the browser memory cache can still delay updates.
 
 - **Card Profiles "Avg Listing Price" KPI & Clean Variant Tables**:
-  - Replaced legacy "Lowest w/ Shipping" card in [`components/price-dashboard.tsx`](frontend/components/price-dashboard.tsx) with a high-fidelity **"Avg Listing Price"** (Average Listing Price) metric card.
-  - Dynamically calculates the arithmetic mean across verified active eBay listings with a real-time listing count badge (e.g. "Mean of 21 active eBay listings"), gracefully falling back to TCG active listing estimates or backend `avg_listing_price`.
+  - Replaced legacy "Lowest w/ Shipping" card in [`components/price-dashboard.tsx`](frontend/components/price-dashboard.tsx) with a high-fidelity **"Avg Listing Price"** (Average Asking Price) metric card.
+  - Dynamically calculates the arithmetic mean across title-matched eBay listing observations with a real-time listing count badge (e.g. "Mean of 21 active eBay listings"), gracefully falling back to TCG active listing estimates or backend `avg_listing_price`.
   - Cleaned the variants table column from "Lowest / Shipping" to "Lowest Price", stripping shipping clutter from card profiles.
-  - Added `avg_listing_price` field to `CardPricingResponse` in [`backend/app/schemas/cards.py`](backend/app/schemas/cards.py) and [`backend/app/routers/cards.py`](backend/app/routers/cards.py) with comprehensive unit tests (98 passing backend tests).
+  - Added `avg_listing_price` field to `CardPricingResponse` in [`backend/app/schemas/cards.py`](backend/app/schemas/cards.py) and [`backend/app/routers/cards.py`](backend/app/routers/cards.py) with backend unit tests.
 
 - **Frontend Shared Primitives & Bundle Optimization**:
   - Reusable UI primitives under `frontend/components/ui/`:
@@ -288,7 +187,7 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
     - [`search-input.tsx`](frontend/components/ui/search-input.tsx): Monospace search bar with vector search icon, hotkey indicator, and instant clear button.
     - [`empty-state.tsx`](frontend/components/ui/empty-state.tsx) and [`stat-kpi.tsx`](frontend/components/ui/stat-kpi.tsx): Uniform terminal telemetry cards and empty states.
   - Centralized query parameter serialization in `frontend/lib/api.ts` via `buildQueryString()`.
-  - Extracted featured Pokémon into `frontend/lib/featured-pokemon.ts` (<1 KB), reducing landing page bundle compilation time from 3.8s to 1.7s.
+  - Extracted featured Pokémon into `frontend/lib/featured-pokemon.ts` to keep the landing page's featured-data dependency small.
 
 - **Unified Infinite Scroll Pagination (Catalog Standard)**:
   - Replaced legacy button paginations with continuous infinite scrolling across all 5 major data feeds:
@@ -299,19 +198,6 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
     5. **Live Comps & Ingestion Feed** (`/live-updates`)
   - Features automatic background fetching via `IntersectionObserver` (320px root margin) with manual fallback buttons.
 
-- **Side-by-Side View for Live Comps (`/live-updates`)**:
-  - Added a 2-column side-by-side grid (`grid grid-cols-1 lg:grid-cols-2 gap-3.5`) to [`components/live-updates-dashboard.tsx`](frontend/components/live-updates-dashboard.tsx), maximizing data density on wide desktop screens.
-  - Interactive view mode toggle in the control bar allowing users to switch between **Side by Side** and **Full Width** on demand.
-
-- **Global Floating "Go to Top" Button**:
-  - Added floating smooth-scrolling button to the bottom-right corner across:
-    - `/catalog` ([`components/catalog-browser.tsx`](frontend/components/catalog-browser.tsx))
-    - `/market-movers` ([`components/market-movers-dashboard.tsx`](frontend/components/market-movers-dashboard.tsx))
-    - `/sealed-signals` ([`components/sealed-signals-dashboard.tsx`](frontend/components/sealed-signals-dashboard.tsx))
-    - `/grading-profit` ([`components/grading-profit-dashboard.tsx`](frontend/components/grading-profit-dashboard.tsx))
-    - `/live-updates` ([`components/live-updates-dashboard.tsx`](frontend/components/live-updates-dashboard.tsx))
-    - `/pokedex` ([`components/pokedex-browser.tsx`](frontend/components/pokedex-browser.tsx))
-
 - **Theme Alignment & Minimalist Redesign (Movers, Sealed, Grading)**:
   - Aligned Market Movers, Sealed Signals, and Grading Profitability to the landing page's minimalist terminal aesthetic:
     - `font-mono` typography and light `bg-[#f7f8f6]` canvas.
@@ -321,7 +207,7 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
 
 - **Informative & Simplistic Landing Page (Default Route `/`)**:
   - The default landing page (`/`) is a dedicated, minimalistic **Landing Page** ([`components/landing-page.tsx`](frontend/components/landing-page.tsx)) embodying the IBM Plex Mono technical terminal design language.
-  - **Live System Telemetry & Status**: Live pulse badge (`LIVE DATA ENGINE ACTIVE | TCG API + EBAY COMPS`) and 5 key metric cards with animated rolling count-ups ([`animated-number.tsx`](frontend/components/ui/animated-number.tsx)): **54,680+ cards tracked**, **484 sets synchronized** (234 English + 250 Japanese), **1,025 Pokédex species**, **66,500+ active market prices**, and **15-min staggered pricing refresh engine**.
+  - **Live System Telemetry & Status**: Live pulse badge (`LIVE DATA ENGINE ACTIVE | TCG API + EBAY COMPS`) and 5 key metric cards with animated rolling count-ups ([`animated-number.tsx`](frontend/components/ui/animated-number.tsx)): catalog cards, sets, Pokédex species, market observations, and the staggered pricing-batch schedule. Displayed catalog totals have included hardcoded snapshots; they are not a live inventory guarantee.
   - **Universal Quick Search & Jump Bar**: Integrated search input for cards, sets, or species with popular filter chips (*Charizard*, *Pikachu*, *Gengar*, *Umbreon*, *Mewtwo*, *151*, *Evolving Skies*, *Crown Zenith*), direct CTAs for Pokédex and Catalog, and dedicated Command Palette shortcut (`Cmd + K` / `Ctrl + K`).
   - **6 Core Intelligence Modules**: Minimalist interactive cards linking to each core capability:
     1. *National Pokédex* (`/pokedex`)
@@ -377,258 +263,325 @@ The browser communicates only with FastAPI (and direct PokéAPI detail caching v
 - **Catalog & Set Foundation (English & Japanese)**:
   - Catalog and pricing integration is consolidated under `backend/app/tcgapi/`.
   - TCG API supplies Pokémon sets, cards, image URLs, and per-printing market prices for both English (`game=pokemon`) and Japanese (`game=pokemon-japan`) expansions.
-  - Complete database synchronization: **482 sets** (233 English, 249 Japanese), **54,480+ cards**, and **66,500+ active price observations** stored in PostgreSQL.
+  - Catalog supports English and Japanese data; dated local/production inventory snapshots are retained in Deployment status below.
   - Code cards are automatically excluded from catalog search and browsing.
   - Unrated / sealed items hidden by default (`hide_sealed=true`), with an interactive sidebar toggle.
   - Catalog sorting supports `price_desc` (default), `price_asc`, `number_asc`, `number_desc`, `name`, and `set`.
   - **Filtered Set Total Price Tag**: Added real-time set market value aggregation (backend endpoint `GET /cards/sets/:id/stats` with Redis 300s cache) and interactive terminal telemetry tag in the top right of the cards view on `/catalog`. Displays complete set dollar value (or filtered subquery total), active priced card ratio (e.g. `165/165 priced`), and average card price tooltip, with SSR pre-fetching in `app/catalog/page.tsx` for instant zero-layout-shift rendering.
 
-- **Automated Price Cycling & Alternating 15-Minute Engine**:
-  - Unified price cycling engine implemented in [`backend/jobs/cycle_prices.py`](backend/jobs/cycle_prices.py).
-  - **Alternating Staggered Mode**: Runs updates every 15 minutes, alternating between **TCG API market prices** (minute :00, :30) and **eBay verified comps** (minute :15, :45), giving each provider a balanced 30-minute refresh rate without API burst spikes.
-  - Orders cards by least-recently-synced (`ProviderCardState.last_synced_at.asc().nullsfirst()`).
-
-- **eBay Integration, Title Matching & Shared Token Cache**:
-  - eBay OAuth 2.0 application access token client and Browse API search adapter implemented under `backend/app/ebay/client.py` with **Redis-backed token sharing** (`cardboarddex:ebay:oauth_access_token`).
-  - Conservative title resolution engine implemented in `backend/parsers/title_matcher.py` with strict word-boundary negative keyword rejection and authentic grading extraction (PSA, BGS, CGC, SGC).
-  - Over **17,400+ matched eBay comps** and **1,120+ graded PSA/BGS/CGC/SGC slabs** active in PostgreSQL.
-
 - **Expected Grading Profitability Tab ([`components/grading-profit-dashboard.tsx`](frontend/components/grading-profit-dashboard.tsx))**:
-  - Backend endpoint `GET /cards/grading-profit` calculates real-time arbitrage spreads, net profit ($), and ROI (%) between raw cards and PSA 10 / PSA 9 comps across 165+ verified arbitrage pairs.
+  - Backend endpoint `GET /cards/grading-profit` calculates estimated spreads, profit ($), and ROI (%) between raw observations and PSA 10 / PSA 9 asking-price comps. Fixed probabilities and omitted costs limit the model; see open work.
   - Interactive Grading Fee simulator with live fee slider ($10–$100) and instant presets ($15, $19, $25, $50, $75).
 
 - **Quantitative Sealed Investment Signals Tab ([`components/sealed-signals-dashboard.tsx`](frontend/components/sealed-signals-dashboard.tsx))**:
-  - Quantitative analytics engine powered by `GET /cards/sealed-signals`.
+  - Heuristic analytics engine powered by `GET /cards/sealed-signals`.
   - Deterministic 4-factor scoring model: Supply Scarcity (30%), Buylist Liquidity (25%), Momentum Velocity (25%), and Out-of-Print Vintage Age (20%).
   - Buy signals: `STRONG BUY` ($\ge 75$), `BUY` ($60\text{--}74$), `HOLD` ($45\text{--}59$), `UNDERPERFORM` ($<45$).
 
 - **Top 50 Trending Dashboard Tab ([`components/top-volume-dashboard.tsx`](frontend/components/top-volume-dashboard.tsx))**:
   - Restructured 3-column layout powered by backend endpoints `GET /cards/trending`, `POST /cards/track-action`, and `POST /cards/trending/reset`.
-  - **Column 1 (Trending Cards)**: Most searched and clicked trading cards, ranked by a blended score of real-time Redis clicks, verified price observation frequency, market value, and 7-day price movement.
+  - **Column 1 (Trending Cards)**: Most searched and clicked trading cards, ranked by a blended score of real-time Redis clicks, price observation frequency, market value, and 7-day price movement.
   - **Column 2 (Popular Pokémon)**: Most searched and viewed Pokémon characters, ranked by user search heat, character click volume, and card catalog depth.
-  - **Column 3 (Volume Leaders)**: Top Pokémon by market dollar volume ($) with active rolling timeframes (`24h`, `7d` default, `30d`, `all_time`, `2026_ytd`), sales transaction comps count, and period-over-period momentum.
+  - **Column 3 (Volume Leaders)**: Top Pokémon by summed observation value ($) with rolling timeframes (`24h`, `7d` default, `30d`, `all_time`, `2026_ytd`), observation count, and period-over-period momentum.
   - Responsive multi-column layout with view switcher (`All 3 Columns`, `Cards`, `Pokémon`, `Volume`), timeframe filter pills, and live search. Real user clicks and searches are tracked in Redis via `POST /cards/track-action`.
-  - **Single-Increment Analytics Fix**: Resolved duplicate counting by establishing the destination page load as the single source of truth and exempting Trending tab internal navigation with `?ref=trending`.
+  - **Navigation Attribution**: Card detail GETs record views except when `?ref=trending`; explicit tracking uses `POST /cards/track-action`. Cached requests and untrusted clients limit how accurately these represent unique user activity.
   - **Pokédex Navigation Reset**: Tab switches reset scroll to `(0, 0)`; scroll position is only restored when returning directly from that Pokémon's profile page.
 
 - **National Pokédex 1,025 Species Dataset & Card Attribution ([`common/pokemon_data.py`](backend/app/common/pokemon_data.py), [`services/catalog_service.py`](backend/app/services/catalog_service.py))**:
   - Centralized `POKEMON_DEX_NUMBERS` containing official Pokédex numbers for all 1,025 Pokémon species.
-  - Implemented helpers `get_pokemon_dex_number()`, `get_pokemon_canonical_name()`, and `get_pokemon_sprite_url()` to guarantee valid official PokeAPI artwork endpoints.
+  - Helpers `get_pokemon_dex_number()`, `get_pokemon_canonical_name()`, and `get_pokemon_sprite_url()` resolve canonical species identity and construct official-artwork URLs.
   - Master regex matcher `match_to_pokemon()` matches card titles across all 1,025 Pokémon species sorted by length descending, ensuring multi-word and later-generation species (e.g. Zekrom #644, Rayquaza #384, Greninja #658) are correctly attributed without missing icons or `#0000` dex numbers.
-
-- **Instant Tab & Page Shell Loading with Live Status Indicators**:
-  - Created reusable [`PageLoadingStatus`](frontend/components/page-loading-status.tsx) component featuring an animated radar ping, spinner, and real-time status text informing the user that the data engine is actively streaming comps.
-  - Standardized dedicated `loading.tsx` route handlers across all tab pages and detail views:
-    - [`top-volume/loading.tsx`](frontend/app/top-volume/loading.tsx): 3-column Trending skeleton + status badge.
-    - [`catalog/loading.tsx`](frontend/app/catalog/loading.tsx): Filters and card grid skeleton + status badge.
-    - [`pokedex/loading.tsx`](frontend/app/pokedex/loading.tsx): Generation filters and Pokédex grid skeleton + status badge.
-    - [`market-movers/loading.tsx`](frontend/app/market-movers/loading.tsx): Dual gainers/losers skeleton + status badge.
-    - [`grading-profit/loading.tsx`](frontend/app/grading-profit/loading.tsx): Arbitrage cards grid skeleton + status badge.
-    - [`sealed-signals/loading.tsx`](frontend/app/sealed-signals/loading.tsx): 4-factor signal cards skeleton + status badge.
-    - [`live-updates/loading.tsx`](frontend/app/live-updates/loading.tsx): Ticker feed skeleton + status badge.
-    - [`pokemon/[id]/loading.tsx`](frontend/app/pokemon/[id]/loading.tsx): Species detail header and cards skeleton + status badge.
-    - [`cards/[id]/loading.tsx`](frontend/app/cards/[id]/loading.tsx): Image frame, matrix, chart, and sales table skeleton + status badge.
-    - [`loading.tsx`](frontend/app/loading.tsx): Global instant root fallback.
-  - Delivers **0ms instant page shell navigation** without blocking the browser while server components await API data.
 
 - **Interactive Landing Page Live Search Autocomplete Dropdown ([`components/search-autocomplete.tsx`](frontend/components/search-autocomplete.tsx))**:
   - Replaced static search input in [`landing-page.tsx`](frontend/components/landing-page.tsx) with a responsive typeahead autocomplete dropdown.
-  - Categorizes real-time results into 3 distinct sections:
+  - Categorizes results into three sections plus a full-catalog search action:
     1. **Pokémon Species**: Instant matching across all 1,025 Pokédex entries with official artwork thumbnail, name, Pokédex `#`, and elemental type badges.
-    2. **Expansions & Sets**: Fast client-side matching across all 468 sets with representative booster/product artwork and series name.
-    3. **Cards & Products**: Debounced API queries against `searchCards()` with card image and real-time market price.
+    2. **Expansions & Sets**: Fast client-side matching across the fetched sets with representative booster/product artwork and series name.
+    3. **Cards & Products**: Debounced API queries against `searchCards()` with card image and fetched market price.
     4. **Full Catalog Search Action**: One-click or Enter key submission to search the entire expansion catalog.
-  - Backend endpoint `GET /cards/sets` enriched with representative product/card `image_url` for all 468 sets.
+  - Backend endpoint `GET /cards/sets` enriched with representative product/card `image_url` for the fetched sets.
   - Complete keyboard accessibility (`ArrowDown`, `ArrowUp`, `Enter`, `Escape`) and click-outside dismissal.
 
 - **Live Updated Items & Market Comps Tab ([`components/live-updates-dashboard.tsx`](frontend/components/live-updates-dashboard.tsx))**:
-  - Backend endpoint `GET /cards/live-updates` streams all real-time price observations, verified eBay comps, graded slab sales, and TCG API price syncs in chronological order.
+  - Backend endpoint `GET /cards/live-updates` streams all real-time price observations, title-matched eBay comps, graded slab asking-price observations, and TCG API price syncs in chronological order.
   - Auto-refresh ticker (15s polling with live pulse and pause/resume toggle).
   - Side-by-Side 2-column view with responsive toggle and floating Back-to-Top button.
 
-- **Backend Performance, Comp Matching & Caching (Targeted Enhancements)**:
-  - **Japanese eBay Comp Matching** ([`jobs/collect_ebay_prices.py`](backend/jobs/collect_ebay_prices.py)): Passed `is_target_japanese=is_japanese` to the eBay comp collector so Japanese cards query and match Japanese eBay listings correctly.
-  - **European Foreign Language Rejection & Core Name Extraction** ([`parsers/title_matcher.py`](backend/parsers/title_matcher.py)): Added `RE_NON_JAPANESE_FOREIGN` to filter out German, French, Italian, and Spanish listings without rejecting Japanese comps, and `extract_core_card_name()` to isolate base species names from card mechanic suffixes. Expanded title matcher unit tests to 36 tests.
-  - **Centralized Redis Client** ([`app/common/redis.py`](backend/app/common/redis.py)): Unified Redis connection pool and access via `get_redis_client()` with connection pooling and graceful offline fallback.
-  - **Analytical Calculation Caching** ([`services/catalog_service.py`](backend/app/services/catalog_service.py)): Added Redis caching with 300 s TTL for expensive analytical aggregation endpoints: `calculate_grading_profit()`, `calculate_sealed_signals()`, and `calculate_top_pokemon_volume()`.
-  - **Catalog Sets SSR Client Guard & ISR** ([`components/catalog-browser.tsx`](frontend/components/catalog-browser.tsx), [`lib/api.ts`](frontend/lib/api.ts)): Guarded client `getCardSets()` to prevent redundant client-side re-fetching when sets are pre-loaded via SSR, and added 24-hour Next.js ISR caching (`revalidate: 86400`) on `getSets()`.
-  - **Redis-backed market movers cache** ([`routers/cards.py`](backend/app/routers/cards.py)): Replaced in-process `_MOVERS_CACHE` dict (broken across multiple workers) with a shared Redis key `cardboarddex:movers:{game}:{period}` (TTL 900 s). An in-process `_MOVERS_LOCAL_FALLBACK` dict serves as a graceful degradation layer when Redis is temporarily unavailable. Eliminates redundant TCG API calls when running multiple uvicorn workers or ECS tasks.
-  - **Live-updates KPI aggregate query** ([`routers/cards.py`](backend/app/routers/cards.py)): Replaced 3 separate `COUNT(*)` table scans (fired on every 15-second frontend poll) with a single combined `CASE`-aggregate query, Redis-cached for 60 s under `cardboarddex:live_updates:kpi`. Reduces DB round-trips per poll from 4 to 1 (or 0 on cache hit).
-  - **Observation payload resolved once per row** ([`routers/cards.py`](backend/app/routers/cards.py)): Extracted `_build_obs_item()` nested helper inside `get_card_prices`. `_resolve_obs_payload()` is now called exactly once per `PriceObservation` row (was called 7× per row inside an inline list comprehension) — eliminates ~21,000 redundant dict merges on a max-size 3,000-observation response.
-  - **Redis-backed broken image ID registry** ([`routers/cards.py`](backend/app/routers/cards.py)): Replaced `_BROKEN_IMAGE_IDS: set[str]` (reset on every server restart) with per-card Redis keys `cardboarddex:broken_img:{card_id}` with a 24-hour TTL. Broken IDs now persist across deploys and self-heal after images are restored upstream.
-  - **Celery task overlap protection** ([`celery_app.py`](backend/app/celery_app.py)): Added `task_acks_late=True` and `worker_prefetch_multiplier=1` to prevent silent task loss on worker crash. Added `expires` (860 s) and `time_limit` (840 s) to all alternating 15-minute beat tasks so a stalled run is discarded before the next window fires, preventing double API quota consumption. Daily sync task gets `expires=3540` / `time_limit=3480`.
-  - **Resilient Market Movers Database Fallback & Key Normalization** ([`routers/cards.py`](backend/app/routers/cards.py)): Updated `_build_mover_item` to flexibly inspect alternate field names (`card_id`/`id`, `market_price`/`price`, `price_change`/`price_change_{period}`/`price_change_percentage`). Implemented `_compute_db_market_movers` to compute market movements and card prices directly from local `ProviderCardState` and `PriceObservation` records when upstream TCG API is rate-limited or unavailable, guaranteeing Market Movers never returns an empty 200 shell.
-  - **Structured `httpx.Timeout`** ([`tcgapi/client.py`](backend/app/tcgapi/client.py), [`ebay/client.py`](backend/app/ebay/client.py)): Replaced flat 60 s / 30 s scalar timeouts with `httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0)` on all outbound HTTP calls. Prevents hung upstream connections from stalling FastAPI worker threads for up to a full minute.
-  - **Public Deployment Security, Injection Prevention & High-Concurrency Hardening**:
-    - **Sliding-Window IP Rate Limiter** ([`common/rate_limiter.py`](backend/app/common/rate_limiter.py)): Lightweight rate limiter middleware backed by Redis with in-memory fallback, enforcing 120 req/min global baseline, 30 req/min on `/cards/track-action`, and heavy endpoint bounds.
-    - **Strict CORS & Domain Isolation** ([`main.py`](backend/app/main.py)): Replaced loose substring checks (`"pages.dev" in origin`) with exact origin matching and regex (`ALLOWED_ORIGIN_REGEX`) restricted to `cardboarddex.app`, `cardboarddex.pages.dev`, and development localhost.
-    - **Modern Security Headers & CSP** ([`main.py`](backend/app/main.py)): Injected `Content-Security-Policy`, `Strict-Transport-Security` (`max-age=31536000`), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and `Referrer-Policy: strict-origin-when-cross-origin`.
-    - **Internal Error Detail Masking** ([`main.py`](backend/app/main.py)): Preserved full server-side exception traceback logging while returning generic, sanitized error payloads (`"An internal server error occurred"`) to clients.
-    - **Admin Endpoint Authentication** ([`routers/cards.py`](backend/app/routers/cards.py)): Gated `POST /cards/trending/reset` behind `verify_admin_token` requiring a valid `X-Admin-Token` matching `settings.admin_api_key`.
-    - **Memory Bloat & Redis OOM Protection** ([`services/trending_service.py`](backend/app/services/trending_service.py), [`schemas/cards.py`](backend/app/schemas/cards.py)): Added size caps (`_MAX_ANALYTICS_ENTRIES = 2000`) on in-memory tracking dicts, periodic `ZREMRANGEBYRANK` trimming on Redis ZSETs, and non-blocking `r.scan_iter()` replacing blocking `r.keys()`. Validated `TrackActionRequest.entity_id` with regex and `max_length=100`.
-    - **Connection Pool Tuning for RDS `db.t4g.micro`** ([`database.py`](backend/app/database.py)): Configured `pool_size=15`, `max_overflow=15`, `pool_timeout=5.0`, and `pool_recycle=1800` to prevent connection exhaustion and worker stalls under high concurrent load.
-    - **Cloudflare Edge `Cache-Control` Headers** ([`routers/cards.py`](backend/app/routers/cards.py)): Configured edge cache headers (`s-maxage=300`, `s-maxage=86400`, `s-maxage=10` on live-updates) across all public read endpoints, allowing Cloudflare Edge to absorb 90%+ of catalog and dashboard traffic. Cached default `total_items` in Redis for live updates.
-    - **S3 Image Offloading & Traversal Protection** ([`routers/cards.py`](backend/app/routers/cards.py)): Offloaded image byte streaming to S3/CloudFront via `307 Temporary Redirect` using singleton `boto3.client`, and validated `card_id` against `^[a-zA-Z0-9_\-]+$` (`max_length=64`).
-    - **JavaScript URI Injection Sanitization** ([`routers/cards.py`](backend/app/routers/cards.py), [`frontend/components/price-dashboard.tsx`](frontend/components/price-dashboard.tsx), [`frontend/components/live-updates-dashboard.tsx`](frontend/components/live-updates-dashboard.tsx)): Enforced `https://` / `http://` protocols and trusted marketplace domain verification (`ebay.com`, `tcgplayer.com`) for all rendered listing links.
-
-- **Backend Router Modularization & Subquery Consolidation**:
-  - **Modular Sub-Routers** ([`backend/app/routers/`](backend/app/routers/)): Deconstructed the previous 1,616-line monolithic `cards.py` into dedicated sub-routers:
-    - [`catalog.py`](backend/app/routers/catalog.py): `/cards/search`, `/cards/sets`, `/cards/sets/{set_id}/stats`, `/cards/pokemon/{name}`.
-    - [`market.py`](backend/app/routers/market.py): `/cards/market-movers`, `/cards/grading-profit`, `/cards/sealed-signals`, `/cards/live-updates`.
-    - [`analytics.py`](backend/app/routers/analytics.py): `/cards/top-pokemon-volume`, `/cards/trending`, `/cards/trending/reset`, `/cards/track-action`, `/cards/portfolio-valuation`.
-    - [`cards.py`](backend/app/routers/cards.py): single-card endpoints (`/{card_id}`, `/{card_id}/prices`, `/{card_id}/image`), S3 asset streaming/redirect, and IQR price outlier filtering (`_trim_outliers_iqr`).
-  - **Subquery Optimization**: Eliminated duplicate 60,000-row correlated scalar subqueries in `catalog.py` by deriving `latest_currency = literal("USD")` directly (since TCG API observations are uniformly in USD), saving up to 60,000 subquery executions per search lookup.
-  - **System Telemetry & Quota Diagnostics**: Extended `/health?details=true` with live DB session checks, Redis latency ping, and active connection counts, plus `/health/quotas` for daily provider limits and headroom.
-  - **Catalog Sync Checkpointing & Quota Protection** ([`backend/jobs/sync_catalog.py`](backend/jobs/sync_catalog.py)): Added Redis cursor tracking (`cardboarddex:sync:cursor:{game}`) and `--resume` support to resume catalog ingestion seamlessly after daily API rate limits without restarting from set 0.
-
 - **Frontend Bundle Optimization & ISR Prerendering**:
-  - **Dynamic Command Palette Code-Splitting** ([`frontend/components/command-palette-lazy.tsx`](frontend/components/command-palette-lazy.tsx), [`frontend/app/layout.tsx`](frontend/app/layout.tsx)): Extracted the 390 KB Pokédex dataset from initial page loads by dynamically importing `CommandPalette` on the client with `ssr: false`.
-  - **Static Generation & ISR** ([`frontend/app/page.tsx`](frontend/app/page.tsx), [`frontend/app/pokedex/page.tsx`](frontend/app/pokedex/page.tsx)): Enabled static HTML prerendering on the homepage and 24h Incremental Static Regeneration (`revalidate = 86400`) on `/pokedex`, slashing First Contentful Paint (FCP) and Time to Interactive (TTI).
+  - **Dynamic Command Palette Code-Splitting** ([`frontend/components/command-palette-lazy.tsx`](frontend/components/command-palette-lazy.tsx), [`frontend/app/layout.tsx`](frontend/app/layout.tsx)): Deferred the large Pokédex dataset from initial page loads by dynamically importing `CommandPalette` on the client with `ssr: false`.
+  - **Static Generation & ISR** ([`frontend/app/page.tsx`](frontend/app/page.tsx), [`frontend/app/pokedex/page.tsx`](frontend/app/pokedex/page.tsx)): Enabled static HTML prerendering on the homepage and 24h Incremental Static Regeneration (`revalidate = 86400`) on `/pokedex`. Actual latency depends on deployment and cache behavior.
 
-- **Testing & Verification**:
-  - **Backend Pytest Suite**: **151 passed** with 100% pass rate (`tests/test_portfolio.py`, `tests/test_security.py`, `tests/test_trending.py`, `tests/test_services.py`, `tests/test_cards_api.py`, `tests/test_catalog_cache.py`, `tests/test_collect_prices.py`, `tests/test_cycle_prices.py`, `tests/test_update_pokemon.py`, `tests/test_foundation.py`, `tests/test_title_matcher.py`, `tests/test_sync_catalog.py`, `tests/test_tcgapi_client.py`, `tests/test_ebay_client.py`).
-  - **Frontend Vitest Suite**: **18 passed** with 100% pass rate across 4 test suites (`tests/binder-context.test.tsx`, `tests/currency-context.test.tsx`, `tests/price-range-slider.test.tsx`, `tests/shop-ebay-button.test.tsx`).
-  - **Type Checking & Build**: Frontend TypeScript check (`npm run typecheck`) and production build (`npm run build`) pass cleanly with **0 errors**. All static and dynamic routes compiled and verified.
+## Backend, caching, and rendering details
 
-### Database and catalog state
+### Route ownership and loading components
 
-The local PostgreSQL database (`cardboarddex`) has been populated with canonical TCG API IDs using `python -m jobs.sync_catalog --all` and `python -m jobs.sync_catalog --game pokemon-japan --all`. Both English and Japanese sets are supported seamlessly: English sets default to `series="Pokemon"` / `series=None`, while Japanese sets are tagged `series="Pokemon Japan"`. Over **482 sets**, **54,480+ cards**, and **66,500+ active price observations** (including 17,400+ verified eBay comps, 1,120+ graded slabs, and per-printing TCG market prices) are active in PostgreSQL. All card records link to active TCGPlayer/TCG API CDN assets proxied through `/cards/:id/image`.
+| Router | Public routes |
+| --- | --- |
+| `catalog.py` | `/cards/search`, `/cards/sets`, `/cards/sets/{set_id}/stats`, `/cards/pokemon/{name}` |
+| `market.py` | `/cards/market-movers`, `/cards/grading-profit`, `/cards/sealed-signals`, `/cards/live-updates` |
+| `analytics.py` | `/cards/top-pokemon-volume`, `/cards/trending`, `/cards/trending/reset`, `/cards/track-action`, `/cards/portfolio-valuation` |
+| `cards.py` | `/cards/{card_id}`, `/cards/{card_id}/prices`, `/cards/{card_id}/image` |
 
-In production on **AWS RDS PostgreSQL** (`cardboarddex-db.c7gc44wq4clr.us-west-2.rds.amazonaws.com:5432`), the database holds **484 expansion sets** (234 English, 250 Japanese), **54,682 cards** (32,795 English, 21,887 Japanese), and **61,687 price observations** committed. The passive Celery Beat scheduler running 24/7 on AWS ECS Fargate automatically synchronizes both English and Japanese sets daily (`game="all"`). Card images are served via Amazon S3 read-through cache (`cardboarddex-card-assets-349558247779`) and proxied through `/cards/:id/image`.
+- Business logic lives in catalog, grading, sealed, trending, and portfolio services. `cards.py` retains some compatibility re-exports; use the owning router/service for new changes.
+- [page-loading-status.tsx](frontend/components/page-loading-status.tsx) and [section-loading-bar.tsx](frontend/components/section-loading-bar.tsx) provide shared status/progress visuals. Route `loading.tsx` files cover catalog, card/species detail, Pokédex, binder, and analytical dashboards; grid skeletons and client fallback states complement the route shells.
+- [back-to-top.tsx](frontend/components/ui/back-to-top.tsx) supplies the floating scroll action across catalog, movers, grading, sealed, live updates, and Pokédex views. Species navigation also uses sessionStorage to restore its last viewed position.
 
-## Canonical provider behavior
+### Catalog queries and cache layers
+
+- Catalog search uses `_SEARCH_LOCAL_CACHE` (60-second TTL) and Redis `cardboarddex:catalog:search:{params}` (300-second TTL). Sets use `_SETS_LOCAL_CACHE` (300 seconds) and `cardboarddex:catalog:sets:{game}` (3,600 seconds).
+- Search and set statistics accept `min_price`/`max_price`, filter latest-price subqueries, and support server-rendered bookmarked URLs. Catalog search uses the composite observation index `ix_price_observations_search_lookup`.
+- [api.ts](frontend/lib/api.ts) supplies Next revalidation options for search/set-statistics requests and a separate browser GET cache (60 seconds) with in-flight request deduplication. The browser cache currently ignores callers' `no-store` intent and does not evict old keys.
+- [catalog-browser.tsx](frontend/components/catalog-browser.tsx) avoids an immediate redundant set fetch when SSR already supplied sets. [next.config.ts](frontend/next.config.ts) configures AVIF/WebP, qualities 70/75/80, and a minimum cache TTL of 2,678,400 seconds (31 days). SVG optimization is allowed with attachment disposition and a sandboxed image CSP; local-IP allowance is enabled only for the configured local API origin.
+- `.card-cv` and `.table-row-cv` use `content-visibility: auto` to reduce offscreen work. [shimmer.ts](frontend/lib/shimmer.ts) generates base64 SVG blur placeholders.
+- The catalog summary code assumes USD for TCG observations. Validate currency/printing consistency before broadening provider support.
+- Redis-backed analytical caches use `cardboarddex:grading_profit:{hash}`, `cardboarddex:sealed_signals:{hash}`, and `cardboarddex:top_volume:{key}` with 300-second TTLs. Their local fallbacks currently have no eviction.
+
+### Market, trending, and pricing responses
+
+- Market movers cache both directions under `cardboarddex:movers:{game}:{period}` for 900 seconds, with `_MOVERS_LOCAL_FALLBACK` for local/stale fallback. Concurrent misses are not coalesced across workers.
+- `_build_mover_item()` accepts alternate upstream keys for card identity, price, and percentage change. `_compute_db_market_movers()` falls back to provider state and observations. Its final arbitrary-candidate fallback needs removal; nonempty results do not establish actual movement.
+- [market.py](backend/app/routers/market.py) creates the interactive TCG client without the job quota-acquisition callback. Review quota accounting for interactive provider fetches independently of Celery limits.
+- Live updates aggregate provider/graded counts with a combined `CASE` query and Redis `cardboarddex:live_updates:kpi` (60 seconds). The unfiltered total count is also cached for 60 seconds.
+- Card prices resolve each observation payload once via `_resolve_obs_payload()`/`_build_obs_item()`, exposing selected pricing fields rather than raw provider payloads.
+- Latest-variant grouping includes `provider_card_id` to preserve distinct eBay listings. Raw asking-price averages use `_trim_outliers_iqr()` when enough observations exist.
+- `GET /cards/{id}/prices` accepts a bounded `days` parameter, but observations with null `provider_updated_at` currently bypass the cutoff and response rows are not capped.
+- Trending records card views/clicks, Pokémon activity, and search terms. In-memory tracking dictionaries have a 2,000-entry cap; Redis sorted sets are periodically trimmed. Cache invalidation uses `scan_iter()`, and `TrackActionRequest.entity_id` has length/pattern validation. These controls do not prevent fabricated activity or bound every analytical response cache.
+- All eBay observations are asking-price comps. The UI's historical “sales” labels and volume calculations are documented limitations.
+
+### Images and API protections
+
+- `get_card_image()` validates card IDs against an alphanumeric/underscore/hyphen pattern with a 64-character maximum.
+- With `S3_BUCKET_NAME`, it checks the public asset URL and returns a cacheable `307` redirect when present. Otherwise it fetches the provider image, synchronously uploads through a shared boto3 client, and returns the bytes.
+- S3 keys are `cards/{card_id}.png`; stored Content-Type comes from the downloaded image. Asset responses use one-year immutable cache headers. Image URLs are stable rather than content-versioned.
+- Missing/broken images use a local SVG placeholder and Redis `cardboarddex:broken_img:{card_id}` for 24 hours. Failed requests can therefore continue showing placeholders until expiry.
+- [sync_images_to_s3.py](backend/jobs/sync_images_to_s3.py) uses a thread pool for download/upload work. Options include `--limit`, `--all`, `--set-id`, `--workers`, `--overwrite`, `--bucket`, and `--region`; there is no `--concurrency` or `--card-id` option.
+- TCG outbound calls use HTTPX connect/read/write/pool timeouts of 5/30/10/5 seconds; eBay uses 5/25/10/5. Requests retry selected 429/5xx failures with backoff. These are per-operation timeouts, not whole-job deadlines.
+- The API's Redis rate limiter uses fixed windows; its in-memory fallback uses a sliding window. Images have a separate 6,000/minute bucket. Proxy-header trust and heavy-endpoint enforcement remain open issues.
+- CORS uses exact configured origins plus an anchored production/preview/development regex. CORS does not authenticate non-browser clients.
+- Successful API responses receive CSP, HSTS, nosniff, framing, and referrer headers. Generic 500 responses mask exception details while logging errors server-side. Frontend HTML needs its own policy.
+- `POST /cards/trending/reset` requires `X-Admin-Token`; unconfigured admin access is disabled. Listing links are restricted to HTTP(S) and eBay/TCGPlayer domains.
+- PostgreSQL pooling uses `pool_size=15`, `max_overflow=15`, `pool_timeout=5.0`, and `pool_recycle=1800`. Total connections still depend on process/task count.
+- Public read routes set Cache-Control directives, but headers alone do not prove Cloudflare caches a response or establish a cache-hit percentage.
+
+### Job durability and deployment mechanics
+
+- Catalog ingestion checks existing observation fingerprints to avoid duplicate inserts. Current tables separate catalog identity, provider state, normalized observations, and raw eBay listings; catalog schemas remain protected.
+- Price batches prefer least-recently-synced cards. Manual CLI targeting supports canonical card IDs, card-name queries, and Pokémon species through `get_cards_for_pokemon()`, including name expansions and Mew/Mewtwo isolation.
+- Scheduled pricing tasks expire after 860 seconds with an 840-second hard limit. Catalog sync expires after 3,540 seconds with a 3,480-second hard limit. Late acknowledgement/prefetch settings do not replace distributed overlap protection.
+- The Dockerfile builds dependencies in a separate stage and runs the application as an unprivileged user. It can run FastAPI or a worker command supplied by Docker Compose.
+- Prepared backend CI runs application/deployment tests, publishes an AMD64 SHA-tagged image, and deploys its digest with matching Compose configuration over verified SSH. It checks schema revision without applying migrations. Source publication and production activation remain pending as recorded below.
+- Frontend CI uses Node 22, `npm ci`, TypeScript checking, and a webpack production build. It currently omits `npm test`.
+- Cloudflare Pages Git integration was previously configured with `@cloudflare/next-on-pages`; both Wrangler files name `.vercel/output/static` as the output and enable `nodejs_compat`. The adapter is not pinned in `frontend/package.json`; verify the live Pages build configuration before changing deployment tooling.
+- `frontend/.npmrc` enables `legacy-peer-deps=true`, and `react-is` is an explicit dependency for Recharts compatibility.
+- `/health?details=true` reports database/Redis connectivity, not latency or active connection counts. `/health/quotas` exists but reads keys inconsistent with the provider limiter.
+
+## Provider and job behavior
 
 ### TCG API
 
-- Base URL: `https://api.tcgapi.dev/v1`.
-- Authentication: server-side `X-API-Key`.
-- Supported Games:
-  - English Pokémon: `game=pokemon` (400+ sets, 34,000+ cards).
-  - Japanese Pokémon: `game=pokemon-japan` (453 sets, 40,334 cards covering Japanese sets, Art Rares, Character Rares, and promos).
-- Catalog endpoints: `GET /sets?game=pokemon|pokemon-japan` and `GET /sets/:id/cards`.
-- Card identity: the TCG API card ID is stored as the canonical `cards.id` for new rows.
-- Pricing endpoints (see [Prices API](https://tcgapi.dev/api/prices/)):
-  - `GET /cards/:id/prices`: returns per-printing pricing (supports optional `?printing=` filter).
-  - `GET /prices/top-movers`: top price gainers and losers (supports `game=pokemon|pokemon-japan`, `direction=up|down`, `period=24h|7d|30d`, `printing`, `type`, `limit`).
-  - `GET /bulk/prices`: batch price lookup for up to 500 card IDs (`?ids=1,2,3`).
-- Supported printing & variant types: `Normal`, `Holofoil`, `Reverse Holofoil`, `1st Edition`, `Unlimited`.
-- Price data fields returned: `printing`, `market_price`, `low_price`, `median_price`, `lowest_with_shipping`, `buylist_price`, `price_change_24h`, `price_change_7d`, `price_change_30d`, and `last_updated_at`.
-- Request safety: Redis-backed daily cutoff defaults to 2,000 requests with sub-second sliding-window burst pacing.
-- Images: remote provider URLs remain private database implementation details; frontend responses expose only `/cards/:id/image`.
+[TCGAPIClient](backend/app/tcgapi/client.py) defaults to `https://api.tcgapi.dev/v1` with server-side `X-API-Key`. It calls `/sets`, `/sets/{id}/cards`, `/cards/{id}`, `/cards/{id}/prices`, `/prices/top-movers`, and `/bulk/prices`. Game identifiers are `pokemon` and `pokemon-japan`; canonical provider IDs identify catalog cards, with long IDs normalized by `local_card_id()`.
+
+[Catalog sync](backend/jobs/sync_catalog.py) upserts sets/cards and stores pricing observations/provider state. Japanese sets use `series="Pokemon Japan"`. Pagination, deduplication, and Redis cursor helpers already exist; reliable per-page resumption remains unfinished. The quota-error path checkpoints the final selected set rather than the last successfully processed set. Also, `--all` currently passes `None` into a function that falls back to the configured set limit, so it does not guarantee an unlimited sync.
 
 ### eBay
 
-- eBay is the primary source for real-world market comps, graded slabs (PSA, BGS, CGC, SGC), active listing comparisons, and sealed Pokémon merchandise (Booster Boxes, ETBs, Booster Bundles, Collection Cases, Binder Collections).
-- **Client & OAuth**: `backend/app/ebay/client.py` authenticates via OAuth 2.0 Client Credentials against `api.ebay.com/identity/v1/oauth2/token` and manages auto-refreshing Application Access Tokens cached in Redis (`cardboarddex:ebay:oauth_access_token`).
-- **Marketplace Comps Ingestion**: `backend/jobs/collect_ebay_prices.py` queries eBay Browse API (`/buy/browse/v1/item_summary/search`) with rate limiting (`ebay_daily_request_limit`) and flexible search by card name, number, set, ID, or sealed product title.
-- **Title Parsing & Resolution**: All eBay title interpretation strictly resides in `backend/parsers/title_matcher.py`. Enforces word-boundary negative keyword rejections (proxies, fakes, custom cards, lots, digital codes, foreign languages, autographs, speculative `"PSA 10?"` claims, and empty/opened sealed boxes). For sealed merchandise, strictly isolates sealed cases from single units and filters out single promo card extractions.
-- **Audit & Persistence**: Raw responses are logged to `raw_ebay_listings` (migration `0003_ebay_raw_listings.py`) without touching `cards` or `sets`. Verified matches are deduplicated into `price_observations` with direct eBay item URLs and clean `variant_id` tags (`ebay:{card_id}:sealed` for sealed items).
-- **Frontend Integration**: Detail dashboard renders verified eBay comps with interactive direct links to the eBay listing page in the "Latest variants" table.
+[EbayClient](backend/app/ebay/client.py) uses OAuth client credentials and Browse item-summary search. Application tokens are shared through Redis. [collect_ebay_prices.py](backend/jobs/collect_ebay_prices.py) records raw listings and deduplicated observations after [title matching](backend/parsers/title_matcher.py). The matcher covers proxy/fake, lot, language, speculative grade, and sealed-product edge cases.
 
-## Runtime commands
+No completed-sales ingestion is implemented. Raw listing rows are updated on repeat ingestion; they are not an immutable event archive.
 
-From `backend/`:
+### Provider payloads and matching rules
+
+TCG request details supported by the adapter:
+
+| Endpoint | Parameters / behavior |
+| --- | --- |
+| `GET /sets` | `game`, `page`, `per_page`; pagination uses provider metadata or page length. |
+| `GET /sets/{id}/cards` | Paginated card ingestion; attaches set identity to each record. |
+| `GET /cards/{id}` | Provider card detail for identity/pricing ingestion. |
+| `GET /cards/{id}/prices` | Optional `printing` filter. |
+| `GET /prices/top-movers` | `game`, `direction`, `period`, `printing`, `type`, `limit`. |
+| `GET /bulk/prices` | Comma-separated `ids`; batch size must respect the provider's current contract. |
+
+- Pricing fields used include `printing`, `market_price`, `low_price`, `median_price`, `lowest_with_shipping`, `buylist_price`, `price_change_24h`, `price_change_7d`, `price_change_30d`, `total_listings`, and provider update timestamps.
+- Printing values include Normal, Holofoil, Reverse Holofoil, 1st Edition, and Unlimited where provided. Missing fields/variants vary by card; do not assume every response contains them.
+- The eBay OAuth endpoint is `https://api.ebay.com/identity/v1/oauth2/token`; Browse search is `/buy/browse/v1/item_summary/search`. The application-token Redis key is `cardboarddex:ebay:oauth_access_token`.
+- Raw listings are stored in `raw_ebay_listings` (migration `0003_ebay_raw_listings.py`), including item ID, title, price/currency, listing URL, seller feedback, dates, match/rejection details, and raw payload. Matched observations retain source item identity and title-match metadata.
+- The parser rejects proxies/fakes/custom cards, lots/bulk, digital codes, foreign-language mismatches, alterations/autographs, speculative grades such as “PSA 10?”, and empty/opened sealed products.
+- Japanese targets receive `is_target_japanese`; `RE_NON_JAPANESE_FOREIGN` rejects other languages while permitting Japanese terms. `extract_core_card_name()` normalizes suffixes such as `Ivysaur - 002/165` and printing parentheticals such as Master Ball Pattern/Mirror Holofoil.
+- Grading extraction supports PSA, BGS, CGC, and SGC. These are parsed seller claims, not independent grading-certificate verification.
+- Sealed matching distinguishes booster boxes, ETBs, bundles, cases, tins, blisters, binder collections, and UPCs; isolates cases from single units and Pokémon Center variants; rejects single-promo extractions.
+- Sealed observations use `variant_id=ebay:{card_id}:sealed` with sealed condition/printing. Raw/graded variants include company and grade/condition information.
+- Direct eBay shopping queries combine “Pokemon”, card name/number, and set name; sealed queries omit dummy numbers. Listing URLs are surfaced through the detail dashboard's variants table.
+
+### Scheduling and limits
+
+[Celery Beat](backend/app/celery_app.py) schedules TCG price batches at minutes `:00/:30`, eBay batches at `:15/:45`, and both-game catalog sync at 03:00 UTC. These are batch schedules, not a promise that every card refreshes every 15 minutes.
+
+Provider limits use Redis daily counters and per-second burst pacing; defaults are 2,000 TCG and 500 eBay requests/day. Celery uses JSON serialization, late acknowledgements, prefetch one, task expiration, and hard time limits. These settings do not provide a distributed singleton lock. Run only one Beat scheduler and verify overlap behavior during rolling deployments.
+
+## Deployment status
+
+Last verified: **2026-09-17 UTC** (2026-09-16 in Los Angeles).
+
+- Production remains on `cardboarddex-server`, Lightsail `nano_3_0` (512 MB, $5/month base), in `us-west-2a`. The current attached static IP is **32.187.254.253**. The API at `https://api.cardboarddex.app/health` returned HTTP 200; the original API, worker+Beat, PostgreSQL, Redis, and Tunnel containers were running at the last read-only check.
+- The approved target is `micro_3_0` (1 GB, $7/month base), but AWS rejected creation of `cardboarddex-server-v2` with a one-instance account restriction. Service Quotas returned conflicting limits and rejected a requested increase to three. No replacement instance was created by this implementation.
+- During implementation, another actor rebooted/deleted/recreated `cardboarddex-server` from `cardboarddex-snap-prod` and attached `cardboarddex-static-ip`. These operations were observed through AWS, not performed by this implementation. The changed SSH host key was independently verified through the AWS control plane. **Further production mutations are paused pending coordination with the owner/other actor.**
+- ALB, old ECS tasks, RDS instances, NAT gateways, unattached EBS volumes, and EC2 Elastic IPs were absent in the cross-region audit. The final RDS snapshot `cardboarddex-db-final-snapshot-2026-09-16` remains. The newly observed Lightsail snapshot also remains. Retained storage is billable; $5 is the server base charge, not a verified total AWS bill.
+
+### Reliability implementation: prepared, not yet deployed
+
+See [the Lightsail runbook](docs/lightsail-migration.md). The production Compose definition and backend changes now provide separate durable/cache Redis, bounded caches and connection pools, rotated logs, required credentials, and `/ready`. Deployment uses immutable AMD64 images and matching configuration, verified SSH, serialized rollout, and a read-only schema-revision guard. No `cards` or `sets` schema was changed.
+
+- Tested AMD64 image published to ECR: `cardboarddex-backend:lightsail-reviewed-20260916`, digest `sha256:40590e83fb5ecefc86c3b79c0a417971f490b1840bcd3e29a62b29bd93f51066`. This image is **not the running production release**.
+- Protected configuration and a legacy rollback release were staged on the original server and remain present after the external snapshot recreation. Database credential rotation and application cutover have **not** run.
+- The CI and backup-verification workflow changes are local and uncommitted. Repository secrets/variables and workflow activation still need completion after source publication is authorized. The independent change in `frontend/lib/api.ts` is not part of this implementation.
+
+### Backups and recovery
+
+- Created private S3 bucket `cardboarddex-backups-349558247779-us-west-2`, with public access blocked, TLS required, and SSE-S3 encryption. Six-hourly objects expire after seven days; weekly copies after 28 days; temporary migration archives after seven days.
+- Created upload-only IAM identity `cardboarddex-backup-upload` and read-only OIDC role `github-actions-cardboarddex-backup-read`. Upload credentials are root-only on the VPS and stored under ignored `.system_generated/lightsail/` locally. Never print or commit them.
+- A production PostgreSQL archive was restored successfully into isolated local PostgreSQL: schema revision `0004_price_obs_search_index`, **54,708 cards**, **489 sets**. It was uploaded to `migration/baseline.dump`, downloaded, and compared byte-for-byte successfully. This is the confirmed off-server recovery point.
+- Installed the six-hour systemd backup timer on the original host. An initial missing dependency was removed from the script; a subsequent backup attempt was interrupted before a success manifest was published. **The first completed scheduled S3 backup and weekly GitHub restore workflow are not yet verified.** Recheck timer state and obtain a completed manifest after coordination on the rebuilt host.
+- Keep the RDS snapshot until at least seven days after cutover and successful recurring off-server backup/restore checks. Keep an old host for 48 hours when a future parallel migration becomes possible. Do not delete the current host to bypass the account restriction without an explicit change to that recovery plan.
+
+### Verification
+
+- Full backend suite passed locally and in the published AMD64 image; live deployment tests are opt-in. Added readiness, credential encoding, connection-pool validation, cache bounds, and fail-closed quota tests.
+- Disposable PostgreSQL tests verified restore success, refusal to overwrite existing data, and corrupt-archive rejection. Disposable Redis tests verified queue/quota/checkpoint survival across restart and isolation from cache eviction. Backup failure/checksum tests passed.
+- Production Compose validation, shell syntax, Python compilation, workflow YAML parsing, and whitespace checks passed. The new production rollout and 48-hour capacity observation remain pending; current-host swap usage was still substantial after its external rebuild.
+
+## Configuration
+
+Backend settings are loaded from environment variables and the repository-root `.env` by [Settings](backend/app/config.py). The following are **code defaults**, not verified production values.
+
+| Variable | Purpose / default |
+| --- | --- |
+| `DATABASE_URL` | SQLAlchemy connection URL; defaults to `sqlite:///./cardboarddex.db`. Configure PostgreSQL for development/production as appropriate. |
+| `REDIS_URL` | Durable broker/results, quotas, OAuth tokens and checkpoints; `redis://localhost:6379/0`. |
+| `CACHE_REDIS_URL` | Disposable response caches and analytics; falls back to `REDIS_URL` locally. |
+| `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` | API defaults 3/2; production worker overrides 2/0. |
+| `POSTGRES_HOST` / `POSTGRES_PASSWORD` | Production connection configuration; safely constructs a URL instead of interpolating passwords. |
+| `TCGAPI_API_KEY` | Server-side TCG API credential; unset by default. |
+| `TCGAPI_BASE_URL` | `https://api.tcgapi.dev/v1`. |
+| `TCGAPI_DAILY_REQUEST_LIMIT` | `2000`. |
+| `TCGAPI_SYNC_SET_LIMIT` | `250` newest sets per game by default. |
+| `PRICE_COLLECTION_CARD_LIMIT` | `5` cards per scheduled collection batch by default. |
+| `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET` | Server-side OAuth credentials; unset by default. |
+| `EBAY_MARKETPLACE_ID` | `EBAY_US`. |
+| `EBAY_DAILY_REQUEST_LIMIT` | `500`. |
+| `S3_BUCKET_NAME` | Optional bucket for image caching/sync. |
+| `AWS_REGION` | Image-storage client region; `us-west-2`. |
+| `CLOUDFRONT_DOMAIN` | Optional asset hostname without a scheme. |
+| `BACKEND_CORS_ORIGINS` | Comma-separated origins; defaults to localhost/127.0.0.1 on ports 3000/3001. `main.py` additionally allows matching production/preview origins. |
+| `NEXT_PUBLIC_API_URL` | Browser-visible API base URL; resolved by [next.config.ts](frontend/next.config.ts) and [api.ts](frontend/lib/api.ts). Never put credentials here. |
+| `PSA_VALUE_FEE` | Grading-fee assumption; `24.99`. |
+| `ADMIN_API_KEY` | Token for privileged routes through `X-Admin-Token`; admin actions disabled when unset. |
+| `ENABLE_API_DOCS` | `false`; controls Swagger, ReDoc, and OpenAPI routes. |
+| `RATE_LIMIT_PER_MINUTE` | `300`; image paths use a separate hardcoded `6000`/minute bucket. |
+| `RATE_LIMIT_TRACK_ACTION_PER_MINUTE` | `30`. |
+| `RATE_LIMIT_HEAVY_PER_MINUTE` | `60`, but currently not wired to endpoints. |
+
+Earlier references to `S3_CARD_ASSETS_BUCKET` and `S3_CUSTOM_DOMAIN` do not match these settings. `AWS_DEFAULT_REGION` is not the application's `aws_region` setting.
+
+Never commit `.env`, provider credentials, database passwords, or Tunnel tokens.
+
+## Development and verification commands
+
+From the repository root, `docker compose up -d` starts PostgreSQL and Redis. Review the exposed-port issue below before using it on a remotely reachable host.
+
+From `backend/`, with the virtual environment and intended environment configured:
 
 ```bash
-.venv/bin/pytest
+.venv/bin/uvicorn app.main:app --reload
+.venv/bin/alembic upgrade head
+
+# Isolated test configuration: avoid the configured database/Redis.
+DATABASE_URL=sqlite:// REDIS_URL=redis://127.0.0.1:1/0 TCGAPI_API_KEY= EBAY_CLIENT_ID= EBAY_CLIENT_SECRET= .venv/bin/pytest
 PYTHONPATH=. .venv/bin/python -m compileall -q app jobs tests parsers
+```
 
-# Catalog Ingestion
-python -m jobs.sync_catalog --all
-python -m jobs.sync_catalog --game pokemon-japan --all
+Jobs below write to the configured database/S3 and consume provider quota. Use an activated backend virtual environment; check `--help` for other supported options.
+
+```bash
 python -m jobs.sync_catalog --game all --limit 50
-
-# Price Collection & Alternating Daemon
-python jobs/cycle_prices.py --continuous --interval 900 --tcg-limit 50 --ebay-limit 20
-python jobs/cycle_prices.py --card-id 28402
-python jobs/cycle_prices.py --pokemon "Pikachu"
-python jobs/update_card.py --card-id 28402
-python jobs/update_card.py "Rayquaza Legends Awakened"
-python jobs/update_pokemon.py "Pikachu"
-python jobs/update_pokemon.py "Charizard" --limit 20
-python jobs/update_card.py --pokemon "Rayquaza"
-python jobs/collect_prices.py --limit 50
-python jobs/collect_prices.py --card-id 29919
-python jobs/collect_prices.py "Rocket's Moltres"
-python jobs/collect_ebay_prices.py --limit 50
-python jobs/collect_ebay_prices.py "Charizard Base Set"
-python jobs/collect_ebay_prices.py "151 Binder Collection"
-python jobs/collect_ebay_prices.py "Lugia ex"
-
-# S3 Card Image Synchronization
-python jobs/sync_images_to_s3.py --limit 100 --concurrency 5
-python jobs/sync_images_to_s3.py --all --concurrency 10
-python jobs/sync_images_to_s3.py --card-id 28402
-
-# Background Celery Worker
+python -m jobs.sync_catalog --game pokemon --limit 50
+python -m jobs.sync_catalog --game pokemon-japan --limit 50
+python -m jobs.cycle_prices --card-id 28402
+python -m jobs.cycle_prices --pokemon "Pikachu"
+python -m jobs.update_card --card-id 28402
+python -m jobs.update_card "Rayquaza Legends Awakened"
+python -m jobs.update_card --pokemon "Rayquaza" --limit 20
+python -m jobs.update_pokemon "Charizard" --limit 20
+python -m jobs.collect_prices --limit 50
+python -m jobs.collect_prices --card-id 29919
+python -m jobs.collect_prices "Rocket's Moltres"
+python -m jobs.collect_ebay_prices --limit 20
+python -m jobs.collect_ebay_prices "Charizard Base Set"
+python -m jobs.collect_ebay_prices "151 Binder Collection"
+python -m jobs.sync_images_to_s3 --limit 100 --workers 5
+python -m jobs.sync_images_to_s3 --all --workers 10
 celery -A app.celery_app worker --beat --loglevel=info
 ```
+
+Catalog options also include `--resume` and `--reset-cursor`; use them only with the checkpoint limitations above understood. The image-sync CLI supports `--set-id` for targeting a set.
+
+For manual continuous cycling, use `python -m jobs.cycle_prices --continuous --interval 900 --tcg-limit 50 --ebay-limit 20` as an alternative scheduler, not alongside Beat against the same workload.
 
 From `frontend/`:
 
 ```bash
+npm ci
 npm run dev
+npm test
 npm run typecheck
 npm run build
 ```
 
-From the repository root:
+From `backend/`, the explicit live verification command is:
 
 ```bash
-docker compose up -d
+RUN_LIVE_DEPLOYMENT_TESTS=1 .venv/bin/pytest -m live tests/test_deployment_endpoints.py -v
 ```
 
-## Environment variables
+Set `AWS_BACKEND_URL` to the legacy endpoint from the recorded infrastructure table only while testing migration parity. Omit it after retirement.
 
-| Variable | Purpose |
-| --- | --- |
-| `DATABASE_URL` | SQLAlchemy PostgreSQL URL (`postgresql+psycopg://cardboarddex:cardboarddex@localhost:5432/cardboarddex`). |
-| `REDIS_URL` | Celery broker/result backend and shared request limiter (`redis://localhost:6379/0`). |
-| `AWS_DEFAULT_REGION` | AWS region for S3 and ECS (defaults to `us-west-2`). |
-| `S3_CARD_ASSETS_BUCKET` | S3 bucket name for card image caching (`cardboarddex-card-assets-349558247779`). |
-| `S3_CUSTOM_DOMAIN` | Optional custom domain or CDN domain for card assets. |
-| `TCGAPI_API_KEY` | Required server-side TCG API key. |
-| `TCGAPI_BASE_URL` | Defaults to `https://api.tcgapi.dev/v1`. |
-| `TCGAPI_DAILY_REQUEST_LIMIT` | Redis-backed request cutoff; defaults to 2000. |
-| `TCGAPI_SYNC_SET_LIMIT` | Maximum newest sets synchronized per run; defaults to 250. |
-| `PRICE_COLLECTION_CARD_LIMIT` | Maximum cards processed per pricing batch; defaults to 5. |
-| `EBAY_CLIENT_ID` | eBay OAuth client ID (App ID). |
-| `EBAY_CLIENT_SECRET` | eBay OAuth client secret (Cert ID). |
-| `EBAY_MARKETPLACE_ID` | Defaults to `EBAY_US`. |
-| `EBAY_DAILY_REQUEST_LIMIT` | Redis-backed request cutoff; defaults to 500. |
-| `BACKEND_CORS_ORIGINS` | Comma-separated frontend origins (allows ports 3000 and 3001). |
-| `NEXT_PUBLIC_API_URL` | Browser-visible FastAPI base URL and Next image origin (`http://localhost:8000`). |
-| `PSA_VALUE_FEE` | Editable PSA fee used by margin calculations (defaults to $24.99). |
-| `ADMIN_API_KEY` | Secret administrative token required for privileged endpoints (e.g. `POST /cards/trending/reset`) via `X-Admin-Token` header. |
-| `ENABLE_API_DOCS` | Boolean toggle to enable interactive Swagger (`/docs`), ReDoc (`/redoc`), and OpenAPI schema in production (defaults to `False`). |
-| `RATE_LIMIT_PER_MINUTE` | Global incoming request velocity limit per IP (defaults to 120 req/min). |
-| `RATE_LIMIT_TRACK_ACTION_PER_MINUTE` | Velocity limit for tracking actions per IP (defaults to 30 req/min). |
-| `RATE_LIMIT_HEAVY_PER_MINUTE` | Velocity limit for heavy compute/search endpoints (defaults to 60 req/min). |
+Opt-in deployment tests and direct-AWS parity checks: [docs/ecs-tunnel-migration.md](docs/ecs-tunnel-migration.md). `RUN_LIVE_DEPLOYMENT_TESTS=1` enables public endpoint calls; `AWS_BACKEND_URL` additionally enables the two direct-AWS checks.
 
-Never commit `.env` or API credentials.
+Latest audit verification (2026-09-15):
 
-## Prioritized next steps
+- Backend: 151 passed, five live-test skips, using isolated database/Redis configuration.
+- Frontend: 20 tests passed across five test files.
+- `npm audit --omit=dev`: no known production-dependency vulnerabilities reported at that time.
+- Mocked checks reproduced image redirect bypass, proxy-header trust, retained expired cache entries, and portfolio look-ahead bias.
+- Public homepage headers lacked CSP and framing protection. Live IAM/RDS/S3 permissions, Python advisories, and comprehensive historical secret scanning were not audited.
+- Build/typecheck success was recorded by the preceding migration work; those checks were not rerun for the security audit or this documentation-only cleanup.
 
-### 1. Historical Sold-Sales Analytics & Marketplace Insights
+## Open work, in priority order
 
-- File/verify eBay Application Growth Check for `buy.marketplace.insights` scope to enable historical completed sales ingestion.
-- Compute 30/90-day volume-weighted averages, transaction volume, and PSA 10 grading margins against raw market values.
-- Add `/cards/:id/sales` and `/cards/:id/stats` endpoints to power dedicated comps filters on the detail page.
+### 1. Security and availability
 
-### 2. Catalog ingestion optimizations (deduplication & resumable sync buffer)
+- **Image fetching:** validate redirects/destinations and enforce image type/size limits in `TCGAPIClient.get_image()`. The existing hostname allowlist only checks the initial URL.
+- **Caches and request cost:** bound and evict expired portfolio/grading/sealed/volume caches, avoid retaining invalid requests, enforce heavy-endpoint limits, and bound expensive history queries.
+- **Proxy trust:** accept client-IP headers only from trusted proxies; confirm direct-origin closure after cutover.
+- **Redis:** avoid synchronous network calls on the async middleware path; configure explicit connection/read timeouts.
+- **Development services:** bind Compose PostgreSQL/Redis to loopback; configure authentication/network isolation where remote access is required.
+- **Frontend headers:** deploy an application-compatible CSP and framing restrictions on HTML responses. API headers do not protect the separate frontend document.
+- **Cloud secrets/IAM (verify live):** the runbook reports secrets in ECS environment entries; move to secret references. Restrict the guide's wildcard OIDC subject and AWS resource permissions; grant OIDC permission only to deployment jobs.
 
-- Implement in-memory and database-level deduplication for sets and cards to eliminate redundant database writes.
-- Introduce Redis-backed `CatalogSyncBuffer` to checkpoint `(set_id, page)` progress, enabling graceful pause on daily request limit (`ProviderRequestLimitExceeded`) and seamless resumption on subsequent runs.
-- Optimize TCG API set pagination and page-by-page card ingestion in `TCGAPIClient`.
+### 2. Pricing correctness and privacy
 
-### 3. Media & CDN Edge Distribution (Phase 2)
+- Remove current-price backfilling of missing historical portfolio prices; expose historical coverage. Preserve duplicate holding quantities and consistent printing identity.
+- Fix fallback valuation's oldest-observation selection and unbounded per-card request fan-out. Reconcile percentage-change versus currency-amount semantics across calculations.
+- Replace sold-sales wording for active listings/catalog observations. Observation frequency is affected by ingestion and does not measure transaction volume.
+- Replace arbitrary mover fallbacks with insufficient-data states. Expose grading probabilities, missing costs, and sealed-score assumptions; use explicit ordering for latest sealed observations.
+- Make browser caching honor `no-store`, bound cache size, and date or refresh FX rates.
+- Document binder uploads and third-party media/font requests. Redact sensitive provider error payloads and keep operational diagnostics protected.
 
-- **Completed**: PostgreSQL 16 on AWS RDS, ECS Fargate backend API, S3 card asset bucket with read-through caching and batch sync worker, and 24/7 passive Celery worker with Redis broker on ECS Fargate are fully deployed and operational.
-- **Pending CloudFront Custom Domain**: Complete AWS Support verification to deploy CloudFront CDN distribution in front of S3 bucket `cardboarddex-card-assets-349558247779` for global edge caching and custom domain HTTPS.
-- **Backend API Endpoint**: `https://api.cardboarddex.app` is healthy through Cloudflare Tunnel and is the production code default. The staged standard ECS service has no load balancer and successfully received traffic through the Tunnel; it remains at `desiredCount=0` until the Pages deployment is ready. The generated AWS endpoint remains temporarily available through Express Mode for rollback and must disappear when the Express service and ALB are retired. See the production hostname migration above.
+### 3. Operations and follow-up features
 
-### 4. Product-quality pass
-
-- Add frontend unit and browser tests for search, sidebar filters, responsive layouts, image fallback, and card detail navigation.
-- Add observability for provider quota use, sync freshness, failed images, job duration, and eBay match/reject ratios.
-- Add watchlists and accounts only after catalog identity and sold-comps quality are stable.
+- ECS/ALB/RDS retirement is complete. Production remains on the $5/month Lightsail server base; reliability rollout, verified scheduled backups, and the approved 1 GB move remain pending as recorded above.
+- Standardize locked Python dependencies and vulnerability checks; add `npm test` to frontend CI and regression coverage for the findings above.
+- Fix quota diagnostics to read the same Redis keys as the limiter. Separate liveness from readiness and protected diagnostics.
+- Repair catalog `--all` and checkpoint semantics before relying on resumable ingestion. Verify one Beat scheduler during deployments.
+- Add freshness, provider-quota, failed-image, job-duration, and match/reject monitoring.
+- Verify available eBay programs/scopes before implementing completed-sales ingestion. Add sold-sales statistics and accounts/watchlists after pricing identity and data quality are reliable.

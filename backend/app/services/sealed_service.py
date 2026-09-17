@@ -1,3 +1,4 @@
+from app.common.cache import TTLCache
 import hashlib
 import json
 import logging
@@ -17,7 +18,7 @@ from app.schemas.cards import SealedSignalItem, SealedSignalsResponse
 
 logger = logging.getLogger(__name__)
 
-_SEALED_SIGNALS_LOCAL_FALLBACK: dict[str, tuple[float, SealedSignalsResponse]] = {}
+_SEALED_SIGNALS_LOCAL_FALLBACK = TTLCache(max_entries=64, ttl=300)
 _SEALED_CACHE_TTL = 300  # 5 minutes
 
 

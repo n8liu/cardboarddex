@@ -5,17 +5,27 @@ on:
     branches: [main]
     paths:
       - "backend/**"
+      - "scripts/**"
+      - "deploy/lightsail/**"
+      - "docker-compose.prod.yml"
       - ".github/workflows/backend-ci-cd.yml"
   pull_request:
     branches: [main]
     paths:
       - "backend/**"
+      - "scripts/**"
+      - "deploy/lightsail/**"
+      - "docker-compose.prod.yml"
       - ".github/workflows/backend-ci-cd.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
   id-token: write # Required for AWS OIDC authentication
+
+concurrency:
+  group: backend-production
+  cancel-in-progress: false
 
 jobs:
   test:
@@ -47,18 +57,30 @@ jobs:
 
       - name: Run Pytest test suite
         run: |
-          pytest -v
+          DATABASE_URL=sqlite:// REDIS_URL=redis://127.0.0.1:1/15 CACHE_REDIS_URL=redis://127.0.0.1:1/15 pytest -v
+
+  deployment-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pytest boto3
+      - run: bash scripts/lightsail/validate.sh
+      - run: RUN_CONTAINER_TESTS=1 pytest scripts/lightsail/test_*.py -q
 
   build-and-push:
     name: Build & Push Docker Image to Amazon ECR
-    needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    needs: [test, deployment-tests]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
     outputs:
       image_tag: ${{ github.sha }}
+      image_digest: ${{ steps.build.outputs.digest }}
       ecr_registry: ${{ steps.login-ecr.outputs.registry }}
 
     steps:
@@ -80,85 +102,54 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build and push backend Docker image
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: ./backend
           file: ./backend/Dockerfile
           push: true
+          platforms: linux/amd64
           tags: |
             ${{ steps.login-ecr.outputs.registry }}/cardboarddex-backend:${{ github.sha }}
-            ${{ steps.login-ecr.outputs.registry }}/cardboarddex-backend:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  run-migrations:
-    name: Run Database Migrations (Alembic)
-    needs: build-and-push
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-
-    steps:
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::349558247779:role/github-actions-cardboarddex-deploy
-          aws-region: us-west-2
-          audience: sts.amazonaws.com
-
-      - name: Run Alembic migration task on ECS
-        run: |
-          CLUSTER="default"
-          MIGRATION_TASK_FAMILY="cardboarddex-migration"
-          SUBNETS="${{ vars.ECS_SUBNET_IDS }}"
-          SECURITY_GROUPS="${{ vars.ECS_SECURITY_GROUP_IDS }}"
-
-          if [ -z "$SUBNETS" ]; then
-            echo "Notice: ECS_SUBNET_IDS not configured. Skipping automated migration task run."
-            echo "Run migrations manually or configure repository variables."
-            exit 0
-          fi
-
-          echo "Triggering one-off ECS Fargate migration task..."
-          aws ecs run-task \
-            --cluster "$CLUSTER" \
-            --task-definition "$MIGRATION_TASK_FAMILY" \
-            --launch-type FARGATE \
-            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SECURITY_GROUPS],assignPublicIp=ENABLED}" \
-            --overrides "{\"containerOverrides\": [{\"name\": \"migration\", \"command\": [\"alembic\", \"upgrade\", \"head\"]}]}"
-
   deploy:
-    name: Deploy to Amazon ECS Fargate
-    needs: [build-and-push, run-migrations]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    name: Deploy verified release to Lightsail
+    needs: build-and-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-
     steps:
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::349558247779:role/github-actions-cardboarddex-deploy
           aws-region: us-west-2
-          audience: sts.amazonaws.com
-
-      - name: Deploy API and Celery services
+      - name: Deploy exact image and configuration
+        env:
+          LIGHTSAIL_SSH_KEY: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+          LIGHTSAIL_HOST: ${{ vars.LIGHTSAIL_HOST }}
+          LIGHTSAIL_KNOWN_HOSTS: ${{ secrets.LIGHTSAIL_KNOWN_HOSTS }}
+          BACKEND_IMAGE: ${{ needs.build-and-push.outputs.ecr_registry }}/cardboarddex-backend@${{ needs.build-and-push.outputs.image_digest }}
+          RELEASE_ID: ${{ github.sha }}
         run: |
-          CLUSTER="default"
-          API_SERVICE="cardboarddex-api-tunnel-service"
-          WORKER_SERVICE="cardboarddex-celery-worker-service-51wjzn39"
-
-          echo "Updating FastAPI Tunnel Service: $API_SERVICE..."
-          aws ecs update-service --cluster "$CLUSTER" --service "$API_SERVICE" --force-new-deployment
-          aws ecs wait services-stable --cluster "$CLUSTER" --services "$API_SERVICE"
-
-          echo "Updating Celery Worker Service: $WORKER_SERVICE..."
-          aws ecs update-service --cluster "$CLUSTER" --service "$WORKER_SERVICE" --force-new-deployment
-          aws ecs wait services-stable --cluster "$CLUSTER" --services "$WORKER_SERVICE"
-
-          curl --fail --silent --show-error --retry 5 --retry-delay 10 https://api.cardboarddex.app/health
-          echo "Deployment verified successfully."
+          set -euo pipefail
+          : "${LIGHTSAIL_SSH_KEY:?Missing deployment SSH key}"
+          : "${LIGHTSAIL_KNOWN_HOSTS:?Missing verified host key}"
+          install -d -m 700 "$RUNNER_TEMP/ssh"
+          printf '%s\n' "$LIGHTSAIL_SSH_KEY" > "$RUNNER_TEMP/ssh/key"
+          printf '%s\n' "$LIGHTSAIL_KNOWN_HOSTS" > "$RUNNER_TEMP/ssh/known_hosts"
+          chmod 600 "$RUNNER_TEMP/ssh/key"
+          trap 'rm -f "$RUNNER_TEMP/ssh/key"' EXIT
+          export KEY_PATH="$RUNNER_TEMP/ssh/key"
+          export KNOWN_HOSTS_FILE="$RUNNER_TEMP/ssh/known_hosts"
+          bash scripts/deploy_to_lightsail.sh
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest httpx
+      - name: Verify public deployment
+        working-directory: backend
+        env:
+          RUN_LIVE_DEPLOYMENT_TESTS: "1"
+        run: pytest -m live tests/test_deployment_endpoints.py -v

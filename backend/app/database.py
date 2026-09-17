@@ -13,15 +13,15 @@ class Base(DeclarativeBase):
 settings = get_settings()
 
 engine_kwargs: dict[str, object] = {"pool_pre_ping": True}
-if not settings.database_url.startswith("sqlite"):
+if not settings.effective_database_url.startswith("sqlite"):
     engine_kwargs.update({
-        "pool_size": 15,
-        "max_overflow": 15,
+        "pool_size": settings.db_pool_size,
+        "max_overflow": settings.db_max_overflow,
         "pool_timeout": 5.0,
         "pool_recycle": 1800,
     })
 
-db_url = settings.database_url
+db_url = settings.effective_database_url
 if db_url.startswith("postgresql+psycopg://"):
     try:
         import psycopg  # noqa: F401

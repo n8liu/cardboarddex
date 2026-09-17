@@ -139,8 +139,25 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   }
 
   const fetchPromise = (async () => {
+    const controller = new AbortController();
+    const timeoutMs = isClient ? 15_000 : 6_000;
+    const timeoutId = setTimeout(() => {
+      controller.abort(new Error(`CardboardDex API ${path} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    if (options.signal) {
+      if (options.signal.aborted) {
+        controller.abort(options.signal.reason);
+      } else {
+        options.signal.addEventListener("abort", () => controller.abort(options.signal?.reason), { once: true });
+      }
+    }
+
     try {
-      const response = await fetch(fullUrl, options);
+      const response = await fetch(fullUrl, {
+        ...options,
+        signal: controller.signal,
+      });
       if (!response.ok) {
         throw new Error(`CardboardDex API ${path} returned ${response.status}`);
       }
@@ -150,6 +167,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       }
       return data;
     } finally {
+      clearTimeout(timeoutId);
       if (isClient && isGet) {
         clientInflight.delete(fullUrl);
       }

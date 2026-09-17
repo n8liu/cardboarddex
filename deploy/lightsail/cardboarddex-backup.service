@@ -1,0 +1,12 @@
+[Unit]
+Description=CardboardDex verified PostgreSQL and Redis backup to S3
+After=docker.service network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/cardboarddex/operations/scripts/lightsail/backup.py
+UMask=0077
+TimeoutStartSec=1800
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

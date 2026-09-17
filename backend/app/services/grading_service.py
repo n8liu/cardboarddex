@@ -1,3 +1,4 @@
+from app.common.cache import TTLCache
 import hashlib
 import json
 import logging
@@ -18,7 +19,7 @@ from app.schemas.cards import GradingProfitItem, GradingProfitResponse
 
 logger = logging.getLogger(__name__)
 
-_GRADING_PROFIT_LOCAL_FALLBACK: dict[str, tuple[float, GradingProfitResponse]] = {}
+_GRADING_PROFIT_LOCAL_FALLBACK = TTLCache(max_entries=64, ttl=300)
 _GRADING_CACHE_TTL = 300  # 5 minutes
 
 

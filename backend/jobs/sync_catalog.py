@@ -25,7 +25,7 @@ from app.common.formatters import (
     parse_iso_datetime as _parse_datetime,
     to_decimal as _decimal,
 )
-from app.common.redis import get_redis
+from app.common.redis import get_durable_redis as get_redis
 from app.config import get_settings
 from app.database import SessionLocal
 from app.providers.limiter import ProviderRequestLimitExceeded

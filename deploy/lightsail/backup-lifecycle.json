@@ -1,0 +1,37 @@
+{
+  "Rules": [
+    {
+      "ID": "six-hourly-seven-days",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "six-hourly/"
+      },
+      "Expiration": {
+        "Days": 7
+      },
+      "AbortIncompleteMultipartUpload": {
+        "DaysAfterInitiation": 1
+      }
+    },
+    {
+      "ID": "weekly-four-weeks",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "weekly/"
+      },
+      "Expiration": {
+        "Days": 28
+      }
+    },
+    {
+      "ID": "migration-seven-days",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "migration/"
+      },
+      "Expiration": {
+        "Days": 7
+      }
+    }
+  ]
+}

@@ -75,6 +75,20 @@ def test_cloudflare_tunnel_health(cloudflare_client: httpx.Client) -> None:
     assert response.headers.get("cf-ray"), "response did not pass through Cloudflare"
 
 
+def test_cloudflare_readiness(cloudflare_client: httpx.Client) -> None:
+    response = cloudflare_client.get("/ready")
+    assert response.status_code == 200, response.text
+    assert response.json() == {"status": "ready"}
+
+
+def test_cloudflare_catalog_image(cloudflare_client: httpx.Client) -> None:
+    card = _search_first_card(cloudflare_client)
+    response = cloudflare_client.get(f"/cards/{card['id']}/image", follow_redirects=True)
+    assert response.status_code == 200
+    assert response.headers.get("content-type", "").startswith("image/")
+    assert response.content
+
+
 def test_cloudflare_tunnel_catalog_search(cloudflare_client: httpx.Client) -> None:
     _search_first_card(cloudflare_client)
 

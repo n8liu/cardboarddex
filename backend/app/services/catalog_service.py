@@ -1,3 +1,4 @@
+from app.common.cache import TTLCache
 import logging
 import re
 import unicodedata
@@ -147,7 +148,7 @@ _MASTER_POKEMON_REGEX = re.compile(
 )
 _POKEMON_NAME_CANONICAL_MAP: dict[str, str] = {name.lower(): name for name in POKEMON_DEX_NUMBERS}
 
-_pokemon_volume_cache: dict[str, tuple[datetime, PokemonVolumeResponse]] = {}
+_pokemon_volume_cache = TTLCache(max_entries=64, ttl=300)
 POKEMON_VOLUME_CACHE_TTL = 300  # 5 minutes
 
 

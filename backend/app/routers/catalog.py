@@ -1,3 +1,4 @@
+from app.common.cache import TTLCache
 import json
 import logging
 import time
@@ -33,12 +34,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/cards", tags=["Catalog"])
 
 _SEARCH_CACHE_TTL = 300  # 5 minutes in Redis
-_SEARCH_LOCAL_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_SEARCH_LOCAL_CACHE = TTLCache(max_entries=64, ttl=60)
 _SEARCH_LOCAL_CACHE_TTL = 60  # 1 minute in-process fallback
 _MAX_SEARCH_LOCAL_ENTRIES = 200
 
 _SETS_CACHE_TTL = 3600  # 1 hour in Redis
-_SETS_LOCAL_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_SETS_LOCAL_CACHE = TTLCache(max_entries=64, ttl=300)
 _SETS_LOCAL_CACHE_TTL = 300  # 5 minutes in-process fallback
 
 

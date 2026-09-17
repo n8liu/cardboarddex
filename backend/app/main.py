@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.common.rate_limiter import check_rate_limit, get_client_ip
-from app.common.redis import get_redis as _get_redis
+from app.common.redis import get_redis as _get_redis, get_durable_redis
 from app.config import get_settings
 from app.database import get_db
 from app.routers import analytics, cards, catalog, market
@@ -53,7 +53,7 @@ app = FastAPI(
 @app.middleware("http")
 async def security_and_rate_limit_middleware(request: Request, call_next: object) -> Response:
     # 1. Skip rate limiting for health check and preflight OPTIONS requests
-    if request.method != "OPTIONS" and request.url.path != "/health":
+    if request.method != "OPTIONS" and request.url.path not in {"/health", "/ready"}:
         client_ip = get_client_ip(request)
         clean_path = request.url.path.rstrip("/")
         is_image_request = clean_path.endswith("/image")
@@ -177,6 +177,20 @@ def health(
     }
 
 
+@app.get("/ready")
+def ready(db: Session = Depends(get_db)) -> JSONResponse:
+    try:
+        db.execute(select(1)).scalar_one()
+        get_durable_redis().ping()
+        cache = _get_redis()
+        if cache is None or not cache.ping():
+            raise ConnectionError("Cache Redis unavailable")
+    except Exception as exc:
+        logging.error("Readiness failed error=%s: %s", type(exc).__name__, exc)
+        return JSONResponse({"status": "unavailable"}, status_code=503)
+    return JSONResponse({"status": "ready"})
+
+
 @app.get("/health/quotas")
 def get_quotas() -> dict[str, Any]:
     """Report daily provider quota limits, requests used, and remaining headroom."""
@@ -184,18 +198,19 @@ def get_quotas() -> dict[str, Any]:
     ebay_limit = settings.ebay_daily_request_limit
     tcg_used = 0
     ebay_used = 0
-    r = _get_redis()
+    r = get_durable_redis()
     if r is not None:
         try:
-            today_str = datetime.now(UTC).strftime("%Y-%m-%d")
-            tcg_val = r.get(f"cardboarddex:tcgapi:daily_count:{today_str}")
+            day_bucket = int(datetime.now(UTC).timestamp() // 86400)
+            tcg_val = r.get(f"cardboarddex:tcgapi:requests:{day_bucket}")
             if tcg_val:
                 tcg_used = int(tcg_val)
-            ebay_val = r.get(f"cardboarddex:ebay:daily_count:{today_str}")
+            ebay_val = r.get(f"cardboarddex:ebay:requests:{day_bucket}")
             if ebay_val:
                 ebay_used = int(ebay_val)
         except Exception as exc:
             logging.warning("Failed reading quota counters from Redis: %s", exc)
+            return JSONResponse({"status": "unavailable"}, status_code=503)
 
     return {
         "tcgapi": {
@@ -210,4 +225,3 @@ def get_quotas() -> dict[str, Any]:
         },
         "timestamp": datetime.now(UTC).isoformat(),
     }
-

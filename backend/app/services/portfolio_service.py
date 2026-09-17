@@ -1,3 +1,4 @@
+from app.common.cache import TTLCache
 import hashlib
 import json
 import logging
@@ -19,7 +20,7 @@ from app.schemas.cards import (
 logger = logging.getLogger(__name__)
 
 _PORTFOLIO_CACHE_TTL = 300  # 5 minutes
-_PORTFOLIO_LOCAL_FALLBACK: dict[str, tuple[float, dict[str, Any]]] = {}
+_PORTFOLIO_LOCAL_FALLBACK = TTLCache(max_entries=64, ttl=300)
 
 
 def _extract_float(val: Any) -> float | None:

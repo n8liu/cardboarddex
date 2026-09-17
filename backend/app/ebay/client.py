@@ -56,7 +56,11 @@ class EbayClient:
             self._redis = redis_client
         elif acquire_request is None and settings.redis_url:
             try:
-                self._redis = Redis.from_url(settings.redis_url, decode_responses=True)
+                self._redis = Redis.from_url(
+                    settings.redis_url, decode_responses=True,
+                    socket_connect_timeout=settings.redis_socket_timeout,
+                    socket_timeout=settings.redis_socket_timeout,
+                )
             except Exception as exc:
                 logger.warning("Could not initialize Redis client for eBay token sharing: %s: %s", type(exc).__name__, exc)
                 self._redis = None

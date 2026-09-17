@@ -1,0 +1,104 @@
+# Always use -p app; DATA_VOLUME must identify the existing database volume.
+name: app
+x-service: &service
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+x-app: &app
+  <<: *service
+  image: ${BACKEND_IMAGE:?Set an immutable backend image digest}
+  platform: linux/amd64
+  env_file: ${APP_ENV_FILE:?Set the absolute production env path}
+  environment: &app-env
+    POSTGRES_HOST: postgres
+    REDIS_URL: redis://redis:6379/0
+    CACHE_REDIS_URL: redis://redis-cache:6379/0
+    DB_POOL_SIZE: "3"
+    DB_MAX_OVERFLOW: "2"
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    redis-cache:
+      condition: service_healthy
+services:
+  postgres:
+    <<: *service
+    image: ${POSTGRES_IMAGE:?Set a reviewed postgres:16-alpine digest}
+    environment:
+      POSTGRES_DB: cardboarddex
+      POSTGRES_USER: cardboarddex
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a unique database password}
+    command: [postgres, -c, shared_buffers=64MB, -c, work_mem=4MB, -c, maintenance_work_mem=16MB, -c, max_connections=25]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U cardboarddex -d cardboarddex"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+  redis:
+    <<: *service
+    image: ${REDIS_IMAGE:?Set a reviewed redis:7-alpine digest}
+    command: [redis-server, --maxmemory, 64mb, --maxmemory-policy, noeviction, --appendonly, "yes", --appendfsync, everysec, --save, ""]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+  redis-cache:
+    <<: *service
+    image: ${REDIS_IMAGE:?Set a reviewed redis:7-alpine digest}
+    command: [redis-server, --maxmemory, 32mb, --maxmemory-policy, allkeys-lru, --save, ""]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+  backend:
+    <<: *app
+    ports: ["127.0.0.1:8000:8000"]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=8)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+  celery-worker:
+    <<: *app
+    environment:
+      <<: *app-env
+      DB_POOL_SIZE: "2"
+      DB_MAX_OVERFLOW: "0"
+    command: [celery, -A, app.celery_app, worker, --loglevel=info, --concurrency=1, "--hostname=worker@%h"]
+    stop_grace_period: 3600s
+    healthcheck:
+      disable: true
+  celery-beat:
+    <<: *app
+    command: [celery, -A, app.celery_app, beat, --loglevel=info, --schedule=/beat/celerybeat-schedule, --pidfile=]
+    volumes:
+      - beat_data:/beat
+    healthcheck:
+      disable: true
+  cloudflared:
+    <<: *service
+    image: ${CLOUDFLARED_IMAGE:?Set a reviewed cloudflared digest}
+    network_mode: host
+    command: [tunnel, --no-autoupdate, run]
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?Set the existing Cloudflare Tunnel token}
+volumes:
+  postgres_data:
+    external: true
+    name: ${DATA_VOLUME:?Explicitly identify the PostgreSQL volume}
+  redis_data:
+    name: ${REDIS_VOLUME:-app_redis_durable}
+  beat_data:
+    name: ${BEAT_VOLUME:-app_beat_data}

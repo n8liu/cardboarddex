@@ -2,6 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -11,6 +12,27 @@ class Settings(BaseSettings):
 
     database_url: str = "sqlite:///./cardboarddex.db"
     redis_url: str = "redis://localhost:6379/0"
+    cache_redis_url: str | None = None
+    redis_socket_timeout: float = Field(default=2.0, gt=0, le=30)
+    db_pool_size: int = Field(default=3, ge=1, le=10)
+    db_max_overflow: int = Field(default=2, ge=0, le=10)
+    postgres_host: str | None = None
+    postgres_user: str = "cardboarddex"
+    postgres_db: str = "cardboarddex"
+    postgres_password: str | None = None
+
+    @property
+    def effective_database_url(self) -> str:
+        if not self.postgres_host:
+            return self.database_url
+        if not self.postgres_password:
+            raise ValueError("POSTGRES_PASSWORD is required when POSTGRES_HOST is set")
+        from sqlalchemy.engine import URL
+        return URL.create(
+            "postgresql+psycopg", username=self.postgres_user,
+            password=self.postgres_password, host=self.postgres_host,
+            port=5432, database=self.postgres_db,
+        ).render_as_string(hide_password=False)
     tcgapi_api_key: str | None = None
     tcgapi_base_url: str = "https://api.tcgapi.dev/v1"
     tcgapi_daily_request_limit: int = 2000

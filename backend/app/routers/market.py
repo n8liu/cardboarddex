@@ -1,3 +1,41 @@
+try:
+    from app.common.cache import TTLCache
+except ImportError:
+    from collections import OrderedDict
+    from threading import RLock
+    from time import monotonic
+
+    class TTLCache:  # type: ignore[no-redef]
+        def __init__(self, max_entries: int = 64, ttl: float = 300):
+            self.max_entries = max_entries
+            self.ttl = ttl
+            self._data: OrderedDict[str, tuple[float, Any]] = OrderedDict()
+            self._lock = RLock()
+
+        def _expire(self) -> None:
+            cutoff = monotonic() - self.ttl
+            while self._data and next(iter(self._data.values()))[0] <= cutoff:
+                self._data.popitem(last=False)
+
+        def get(self, key: str, default: Any = None) -> Any:
+            with self._lock:
+                self._expire()
+                item = self._data.get(key)
+                return item[1] if item else default
+
+        def __getitem__(self, key: str) -> Any:
+            with self._lock:
+                self._expire()
+                return self._data[key][1]
+
+        def __setitem__(self, key: str, value: Any) -> None:
+            with self._lock:
+                self._expire()
+                self._data.pop(key, None)
+                self._data[key] = (monotonic(), value)
+                while len(self._data) > self.max_entries:
+                    self._data.popitem(last=False)
+
 import json
 import logging
 import math
@@ -9,7 +47,7 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Query, Response
 from redis.exceptions import RedisError
-from sqlalchemy import case, func, not_, or_, select
+from sqlalchemy import case, func, not_, or_, select, text
 from sqlalchemy.orm import Session, aliased
 
 from app.common.formatters import (
@@ -147,7 +185,7 @@ def _build_mover_item(
         )
 
 
-_MOVERS_LOCAL_FALLBACK: dict[str, tuple[float, list[dict[str, Any]], list[dict[str, Any]]]] = {}
+_MOVERS_LOCAL_FALLBACK = TTLCache(max_entries=64, ttl=900)
 _MOVERS_CACHE_TTL = 900  # seconds
 
 
@@ -214,6 +252,13 @@ def _compute_db_market_movers(
 
         # 2. Second pass: if either gainers or losers are missing/empty, calculate real deltas from PriceObservation
         if not gainers or not losers:
+            days_back = 3 if period == "24h" else (10 if period == "7d" else 35)
+            since_date = datetime.now(UTC) - timedelta(days=days_back)
+            try:
+                db.execute(text("SET LOCAL statement_timeout = '2500ms'"))
+            except Exception:
+                pass
+
             subq = (
                 select(
                     PriceObservation.card_id,
@@ -224,7 +269,10 @@ def _compute_db_market_movers(
                         order_by=PriceObservation.observed_at.desc(),
                     ).label("rn"),
                 )
-                .where(PriceObservation.price > 0)
+                .where(
+                    PriceObservation.price > 0,
+                    PriceObservation.observed_at >= since_date,
+                )
                 .subquery()
             )
             p1 = aliased(subq, name="p1")
@@ -248,70 +296,71 @@ def _compute_db_market_movers(
             elif game == "pokemon":
                 delta_stmt = delta_stmt.where(or_(Set.series.is_(None), Set.series != "Pokemon Japan"))
 
-            obs_rows = db.execute(delta_stmt.limit(500)).all()
-            obs_gainers: list[dict[str, Any]] = []
-            obs_losers: list[dict[str, Any]] = []
-            for obr in obs_rows:
-                try:
-                    pct = round(float(obr.pct_change), 2)
-                    price = float(obr.latest_price)
-                except (ValueError, TypeError):
-                    continue
-                item = {
-                    "card_id": obr.id,
-                    "name": obr.name,
-                    "set_name": obr.set_name,
-                    "market_price": price,
-                    "price_change": pct,
-                    "last_updated_at": obr.observed_at.isoformat() if obr.observed_at else None,
-                }
-                if pct > 0:
-                    obs_gainers.append(item)
-                elif pct < 0:
-                    obs_losers.append(item)
+            try:
+                obs_rows = db.execute(delta_stmt.limit(500)).all()
+                obs_gainers: list[dict[str, Any]] = []
+                obs_losers: list[dict[str, Any]] = []
+                for obr in obs_rows:
+                    try:
+                        pct = round(float(obr.pct_change), 2)
+                        price = float(obr.latest_price)
+                    except (ValueError, TypeError):
+                        continue
+                    item = {
+                        "card_id": obr.id,
+                        "name": obr.name,
+                        "set_name": obr.set_name,
+                        "market_price": price,
+                        "price_change": pct,
+                        "last_updated_at": obr.observed_at.isoformat() if obr.observed_at else None,
+                    }
+                    if pct > 0:
+                        obs_gainers.append(item)
+                    elif pct < 0:
+                        obs_losers.append(item)
 
-            if not gainers and obs_gainers:
-                gainers = sorted(obs_gainers, key=lambda x: x["price_change"], reverse=True)[:limit]
-            if not losers and obs_losers:
-                losers = sorted(obs_losers, key=lambda x: x["price_change"])[:limit]
+                if not gainers and obs_gainers:
+                    gainers = sorted(obs_gainers, key=lambda x: x["price_change"], reverse=True)[:limit]
+                if not losers and obs_losers:
+                    losers = sorted(obs_losers, key=lambda x: x["price_change"])[:limit]
+            except Exception as exc:
+                logger.warning("Pass 2 delta calculation skipped or timed out: %s", exc)
 
         # 3. Third pass: If still empty (e.g. database only has single static observations),
-        # query available priced cards and ensure neither gainers nor losers is empty
+        # query recent priced cards by indexed lookup and ensure neither gainers nor losers is empty
         if not gainers or not losers:
             if not candidates:
-                subq_single = (
+                stmt_recent = (
                     select(
                         PriceObservation.card_id,
                         PriceObservation.price,
                         PriceObservation.observed_at,
-                        func.row_number().over(
-                            partition_by=PriceObservation.card_id,
-                            order_by=PriceObservation.observed_at.desc(),
-                        ).label("rn"),
+                        Card.name,
+                        Set.name.label("set_name"),
                     )
-                    .where(PriceObservation.price > 0)
-                    .subquery()
-                )
-                card_stmt = (
-                    select(Card.id, Card.name, Set.name.label("set_name"), subq_single.c.price, subq_single.c.observed_at)
+                    .join(Card, PriceObservation.card_id == Card.id)
                     .join(Set, Card.set_id == Set.id)
-                    .join(subq_single, (Card.id == subq_single.c.card_id) & (subq_single.c.rn == 1))
+                    .where(PriceObservation.price > 0)
                 )
                 if game == "pokemon-japan":
-                    card_stmt = card_stmt.where(Set.series == "Pokemon Japan")
+                    stmt_recent = stmt_recent.where(Set.series == "Pokemon Japan")
                 elif game == "pokemon":
-                    card_stmt = card_stmt.where(or_(Set.series.is_(None), Set.series != "Pokemon Japan"))
-                card_rows = db.execute(card_stmt.limit(limit * 2)).all()
-                for cr in card_rows:
-                    if cr.price:
-                        candidates.append({
-                            "card_id": cr.id,
-                            "name": cr.name,
-                            "set_name": cr.set_name,
-                            "market_price": float(cr.price),
-                            "price_change": 0.0,
-                            "last_updated_at": cr.observed_at.isoformat() if cr.observed_at else None,
-                        })
+                    stmt_recent = stmt_recent.where(or_(Set.series.is_(None), Set.series != "Pokemon Japan"))
+
+                try:
+                    recent_rows = db.execute(stmt_recent.order_by(PriceObservation.id.desc()).limit(limit * 2)).all()
+                    for cr in recent_rows:
+                        if cr.price:
+                            candidates.append({
+                                "card_id": cr.card_id,
+                                "name": cr.name,
+                                "set_name": cr.set_name,
+                                "market_price": float(cr.price),
+                                "price_change": 0.0,
+                                "last_updated_at": cr.observed_at.isoformat() if cr.observed_at else None,
+                            })
+                except Exception as exc:
+                    logger.warning("Pass 3 recent lookup skipped or timed out: %s", exc)
 
             if not gainers and candidates:
                 half = max(1, len(candidates) // 2)
