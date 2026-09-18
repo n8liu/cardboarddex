@@ -14,7 +14,31 @@ set -euo pipefail
 [[ "$BACKEND_IMAGE" =~ ^349558247779\.dkr\.ecr\.us-west-2\.amazonaws\.com/cardboarddex-backend@sha256:[a-f0-9]{64}$ ]] || exit 1
 repo=$(cd "$(dirname "$0")/.." && pwd)
 remote="${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}"
-ssh_opts=(-i "$KEY_PATH" -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$KNOWN_HOSTS_FILE")
+
+if ! ssh-keygen -y -f "$KEY_PATH" > /dev/null 2>&1; then
+  echo "ERROR: KEY_PATH ($KEY_PATH) does not contain a valid private key format." >&2
+  exit 1
+fi
+
+ssh_opts=(
+  -i "$KEY_PATH"
+  -o BatchMode=yes
+  -o StrictHostKeyChecking=yes
+  -o "UserKnownHostsFile=$KNOWN_HOSTS_FILE"
+  -o PubkeyAcceptedKeyTypes=+ssh-rsa
+  -o HostKeyAlgorithms=+ssh-rsa
+  -o ConnectTimeout=30
+  -o ServerAliveInterval=15
+)
+
+echo "Testing SSH connectivity to ${remote}..."
+if ! ssh -v -o ConnectTimeout=15 "${ssh_opts[@]}" "$remote" "true"; then
+  echo "ERROR: Failed to establish verified SSH connection to ${remote}." >&2
+  echo "Check that LIGHTSAIL_SSH_KEY and LIGHTSAIL_KNOWN_HOSTS match the active server." >&2
+  exit 1
+fi
+echo "SSH connection verified successfully."
+
 release="/opt/cardboarddex/releases/$RELEASE_ID"
 registry=${BACKEND_IMAGE%%/*}
 aws ecr get-login-password --region "$AWS_REGION" | ssh "${ssh_opts[@]}" "$remote" "docker login --username AWS --password-stdin '$registry'"
