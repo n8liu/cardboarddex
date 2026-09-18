@@ -11,7 +11,8 @@ from botocore.exceptions import ClientError
 ACCOUNT = '349558247779'
 REGION = 'us-west-2'
 BUCKET = f'cardboarddex-backups-{ACCOUNT}-{REGION}'
-INSTANCE = 'cardboarddex-server-v2'
+INSTANCE = 'cardboarddex-ipv6'
+BUNDLE = 'micro_ipv6_3_0'
 USER = 'cardboarddex-backup-upload'
 ROLE = 'github-actions-cardboarddex-backup-read'
 
@@ -19,6 +20,21 @@ ROLE = 'github-actions-cardboarddex-backup-read'
 def only_missing(error, codes):
     if error.response['Error']['Code'] not in codes:
         raise error
+
+
+def provision_instance(lightsail):
+    existing = next((i for i in lightsail.get_instances()['instances'] if i['name'] == INSTANCE), None)
+    if existing:
+        if existing['bundleId'] != BUNDLE or existing['ipAddressType'] != 'ipv6':
+            raise RuntimeError('Existing destination does not match the $5 IPv6-only plan; refusing to replace it')
+        return
+    # A quota rejection must leave the source instance intact.
+    lightsail.create_instances(
+        instanceNames=[INSTANCE], availabilityZone='us-west-2a',
+        blueprintId='ubuntu_24_04', bundleId=BUNDLE, ipAddressType='ipv6',
+        keyPairName='LightsailDefaultKeyPair',
+        tags=[{'key': 'Project', 'value': 'cardboarddex'}, {'key': 'Purpose', 'value': 'production'}],
+    )
 
 
 def main():
@@ -29,7 +45,8 @@ def main():
     session = boto3.Session(region_name=REGION)
     if session.client('sts').get_caller_identity()['Account'] != ACCOUNT:
         raise RuntimeError('Refusing unexpected AWS account')
-    print(json.dumps({'instance': INSTANCE, 'bundle': 'nano_3_0', 'monthly_usd': 5,
+    print(json.dumps({'instance': INSTANCE, 'bundle': BUNDLE, 'monthly_usd': 5,
+                      'ram_gb': 1, 'network': 'ipv6',
                       'backup_bucket': BUCKET, 'region': REGION, 'apply': args.apply}))
     if not args.apply:
         return
@@ -80,15 +97,8 @@ def main():
         'Version':'2012-10-17','Statement':[
         {'Effect':'Allow','Action':'s3:ListBucket','Resource':f'arn:aws:s3:::{BUCKET}'},
         {'Effect':'Allow','Action':'s3:GetObject','Resource':f'arn:aws:s3:::{BUCKET}/*'}]}))
-    instances = lightsail.get_instances()['instances']
-    if not any(i['name'] == INSTANCE for i in instances):
-        lightsail.create_instances(instanceNames=[INSTANCE], availabilityZone='us-west-2a',
-            blueprintId='ubuntu_24_04', bundleId='nano_3_0',
-            tags=[{'key':'Project','value':'cardboarddex'}, {'key':'Purpose','value':'production'}])
-    addresses = lightsail.get_static_ips()['staticIps']
-    if not any(a['name'] == 'cardboarddex-production' for a in addresses):
-        lightsail.allocate_static_ip(staticIpName='cardboarddex-production')
-    (state / 'resources.json').write_text(json.dumps({'instance': INSTANCE, 'bucket': BUCKET, 'static_ip_name':'cardboarddex-production'}))
+    provision_instance(lightsail)
+    (state / 'resources.json').write_text(json.dumps({'instance': INSTANCE, 'bucket': BUCKET, 'bundle': BUNDLE, 'network': 'ipv6'}))
     print('Provisioned replacement, backup bucket and identities. No old resources were changed.')
 
 

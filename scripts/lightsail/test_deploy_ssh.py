@@ -13,7 +13,7 @@ AUTHENTICATED = 'Authenticated to 192.0.2.1 ([192.0.2.1]:22) using "publickey".\
 STALLED = AUTHENTICATED + 'Timeout, server 192.0.2.1 not responding.\n'
 
 
-def run_preflight(tmp_path, outcomes):
+def run_preflight(tmp_path, outcomes, **overrides):
     bin_dir = tmp_path / 'bin'
     bin_dir.mkdir()
     events = tmp_path / 'events.jsonl'
@@ -59,11 +59,12 @@ if command == 'ssh':
         'BACKEND_IMAGE': '349558247779.dkr.ecr.us-west-2.amazonaws.com/cardboarddex-backend@sha256:' + 'a' * 64,
         'RELEASE_ID': 'b' * 40,
         'TMPDIR': str(tmp_path),
+        **overrides,
     }
     result = subprocess.run(
         ['bash', str(DEPLOY)], env=env, capture_output=True, text=True, timeout=15,
     )
-    calls = [json.loads(line) for line in events.read_text().splitlines()]
+    calls = [json.loads(line) for line in events.read_text().splitlines()] if events.exists() else []
     probes = [call for call in calls if call[0] == 'ssh' and call[-1] == 'true']
     for probe in probes:
         assert 'StrictHostKeyChecking=yes' in probe
@@ -118,3 +119,38 @@ def test_remote_command_failure_is_not_retried_as_a_connection_stall(tmp_path):
     assert len(probes) == 1
     assert 'remote session probe failed (exit 1)' in result.stderr
     assert not any(call[0] in ('aws', 'sleep') for call in calls)
+
+
+def test_ipv6_destination_and_dualstack_registry_reach_deployment(tmp_path):
+    result, calls, probes = run_preflight(
+        tmp_path, [(0, AUTHENTICATED)], LIGHTSAIL_HOST='2001:db8::1',
+        BACKEND_IMAGE='349558247779.dkr-ecr.us-west-2.on.aws/cardboarddex-backend@sha256:' + 'a' * 64,
+    )
+    assert result.returncode == 42
+    assert probes[0][-2] == 'ubuntu@2001:db8::1'
+    assert any('docker login' in call[-1] and 'dkr-ecr.us-west-2.on.aws' in call[-1] for call in calls)
+
+
+@pytest.mark.parametrize('host', ['-oProxyCommand=bad', '2001:db8::invalid', 'fe80::1%en0', '[2001:db8::1]', 'host;command'])
+def test_invalid_destination_fails_before_ssh(tmp_path, host):
+    result, calls, probes = run_preflight(tmp_path, [], LIGHTSAIL_HOST=host)
+    assert result.returncode != 0
+    assert not calls and not probes
+
+
+def test_unapproved_registry_fails_before_ssh(tmp_path):
+    result, calls, probes = run_preflight(
+        tmp_path, [],
+        BACKEND_IMAGE='349558247779.dkr-ecr.us-west-2.on.aws.attacker.invalid/cardboarddex-backend@sha256:' + 'a' * 64,
+    )
+    assert result.returncode != 0
+    assert not calls and not probes
+
+
+def test_ssm_transport_preserves_host_verification_and_reuses_session(tmp_path):
+    target = 'mi-' + 'a' * 17
+    result, calls, probes = run_preflight(tmp_path, [(0, AUTHENTICATED)], LIGHTSAIL_SSM_TARGET=target)
+    assert result.returncode == 42
+    assert f'ProxyCommand=aws ssm start-session --target {target} --document-name AWS-StartSSHSession --parameters portNumber=%p --region us-west-2' in probes[0]
+    assert 'ControlMaster=auto' in probes[0]
+    assert any('-O' in call and 'exit' in call for call in calls)

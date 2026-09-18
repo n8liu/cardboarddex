@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     tcgapi_sync_set_limit: int = 250
     ebay_client_id: str | None = None
     ebay_client_secret: str | None = None
+    ebay_relay_url: str | None = None
+    ebay_relay_key: str | None = None
     ebay_marketplace_id: str = "EBAY_US"
     ebay_daily_request_limit: int = 500
     price_collection_card_limit: int = 5

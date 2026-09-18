@@ -3,6 +3,7 @@ import pytest
 import respx
 
 from app.ebay.client import EbayClient, EbayConfigurationError
+from app.config import Settings
 
 
 @pytest.fixture
@@ -113,3 +114,39 @@ def test_redis_token_sharing_reuses_redis_cached_token() -> None:
     # Token should be loaded directly from Redis without making any HTTP call
     token = client.get_access_token()
     assert token == "redis_cached_token_999"
+
+
+@respx.mock
+def test_ipv6_relay_authenticates_both_requests(monkeypatch):
+    monkeypatch.setattr("app.ebay.client.get_settings", lambda: Settings(
+        ebay_relay_url="https://relay.example", ebay_relay_key="private-relay-key"))
+    client = EbayClient(client_id="id", client_secret="secret", acquire_request=lambda: None)
+    auth = respx.post("https://relay.example/identity/v1/oauth2/token").respond(
+        200, json={"access_token": "token", "expires_in": 7200})
+    search = respx.get("https://relay.example/buy/browse/v1/item_summary/search").respond(
+        200, json={"itemSummaries": [{"itemId": "1"}]})
+    assert client.search_item_summaries("Pikachu") == [{"itemId": "1"}]
+    for route in (auth, search):
+        assert route.calls[0].request.headers["X-CardboardDex-Proxy-Key"] == "private-relay-key"
+
+
+@respx.mock
+def test_explicit_endpoint_override_never_receives_relay_secret(monkeypatch):
+    monkeypatch.setattr("app.ebay.client.get_settings", lambda: Settings(
+        ebay_relay_url="https://relay.example", ebay_relay_key="private-relay-key"))
+    client = EbayClient(client_id="id", client_secret="secret", base_url="https://api.ebay.com",
+                        acquire_request=lambda: None)
+    auth = respx.post("https://api.ebay.com/identity/v1/oauth2/token").respond(
+        200, json={"access_token": "token", "expires_in": 7200})
+    search = respx.get("https://api.ebay.com/buy/browse/v1/item_summary/search").respond(200, json={})
+    client.search_item_summaries("Pikachu")
+    for route in (auth, search):
+        assert "X-CardboardDex-Proxy-Key" not in route.calls[0].request.headers
+
+
+@pytest.mark.parametrize("relay", ["http://relay.example", "https://user@relay.example", "https://relay.example/path"])
+def test_invalid_relay_configuration_fails_closed(monkeypatch, relay):
+    monkeypatch.setattr("app.ebay.client.get_settings", lambda: Settings(
+        ebay_relay_url=relay, ebay_relay_key="key"))
+    with pytest.raises(EbayConfigurationError, match="HTTPS origin"):
+        EbayClient(acquire_request=lambda: None)

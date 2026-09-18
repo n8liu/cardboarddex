@@ -7,6 +7,7 @@ on:
       - "backend/**"
       - "scripts/**"
       - "deploy/lightsail/**"
+      - "deploy/ebay-relay/**"
       - "docker-compose.prod.yml"
       - ".github/workflows/backend-ci-cd.yml"
   pull_request:
@@ -15,6 +16,7 @@ on:
       - "backend/**"
       - "scripts/**"
       - "deploy/lightsail/**"
+      - "deploy/ebay-relay/**"
       - "docker-compose.prod.yml"
       - ".github/workflows/backend-ci-cd.yml"
   workflow_dispatch:
@@ -67,6 +69,10 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install pytest boto3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test deploy/ebay-relay/worker.test.mjs
       - run: bash scripts/lightsail/validate.sh
       - run: RUN_CONTAINER_TESTS=1 pytest scripts/lightsail/test_*.py -q
 
@@ -129,6 +135,7 @@ jobs:
         env:
           LIGHTSAIL_SSH_KEY: ${{ secrets.LIGHTSAIL_SSH_KEY }}
           LIGHTSAIL_HOST: ${{ vars.LIGHTSAIL_HOST }}
+          LIGHTSAIL_SSM_TARGET: ${{ vars.LIGHTSAIL_SSM_TARGET }}
           LIGHTSAIL_KNOWN_HOSTS: ${{ secrets.LIGHTSAIL_KNOWN_HOSTS }}
           BACKEND_IMAGE: ${{ needs.build-and-push.outputs.ecr_registry }}/cardboarddex-backend@${{ needs.build-and-push.outputs.image_digest }}
           RELEASE_ID: ${{ github.sha }}
@@ -141,6 +148,11 @@ jobs:
           printf '%s\n' "$LIGHTSAIL_KNOWN_HOSTS" > "$RUNNER_TEMP/ssh/known_hosts"
           chmod 600 "$RUNNER_TEMP/ssh/key"
           trap 'rm -f "$RUNNER_TEMP/ssh/key"' EXIT
+          if [[ -n "$LIGHTSAIL_SSM_TARGET" ]]; then
+            curl --fail --retry 3 -o "$RUNNER_TEMP/session-manager-plugin.deb" https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb
+            sudo dpkg -i "$RUNNER_TEMP/session-manager-plugin.deb"
+            export BACKEND_IMAGE="${BACKEND_IMAGE/349558247779.dkr.ecr.us-west-2.amazonaws.com/349558247779.dkr-ecr.us-west-2.on.aws}"
+          fi
           export KEY_PATH="$RUNNER_TEMP/ssh/key"
           export KNOWN_HOSTS_FILE="$RUNNER_TEMP/ssh/known_hosts"
           bash scripts/deploy_to_lightsail.sh

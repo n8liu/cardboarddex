@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 
 import boto3
+from botocore.config import Config
 
 log = logging.getLogger(__name__)
 
@@ -69,7 +70,8 @@ def backup(config='/etc/cardboarddex/backup.env', release='/opt/cardboarddex/cur
         run(['docker', 'cp', f'{redis_id}:/tmp/backup.rdb', str(stage / 'redis.rdb')])
         revision = run(compose + ['exec', '-T', 'postgres', 'psql', '-U', 'cardboarddex', '-d', 'cardboarddex',
                                   '-Atc', 'SELECT version_num FROM alembic_version'], capture_output=True, text=True).stdout.strip()
-        s3 = boto3.client('s3', region_name=values.get('AWS_DEFAULT_REGION', 'us-west-2'))
+        s3 = boto3.client('s3', region_name=values.get('AWS_DEFAULT_REGION', 'us-west-2'),
+                          config=Config(s3={'use_dualstack_endpoint': True}))
         prefixes = ['six-hourly']
         if started.weekday() == 6 and started.hour < 6:
             prefixes.append('weekly')

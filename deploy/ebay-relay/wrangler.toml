@@ -1,0 +1,6 @@
+name = "cardboarddex-ebay-relay"
+main = "worker.mjs"
+compatibility_date = "2026-09-18"
+workers_dev = true
+
+# Set RELAY_KEY with `wrangler secret put RELAY_KEY`; never commit the value.

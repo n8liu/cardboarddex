@@ -3,6 +3,7 @@ import logging
 import time
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -43,8 +44,22 @@ class EbayClient:
         self.client_id = (client_id if client_id is not None else settings.ebay_client_id or "").strip()
         self.client_secret = (client_secret if client_secret is not None else settings.ebay_client_secret or "").strip()
         self.marketplace_id = marketplace_id or settings.ebay_marketplace_id
-        self.base_url = (base_url or DEFAULT_BASE_URL).rstrip("/")
-        self.auth_url = auth_url or DEFAULT_AUTH_URL
+        self._relay_headers: dict[str, str] = {}
+        relay = settings.ebay_relay_url
+        # Explicit endpoint overrides opt out of the relay as a pair, ensuring
+        # its shared secret can never be sent to an overridden origin.
+        if relay and base_url is None and auth_url is None:
+            parsed = urlsplit(relay)
+            if (parsed.scheme != "https" or not parsed.hostname or parsed.username
+                    or parsed.password or parsed.path not in ("", "/")
+                    or parsed.query or parsed.fragment or not settings.ebay_relay_key):
+                raise EbayConfigurationError("eBay relay requires an HTTPS origin and EBAY_RELAY_KEY")
+            self.base_url = relay.rstrip("/")
+            self.auth_url = self.base_url + "/identity/v1/oauth2/token"
+            self._relay_headers = {"X-CardboardDex-Proxy-Key": settings.ebay_relay_key}
+        else:
+            self.base_url = (base_url or DEFAULT_BASE_URL).rstrip("/")
+            self.auth_url = auth_url or DEFAULT_AUTH_URL
         self.timeout = timeout
         self.sleep = sleep
         self.time_func = time_func
@@ -103,6 +118,7 @@ class EbayClient:
                 )
 
         headers = {
+            **self._relay_headers,
             "Content-Type": "application/x-www-form-urlencoded",
             "Authorization": f"Basic {self._get_auth_header()}",
         }
@@ -187,6 +203,7 @@ class EbayClient:
         path = "/buy/browse/v1/item_summary/search"
         url = f"{self.base_url}{path}"
         headers = {
+            **self._relay_headers,
             "Authorization": f"Bearer {token}",
             "X-EBAY-C-MARKETPLACE-ID": self.marketplace_id,
             "Accept": "application/json",

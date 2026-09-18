@@ -12,6 +12,8 @@ export POSTGRES_IMAGE=example.invalid/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaa
 export REDIS_IMAGE=example.invalid/redis@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 export CLOUDFLARED_IMAGE=example.invalid/cloudflared@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 docker compose --env-file "$stage/app.env" -f docker-compose.prod.yml config --quiet
+# Both existing IPv4 deployments and the opt-in IPv6 configuration must parse.
+DOCKER_ENABLE_IPV6=true TUNNEL_EDGE_IP_VERSION=6 docker compose --env-file "$stage/app.env" -f docker-compose.prod.yml config --quiet
 # A missing production password must fail before any service is started.
 if POSTGRES_PASSWORD='' docker compose --env-file "$stage/app.env" -f docker-compose.prod.yml config --quiet 2> "$stage/error"; then
   echo 'Compose accepted a missing database password' >&2

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Deploy a previously built AMD64 release. Does not build, push latest, or migrate schemas.
 set -euo pipefail
-: "${LIGHTSAIL_HOST:?Configure the attached static IP}"
+: "${LIGHTSAIL_HOST:?Configure the verified deployment hostname or IP}"
 : "${KEY_PATH:?Set the deployment SSH key path}"
 : "${KNOWN_HOSTS_FILE:?Set a file containing the independently verified SSH host key}"
 : "${BACKEND_IMAGE:?Set the CI-built image@sha256:digest}"
@@ -10,8 +10,24 @@ set -euo pipefail
 : "${AWS_REGION:=us-west-2}"
 [[ "$RELEASE_ID" =~ ^[a-f0-9]{40}$ ]] || { echo 'RELEASE_ID must be a commit SHA' >&2; exit 1; }
 [[ "$BACKEND_IMAGE" =~ @sha256:[a-f0-9]{64}$ ]] || exit 1
-[[ "$LIGHTSAIL_HOST" =~ ^[a-zA-Z0-9.-]+$ && "$LIGHTSAIL_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || exit 1
-[[ "$BACKEND_IMAGE" =~ ^349558247779\.dkr\.ecr\.us-west-2\.amazonaws\.com/cardboarddex-backend@sha256:[a-f0-9]{64}$ ]] || exit 1
+[[ "$LIGHTSAIL_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || exit 1
+# Accept bare IPv6 literals as well as IPv4 addresses and DNS hostnames.
+# Validate before passing the destination to SSH; never accept SSH options here.
+python3 - "$LIGHTSAIL_HOST" <<'PY'
+import ipaddress
+import re
+import sys
+
+host = sys.argv[1]
+try:
+    ipaddress.ip_address(host)
+except ValueError:
+    if not re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?', host):
+        raise SystemExit('LIGHTSAIL_HOST must be an IP address or DNS hostname')
+if '%' in host:
+    raise SystemExit('Scoped IPv6 addresses are not supported for deployment')
+PY
+[[ "$BACKEND_IMAGE" =~ ^349558247779\.(dkr\.ecr\.us-west-2\.amazonaws\.com|dkr-ecr\.us-west-2\.on\.aws)/cardboarddex-backend@sha256:[a-f0-9]{64}$ ]] || exit 1
 repo=$(cd "$(dirname "$0")/.." && pwd)
 remote="${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}"
 
@@ -32,8 +48,31 @@ ssh_opts=(
   -o ServerAliveCountMax=3
 )
 
+if [[ -n "${LIGHTSAIL_SSM_TARGET:-}" ]]; then
+  [[ "$LIGHTSAIL_SSM_TARGET" =~ ^mi-[a-f0-9]{17}$ ]] || { echo 'Invalid SSM managed node ID' >&2; exit 1; }
+  [[ "$AWS_REGION" == us-west-2 ]] || exit 1
+fi
 ssh_log=$(mktemp)
-trap 'rm -f "$ssh_log"' EXIT
+# macOS limits Unix socket paths to 104 bytes; TMPDIR can already be longer.
+control_dir=$(mktemp -d /tmp/cardboarddex-ssh.XXXXXXXX)
+cleanup() {
+  if [[ -n "${LIGHTSAIL_SSM_TARGET:-}" ]]; then
+    ssh "${ssh_opts[@]}" -O exit "$remote" >/dev/null 2>&1 || true
+  fi
+  rm -f "$ssh_log"
+  rm -rf "$control_dir"
+}
+trap cleanup EXIT
+if [[ -n "${LIGHTSAIL_SSM_TARGET:-}" ]]; then
+  # One authenticated SSM session carries every SSH command in this deploy.
+  # Strict host-key checking and SSH public-key authentication still apply.
+  ssh_opts+=(
+    -o "ProxyCommand=aws ssm start-session --target $LIGHTSAIL_SSM_TARGET --document-name AWS-StartSSHSession --parameters portNumber=%p --region $AWS_REGION"
+    -o ControlMaster=auto
+    -o ControlPersist=60
+    -o "ControlPath=$control_dir/connection"
+  )
+fi
 for attempt in 1 2 3; do
   echo "Testing SSH session to ${remote} (attempt $attempt/3)..."
   # Bound the entire probe, including session setup after authentication.
@@ -75,7 +114,6 @@ PY
   exit 1
 done
 rm -f "$ssh_log"
-trap - EXIT
 echo "SSH connection verified successfully."
 
 release="/opt/cardboarddex/releases/$RELEASE_ID"
