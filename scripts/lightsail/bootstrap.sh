@@ -24,3 +24,21 @@ fi
 printf 'vm.swappiness=10\n' > /etc/sysctl.d/90-cardboarddex.conf
 sysctl --system > /dev/null
 systemctl enable --now docker
+
+cat << 'EOF' > /etc/systemd/system/cardboarddex-firewall.service
+[Unit]
+Description=Reject outbound IPv4 TCP forwarding with RST on IPv6-only host
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'iptables -C FORWARD -p tcp ! -d 172.16.0.0/12 -j REJECT --reject-with tcp-reset 2>/dev/null || iptables -I FORWARD 1 -p tcp ! -d 172.16.0.0/12 -j REJECT --reject-with tcp-reset'
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable --now cardboarddex-firewall.service
+
