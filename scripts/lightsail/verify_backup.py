@@ -40,10 +40,21 @@ def verify(bucket, restore=False, postgres_image='postgres:16-alpine'):
                             '-e', 'POSTGRES_HOST_AUTH_METHOD=trust', '-e', 'POSTGRES_USER=cardboarddex',
                             '-e', 'POSTGRES_DB=cardboarddex', postgres_image], check=True, stdout=subprocess.DEVNULL)
             import time
-            for attempt in range(30):
-                if subprocess.run(['docker', 'exec', name, 'pg_isready', '-U', 'cardboarddex'], stdout=subprocess.DEVNULL).returncode == 0:
-                    break
-                time.sleep(1)
+            for attempt in range(60):
+                logs = subprocess.run(['docker', 'logs', name], capture_output=True, text=True).stdout
+                init_done = (
+                    'PostgreSQL init process complete; ready for start up.' in logs
+                    or 'PostgreSQL Database directory appears to contain a database' in logs
+                    or logs.count('database system is ready to accept connections') >= 2
+                )
+                if init_done:
+                    if subprocess.run(['docker', 'exec', name, 'pg_isready', '-U', 'cardboarddex', '-d', 'cardboarddex'],
+                                      capture_output=True).returncode == 0:
+                        probe = subprocess.run(['docker', 'exec', name, 'psql', '-U', 'cardboarddex', '-d', 'cardboarddex',
+                                                '-At', '-c', 'SELECT 1'], capture_output=True, text=True)
+                        if probe.returncode == 0 and probe.stdout.strip() == '1':
+                            break
+                time.sleep(0.5)
             else:
                 raise RuntimeError('Disposable PostgreSQL failed to start')
             import os

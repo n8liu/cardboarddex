@@ -26,6 +26,7 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::349558247779:role/github-actions-cardboarddex-backup-read
           aws-region: us-west-2
+          audience: sts.amazonaws.com
       - run: pip install boto3
       - name: Check age and weekly restore
         env:
