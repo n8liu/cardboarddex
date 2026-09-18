@@ -29,14 +29,53 @@ ssh_opts=(
   -o HostKeyAlgorithms=+ssh-rsa
   -o ConnectTimeout=30
   -o ServerAliveInterval=15
+  -o ServerAliveCountMax=3
 )
 
-echo "Testing SSH connectivity to ${remote}..."
-if ! ssh -v -o ConnectTimeout=15 "${ssh_opts[@]}" "$remote" "true"; then
-  echo "ERROR: Failed to establish verified SSH connection to ${remote}." >&2
-  echo "Check that LIGHTSAIL_SSH_KEY and LIGHTSAIL_KNOWN_HOSTS match the active server." >&2
+ssh_log=$(mktemp)
+trap 'rm -f "$ssh_log"' EXIT
+for attempt in 1 2 3; do
+  echo "Testing SSH session to ${remote} (attempt $attempt/3)..."
+  # Bound the entire probe, including session setup after authentication.
+  # ConnectTimeout alone only bounds connection establishment and handshake.
+  if LC_ALL=C python3 - "${ssh_opts[@]}" "$remote" true 2> "$ssh_log" <<'PY'
+import subprocess
+import sys
+
+try:
+    result = subprocess.run(
+        ['ssh', '-v', *sys.argv[1:]], stdin=subprocess.DEVNULL, timeout=75,
+    )
+except subprocess.TimeoutExpired as exc:
+    print(f'SSH session probe timed out after {exc.timeout} seconds', file=sys.stderr)
+    raise SystemExit(124)
+raise SystemExit(result.returncode)
+PY
+  then
+    break
+  else
+    ssh_status=$?
+  fi
+  cat "$ssh_log" >&2
+  if grep -q '^Authenticated to ' "$ssh_log"; then
+    echo "ERROR: SSH authentication succeeded, but the remote session probe failed (exit $ssh_status)." >&2
+    echo 'Inspect server memory/swap, disk usage, and SSH/PAM logs; a network interruption is also possible.' >&2
+    if (( attempt < 3 )) && [[ "$ssh_status" == 255 || "$ssh_status" == 124 ]]; then
+      echo 'Retrying the read-only SSH probe in 5 seconds...' >&2
+      sleep 5
+      continue
+    fi
+  elif grep -Eq 'REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed' "$ssh_log"; then
+    echo 'ERROR: SSH host verification failed. Check LIGHTSAIL_KNOWN_HOSTS against the independently verified server host key.' >&2
+  elif grep -Eq 'Permission denied|Load key .*:' "$ssh_log"; then
+    echo 'ERROR: SSH authentication failed. Check LIGHTSAIL_SSH_KEY and the deployment user authorized_keys.' >&2
+  else
+    echo 'ERROR: SSH did not complete authentication. Check the server address, port 22 reachability, and SSH logs above.' >&2
+  fi
   exit 1
-fi
+done
+rm -f "$ssh_log"
+trap - EXIT
 echo "SSH connection verified successfully."
 
 release="/opt/cardboarddex/releases/$RELEASE_ID"
