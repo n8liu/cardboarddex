@@ -164,4 +164,11 @@ jobs:
         working-directory: backend
         env:
           RUN_LIVE_DEPLOYMENT_TESTS: "1"
-        run: pytest -m live tests/test_deployment_endpoints.py -v
+        run: |
+          for i in {1..8}; do
+            if curl -fsS --max-time 10 https://api.cardboarddex.app/health > /dev/null 2>&1; then
+              break
+            fi
+            sleep 5
+          done
+          pytest -m live tests/test_deployment_endpoints.py -v

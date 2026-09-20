@@ -51,5 +51,6 @@ if [[ -n "$old" && "$old" != "$release" ]]; then
   ln -sfn "$old" /opt/cardboarddex/previous
 fi
 ln -sfn "$release" /opt/cardboarddex/current
+systemctl enable --now cardboarddex-backup.timer 2>/dev/null || true
 trap - EXIT
 echo 'Verified deployment completed'

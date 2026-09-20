@@ -94,10 +94,10 @@ services:
     command: [tunnel, --no-autoupdate, run]
     environment:
       TUNNEL_TOKEN: ${TUNNEL_TOKEN:?Set the existing Cloudflare Tunnel token}
-      TUNNEL_EDGE_IP_VERSION: ${TUNNEL_EDGE_IP_VERSION:-auto}
+      TUNNEL_EDGE_IP_VERSION: ${TUNNEL_EDGE_IP_VERSION:-6}
 networks:
   default:
-    enable_ipv6: ${DOCKER_ENABLE_IPV6:-false}
+    enable_ipv6: ${DOCKER_ENABLE_IPV6:-true}
 volumes:
   postgres_data:
     external: true
