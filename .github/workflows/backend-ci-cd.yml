@@ -152,6 +152,16 @@ jobs:
             curl --fail --retry 3 -o "$RUNNER_TEMP/session-manager-plugin.deb" https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb
             sudo dpkg -i "$RUNNER_TEMP/session-manager-plugin.deb"
             export BACKEND_IMAGE="${BACKEND_IMAGE/349558247779.dkr.ecr.us-west-2.amazonaws.com/349558247779.dkr-ecr.us-west-2.on.aws}"
+            echo "Checking SSM managed node $LIGHTSAIL_SSM_TARGET connectivity..."
+            for i in {1..30}; do
+              status=$(aws ssm describe-instance-information --filters "Key=InstanceIds,Values=$LIGHTSAIL_SSM_TARGET" --query "InstanceInformationList[0].PingStatus" --output text --region "$AWS_REGION" 2>/dev/null || true)
+              if [[ "$status" == "Online" ]]; then
+                echo "SSM target $LIGHTSAIL_SSM_TARGET is Online."
+                break
+              fi
+              echo "SSM target status is '$status'; waiting for Online (attempt $i/30)..."
+              sleep 5
+            done
           fi
           export KEY_PATH="$RUNNER_TEMP/ssh/key"
           export KNOWN_HOSTS_FILE="$RUNNER_TEMP/ssh/known_hosts"
