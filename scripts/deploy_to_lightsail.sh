@@ -43,7 +43,7 @@ ssh_opts=(
   -o "UserKnownHostsFile=$KNOWN_HOSTS_FILE"
   -o PubkeyAcceptedKeyTypes=+ssh-rsa
   -o HostKeyAlgorithms=+ssh-rsa
-  -o ConnectTimeout=30
+  -o ConnectTimeout=75
   -o ServerAliveInterval=15
   -o ServerAliveCountMax=3
 )

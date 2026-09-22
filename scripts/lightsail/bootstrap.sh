@@ -39,6 +39,21 @@ ExecStart=/bin/sh -c 'iptables -C FORWARD -p tcp ! -d 172.16.0.0/12 -j REJECT --
 [Install]
 WantedBy=multi-user.target
 EOF
-systemctl daemon-reload
 systemctl enable --now cardboarddex-firewall.service
+
+cat << 'EOF' > /etc/systemd/system/cardboarddex-ipv6-tuning.service
+[Unit]
+Description=Tune IPv6 MTU and accept_ra on Lightsail interface
+After=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'ip link set dev ens5 mtu 1500 2>/dev/null || true; sysctl -w net.ipv6.conf.all.accept_ra=2 net.ipv6.conf.default.accept_ra=2 net.ipv6.conf.ens5.accept_ra=2 2>/dev/null || true'
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable --now cardboarddex-ipv6-tuning.service
 
