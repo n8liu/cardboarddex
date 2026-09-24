@@ -2,6 +2,8 @@ These scripts operate on production only when explicitly invoked with production
 
 - `provision.py`: preview AWS resources; `--apply` provisions the $5/month IPv6-only 1 GB replacement and private backup bucket. It does not cut over production or delete the source. Secrets are written under ignored `.system_generated/lightsail/`, mode 0600, never printed. See `docs/lightsail-migration.md` for unresolved migration prerequisites.
 - `bootstrap.sh`: root-only setup on a clean Ubuntu 24.04 AMD64 instance.
+- `wait_for_ssm.sh`: fail deployment before SSH if the managed node stays offline; AWS API errors remain visible.
+- `install_zram.sh` / `zram.sh`: install persistent compressed swap on the 512 MB host without replacing its disk swap.
 - `release.sh`: server-side deployment, used by `../deploy_to_lightsail.sh`; never migrates schemas.
 - `backup.py`: root systemd backup, `/etc/cardboarddex/backup.env` and `/etc/cardboarddex/app.env`.
 - `restore.sh`: refuses existing tables; `RESTORE_CONTAINER` must explicitly name an empty destination.

@@ -104,6 +104,8 @@ PY
       sleep 5
       continue
     fi
+  elif grep -q 'TargetNotConnected' "$ssh_log"; then
+    echo 'ERROR: SSM cannot open a session to the deployment host. Restore the host SSM connection before retrying; the SSH key has not been checked yet.' >&2
   elif grep -Eq 'REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed' "$ssh_log"; then
     echo 'ERROR: SSH host verification failed. Check LIGHTSAIL_KNOWN_HOSTS against the independently verified server host key.' >&2
   elif grep -Eq 'Permission denied|Load key .*:' "$ssh_log"; then

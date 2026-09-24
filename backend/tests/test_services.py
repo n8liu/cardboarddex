@@ -1,7 +1,7 @@
-from datetime import date, datetime, UTC
+from datetime import date, datetime, timedelta, UTC
 from decimal import Decimal
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event, inspect
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -211,3 +211,94 @@ def test_calculate_sealed_signals_scoring(memory_db):
     assert item.supply_score == 30
     assert item.signal_score >= 60
     assert item.signal_label in ("STRONG BUY", "BUY")
+
+
+def _history_observation(index, card_id, observed_at, price, **kwargs):
+    return PriceObservation(
+        fingerprint=f'history-{index}', card_id=card_id, provider='tcgapi',
+        provider_card_id=card_id, variant_id='default', observed_at=observed_at,
+        price=Decimal(str(price)), payload={'unused_history': 'x' * 1000}, **kwargs,
+    )
+
+
+def test_sealed_reads_only_latest_payload_even_with_out_of_order_history(memory_db, monkeypatch):
+    from app.services import sealed_service as service
+    monkeypatch.setattr(service, 'get_redis', lambda: None)
+    service._SEALED_SIGNALS_LOCAL_FALLBACK.clear()
+    now = datetime.now(UTC)
+    memory_db.add(Set(id='sealed', name='Sealed'))
+    memory_db.add(Card(id='box', name='Booster Box', set_id='sealed', number='1'))
+    memory_db.flush()
+    memory_db.add(_history_observation('new', 'box', now, 750))
+    memory_db.add_all([
+        _history_observation(i, 'box', now - timedelta(days=i + 1), 100)
+        for i in range(200)
+    ])
+    memory_db.commit()
+    memory_db.expunge_all()
+    loaded = []
+    event.listen(memory_db, 'loaded_as_persistent', lambda session, obj: loaded.append(obj) if isinstance(obj, PriceObservation) else None)
+    response = service.calculate_sealed_signals(memory_db)
+    assert response.items[0].market_price == 750
+    assert len(loaded) == 1
+
+
+def test_grading_bounds_history_and_preserves_latest_comps(memory_db, monkeypatch):
+    from app.services import grading_service as service
+    monkeypatch.setattr(service, 'get_redis', lambda: None)
+    service._GRADING_PROFIT_LOCAL_FALLBACK.clear()
+    now = datetime.now(UTC)
+    memory_db.add(Set(id='graded', name='Graded'))
+    memory_db.add(Card(id='card', name='Charizard', set_id='graded', number='1', rarity='Rare'))
+    memory_db.flush()
+    for i in range(100):
+        for label, company, grade, price in [('raw', None, None, 100), ('nine', 'PSA', 9, 250), ('ten', 'psa', 10, 1000)]:
+            memory_db.add(_history_observation(
+                f'{label}-{i}', 'card', now - timedelta(days=i + 1), price - i,
+                grading_company=company, grade=grade,
+            ))
+    # Equal timestamps choose the higher observation ID; mixed-case PSA still matches.
+    memory_db.add(_history_observation('tie', 'card', now - timedelta(days=1), 1100, grading_company='PSA', grade=10))
+    memory_db.add(_history_observation('other', 'card', now, 800, grading_company='BGS', grade=10))
+    memory_db.commit()
+    memory_db.expunge_all()
+    loaded = []
+    event.listen(memory_db, 'loaded_as_persistent', lambda session, obj: loaded.append(obj) if isinstance(obj, PriceObservation) else None)
+    item = service.calculate_grading_profit(memory_db).items[0]
+    assert (item.raw_price, item.psa9_price, item.psa10_price) == (100, 250, 1100)
+    assert item.last_updated_at.replace(tzinfo=UTC) == now
+    assert len(loaded) == 4
+    assert all('payload' in inspect(obs).unloaded for obs in loaded)
+
+
+def test_dashboard_aggregation_preserves_counts_without_loading_history(memory_db, monkeypatch):
+    from types import SimpleNamespace
+    from app.services import catalog_service, trending_service
+    for service in (catalog_service, trending_service):
+        monkeypatch.setattr(service, 'get_redis', lambda: None)
+    catalog_service._pokemon_volume_cache.clear()
+    memory_db.add(Set(id='pokemon', name='Pokemon'))
+    for cid in ('priced', 'unpriced'):
+        memory_db.add(Card(id=cid, name='Pikachu', set_id='pokemon', number=cid, rarity='Rare'))
+    memory_db.flush()
+    for i, price in enumerate([10, 20, 90] * 100):
+        memory_db.add(_history_observation(i, 'priced', datetime(2020, 1, 1, tzinfo=UTC), price))
+    memory_db.commit()
+    execute = memory_db.execute
+    row_counts = []
+
+    def count_rows(*args, **kwargs):
+        rows = execute(*args, **kwargs).all()
+        row_counts.append(len(rows))
+        return SimpleNamespace(all=lambda: rows)
+
+    monkeypatch.setattr(memory_db, 'execute', count_rows)
+    volume = catalog_service.calculate_top_pokemon_volume(memory_db, timeframe='7d', q='Pikachu')
+    item = next(item for item in volume.items if item.pokemon_name == 'Pikachu')
+    assert item.cards_count == 2
+    assert item.avg_card_price == 40
+    assert item.top_card_price == 90
+    trending = trending_service.calculate_trending_pokemon(memory_db, q='Pikachu')
+    assert trending[0].cards_count == 2
+    assert trending[0].top_card_price == 90
+    assert max(row_counts) <= 2  # Bound by catalog size, independent of history length.

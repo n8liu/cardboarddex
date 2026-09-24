@@ -23,6 +23,7 @@ if ! swapon --show=NAME --noheadings | grep -q .; then
 fi
 printf 'vm.swappiness=10\n' > /etc/sysctl.d/90-cardboarddex.conf
 sysctl --system > /dev/null
+bash "$(dirname "$0")/install_zram.sh"
 systemctl enable --now docker
 
 cat << 'EOF' > /etc/systemd/system/cardboarddex-firewall.service
@@ -56,4 +57,3 @@ WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
 systemctl enable --now cardboarddex-ipv6-tuning.service
-

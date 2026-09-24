@@ -1,6 +1,6 @@
 # CardboardDex Project Context
 
-Updated: 2026-09-16. This handoff retains detailed product and implementation context, with dated deployment records and explicit known limitations. Repository: [n8liu/cardboarddex](https://github.com/n8liu/cardboarddex).
+Updated: 2026-09-24 UTC. This handoff retains detailed product and implementation context, with dated deployment records and explicit known limitations. Repository: [n8liu/cardboarddex](https://github.com/n8liu/cardboarddex).
 
 Read [AGENTS.md](AGENTS.md) before changing code, including the installed Next.js documentation requirement. Treat source code and dated verification as authoritative when older documents disagree. [ARCHITECTURE.md](ARCHITECTURE.md) describes the system boundaries but still contains outdated deployment and eBay implementation notes.
 
@@ -369,7 +369,7 @@ The following retains the product's visual specifications, interaction behavior,
 - Price batches prefer least-recently-synced cards. Manual CLI targeting supports canonical card IDs, card-name queries, and Pokémon species through `get_cards_for_pokemon()`, including name expansions and Mew/Mewtwo isolation.
 - Scheduled pricing tasks expire after 860 seconds with an 840-second hard limit. Catalog sync expires after 3,540 seconds with a 3,480-second hard limit. Late acknowledgement/prefetch settings do not replace distributed overlap protection.
 - The Dockerfile builds dependencies in a separate stage and runs the application as an unprivileged user. It can run FastAPI or a worker command supplied by Docker Compose.
-- Prepared backend CI runs application/deployment tests, publishes an AMD64 SHA-tagged image, and deploys its digest with matching Compose configuration over verified SSH. It checks schema revision without applying migrations. Source publication and production activation remain pending as recorded below.
+- Prepared backend CI runs application/deployment tests, publishes an AMD64 SHA-tagged image, and deploys its digest with matching Compose configuration over verified SSH. It checks schema revision without applying migrations. The recovery image is active; source publication remains pending as recorded below.
 - Frontend CI uses Node 22, `npm ci`, TypeScript checking, and a webpack production build. It currently omits `npm test`.
 - Cloudflare Pages Git integration was previously configured with `@cloudflare/next-on-pages`; both Wrangler files name `.vercel/output/static` as the output and enable `nodejs_compat`. The adapter is not pinned in `frontend/package.json`; verify the live Pages build configuration before changing deployment tooling.
 - `frontend/.npmrc` enables `legacy-peer-deps=true`, and `react-is` is an explicit dependency for Recharts compatibility.
@@ -421,34 +421,29 @@ Provider limits use Redis daily counters and per-second burst pacing; defaults a
 
 ## Deployment status
 
-Last verified: **2026-09-17 UTC** (2026-09-16 in Los Angeles).
+Production recovery verified: **2026-09-24 UTC**. Source publication remains pending; older deployment records are historical.
 
-- Production remains on `cardboarddex-server`, Lightsail `nano_3_0` (512 MB, $5/month base), in `us-west-2a`. The current attached static IP is **32.187.254.253**. The API at `https://api.cardboarddex.app/health` returned HTTP 200; the original API, worker+Beat, PostgreSQL, Redis, and Tunnel containers were running at the last read-only check.
-- The approved target is locked to `nano_3_0` (512 MB, $5/month base) to maintain the minimal $5 budget.
-- During implementation, another actor rebooted/deleted/recreated `cardboarddex-server` from `cardboarddex-snap-prod` and attached `cardboarddex-static-ip`. These operations were observed through AWS, not performed by this implementation. The changed SSH host key was independently verified through the AWS control plane.
-- ALB, old ECS tasks, RDS instances, NAT gateways, unattached EBS volumes, and EC2 Elastic IPs were absent in the cross-region audit. The final RDS snapshot `cardboarddex-db-final-snapshot-2026-09-16` and Lightsail snapshot `cardboarddex-snap-prod` were deleted on 2026-09-17 after off-server S3 backup verification was confirmed, eliminating lingering snapshot storage fees and bringing the recurring AWS spend strictly to the $5.00/month Lightsail baseline.
+- Current host: `cardboarddex-ipv6`, 512 MB Lightsail instance in `us-west-2a`. Recovery enabled dual-stack networking on the same disk, changing the bundle from `$3.50/month nano_ipv6_3_0` to `$5/month nano_3_0`, within the existing server budget. Its public IPv4 address is dynamic; query AWS before connecting. The old `32.187.254.253` address is obsolete.
+- GitHub uses `LIGHTSAIL_HOST=cardboarddex-ipv6` and `LIGHTSAIL_SSM_TARGET=mi-04eda276674cf91be`. The older `mi-07cf7e6e80daf232f` registration is stale. Recovery SSH uses short-lived Lightsail access certificates and host keys independently verified through AWS. No new persistent SSH authorized key was installed.
+- The latest inspected backend workflow passed tests and image build, then failed with `TargetNotConnected`; all 30 SSM checks reported `ConnectionLost`. The backup workflow failed because its latest completed archive was over 64 hours old. The host showed sustained swap/disk stalls, exhausted CPU burst capacity, and an API process with roughly 424 MB swapped out.
+- The previously active release was `31b2efd92e46f38a9a6be7740fbae3aed7a19542`, image digest `sha256:1a844284d1e1fd42d8bbece2ff5aeea9f11fe3e60402ff473e4c70a8ae24467a`. This remains the previous release for reference; deploying it would restore the unbounded query behavior. The recovery image is now active with ingestion and backups restored.
 
-### Reliability implementation: prepared, not yet deployed
+### Recovery changes and artifact
 
-See [the Lightsail runbook](docs/lightsail-migration.md). The production Compose definition and backend changes now provide separate durable/cache Redis, bounded caches and connection pools, rotated logs, required credentials, and `/ready`. Deployment uses immutable AMD64 images and matching configuration, verified SSH, serialized rollout, and a read-only schema-revision guard. No `cards` or `sets` schema was changed.
+- Dashboard queries now aggregate price histories in PostgreSQL; grading materializes at most four observations per card without JSON payloads, and sealed products use the latest observation by timestamp/ID. These changes do not alter any database table, index, or migration.
+- Compose uses 16 MB PostgreSQL shared buffers, one-minute steady-state health checks with five-second startup probes, and a lightweight curl readiness probe. The 512 MB host has a 512 MB LZ4 zram swap device at priority 100; the existing 2 GB disk swap remains fallback. `cardboarddex-zram.service` enables this before Docker at boot. Bootstrap and release scripts install it only on small hosts.
+- Dynamic login-status scripts were disabled to avoid expensive status-generation processes. Unused Snap services and the desktop disk-management service were disabled during recovery; no firmware/disk service masking was applied. Snap is not the active SSM installation.
+- CI now fails before SSH if SSM never becomes Online and preserves AWS errors. Release verification requires successful privileged backup-timer activation instead of silently swallowing failure.
+- Published and tested AMD64 recovery image: `cardboarddex-backend:recovery-20260923-memory`, digest `sha256:b9713a8ab6bda24de4971ad73669094aaa6f293f9945db8b94add7c15c9fc740`. Activated at `/opt/cardboarddex/releases/recovery-20260923`; `/opt/cardboarddex/current` points there and `/opt/cardboarddex/previous` retains the prior release.
+- Source changes remain local and uncommitted. They must be published before ordinary CI releases can retain these fixes; no Git commit or push has been authorized yet.
 
-- Tested AMD64 image published to ECR: `cardboarddex-backend:lightsail-reviewed-20260916`, digest `sha256:40590e83fb5ecefc86c3b79c0a417971f490b1840bcd3e29a62b29bd93f51066`. This image is **not the running production release**.
-- Protected configuration and a legacy rollback release were staged on the original server and remain present after the external snapshot recreation. Database credential rotation and application cutover have **not** run.
-- The CI and backup-verification workflow changes are local and uncommitted. Repository secrets/variables and workflow activation still need completion after source publication is authorized. The independent change in `frontend/lib/api.ts` is not part of this implementation.
+### Backups and verification
 
-### Backups and recovery
-
-- Created private S3 bucket `cardboarddex-backups-349558247779-us-west-2`, with public access blocked, TLS required, and SSE-S3 encryption. Six-hourly objects expire after seven days; weekly copies after 28 days; temporary migration archives after seven days.
-- Created upload-only IAM identity `cardboarddex-backup-upload` and read-only OIDC role `github-actions-cardboarddex-backup-read`. Upload credentials are root-only on the VPS and stored under ignored `.system_generated/lightsail/` locally. Never print or commit them.
-- A production PostgreSQL archive was restored successfully into isolated local PostgreSQL: schema revision `0004_price_obs_search_index`, **54,708 cards**, **489 sets**. It was uploaded to `migration/baseline.dump`, downloaded, and compared byte-for-byte successfully. This is the confirmed off-server recovery point.
-- Installed the six-hour systemd backup timer on the original host. An initial missing dependency was removed from the script; a subsequent backup attempt was interrupted before a success manifest was published. **The first completed scheduled S3 backup and weekly GitHub restore workflow are not yet verified.** Recheck timer state and obtain a completed manifest after coordination on the rebuilt host.
-- The final RDS snapshot was retired on 2026-09-17 after off-server backups in S3 were confirmed, eliminating ongoing storage charges. Keep an old host for 48 hours when a future parallel migration becomes possible. Do not delete the current host to bypass the account restriction without an explicit change to that recovery plan.
-
-### Verification
-
-- Full backend suite passed locally and in the published AMD64 image; live deployment tests are opt-in. Added readiness, credential encoding, connection-pool validation, cache bounds, and fail-closed quota tests.
-- Disposable PostgreSQL tests verified restore success, refusal to overwrite existing data, and corrupt-archive rejection. Disposable Redis tests verified queue/quota/checkpoint survival across restart and isolation from cache eviction. Backup failure/checksum tests passed.
-- Production Compose validation, shell syntax, Python compilation, workflow YAML parsing, and whitespace checks passed. The new production rollout and 48-hour capacity observation remain pending; current-host swap usage was still substantial after its external rebuild.
+- Existing backup bucket: `cardboarddex-backups-349558247779-us-west-2`, with private access, TLS, SSE-S3, six-hourly retention of seven days and weekly retention of 28 days. Production credentials remain in protected host files and ignored local operational files; never print or commit them.
+- The backup timer was active, but repeated runs timed out after 30 minutes during the outage. The recovery backup `six-hourly/20260924T000429Z` completed at 00:05:30 UTC in about one minute; its manifest freshness and revision `0004_price_obs_search_index` were independently verified from S3. GitHub backup verification, including the full disposable restore, [passed](https://github.com/n8liu/cardboarddex/actions/runs/35936844062).
+- Full backend tests pass locally and inside the exact AMD64 recovery image (168 passed, seven live tests skipped). Regression tests cover bounded history materialization, latest-price selection, SSM failure handling, backup-timer deployment failures, and safe zram initialization. All 36 deployment tests pass, including disposable container restore tests. Compose validation and shell syntax checks pass. Five public smoke tests pass (health, readiness, catalog image/search, CORS); two direct-AWS checks are intentionally skipped because the API binds to loopback behind Cloudflare. The four affected dashboard endpoints return 200, and SSM reports Online. A completed eBay task wrote 146 observations with zero provider errors. TCG bulk pricing returned a tier restriction and the existing individual-request fallback succeeded.
+- Capacity remains tight: after ingestion and backup, roughly 436 MB was stored in compressed swap using 155 MB of RAM. Backup activity caused transient disk stalls, though readiness remained successful and the backup completed. This verifies recovery, not sustained peak-load capacity; monitor through the nightly catalog run.
+- See [the Lightsail runbook](docs/lightsail-migration.md) for migration history and recovery restrictions. Do not delete or replace the only instance to bypass AWS account limits without explicit authorization.
 
 ## Configuration
 

@@ -33,12 +33,14 @@ services:
       POSTGRES_DB: cardboarddex
       POSTGRES_USER: cardboarddex
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a unique database password}
-    command: [postgres, -c, shared_buffers=64MB, -c, work_mem=4MB, -c, maintenance_work_mem=16MB, -c, max_connections=25]
+    command: [postgres, -c, shared_buffers=16MB, -c, work_mem=4MB, -c, maintenance_work_mem=16MB, -c, max_connections=25]
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: [CMD-SHELL, "pg_isready -U cardboarddex -d cardboarddex"]
-      interval: 10s
+      interval: 60s
+      start_period: 30s
+      start_interval: 5s
       timeout: 3s
       retries: 10
   redis:
@@ -49,7 +51,9 @@ services:
       - redis_data:/data
     healthcheck:
       test: [CMD, redis-cli, ping]
-      interval: 10s
+      interval: 60s
+      start_period: 30s
+      start_interval: 5s
       timeout: 3s
       retries: 10
   redis-cache:
@@ -58,18 +62,21 @@ services:
     command: [redis-server, --maxmemory, 32mb, --maxmemory-policy, allkeys-lru, --save, ""]
     healthcheck:
       test: [CMD, redis-cli, ping]
-      interval: 10s
+      interval: 60s
+      start_period: 30s
+      start_interval: 5s
       timeout: 3s
       retries: 10
   backend:
     <<: *app
     ports: ["127.0.0.1:8000:8000"]
     healthcheck:
-      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=8)"]
-      interval: 30s
+      test: [CMD, curl, --fail, --silent, --show-error, --max-time, "8", "http://127.0.0.1:8000/ready"]
+      interval: 60s
       timeout: 10s
       retries: 5
       start_period: 30s
+      start_interval: 5s
   celery-worker:
     <<: *app
     environment:

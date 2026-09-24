@@ -328,9 +328,10 @@ def calculate_trending_pokemon(
 
     name_filter = or_(*[Card.name.ilike(f"%{n}%") for n in active_pokemon_names])
     enrichment_rows = db.execute(
-        select(Card.id, Card.name, PriceObservation.price)
+        select(Card.id, Card.name, func.max(PriceObservation.price))
         .outerjoin(PriceObservation, PriceObservation.card_id == Card.id)
         .where(name_filter, Card.name.not_ilike("%code card%"))
+        .group_by(Card.id, Card.name)
     ).all()
 
     cards_per_pokemon: dict[str, set[str]] = {n: set() for n in active_pokemon_names}

@@ -1,0 +1,12 @@
+[Unit]
+Description=Compressed swap for the small CardboardDex host
+After=local-fs.target
+Before=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/cardboarddex/operations/scripts/lightsail/zram.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

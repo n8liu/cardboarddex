@@ -12,6 +12,7 @@ BACKEND_IMAGE=$(cat "$release/image.txt")
 [[ "$BACKEND_IMAGE" =~ @sha256:[a-f0-9]{64}$ ]] || { echo 'Require an immutable image digest' >&2; exit 1; }
 compose=(docker compose -p app --env-file "$APP_ENV_FILE" -f "$release/docker-compose.prod.yml")
 "${compose[@]}" config --quiet
+sudo -n bash "$release/scripts/lightsail/install_zram.sh"
 "${compose[@]}" pull
 [[ $(docker image inspect "$BACKEND_IMAGE" --format '{{.Architecture}}') == amd64 ]]
 "${compose[@]}" run --rm --no-deps backend python -m jobs.check_revision
@@ -47,10 +48,13 @@ actual=$(docker inspect --format '{{.Image}}' "$("${compose[@]}" ps -q backend)"
 [[ "$actual" == "$(docker image inspect --format '{{.Id}}' "$BACKEND_IMAGE")" ]]
 curl -fsS --retry 5 --retry-delay 3 https://api.cardboarddex.app/ready
 curl -fsS --get --data-urlencode q=pikachu --data-urlencode limit=1 https://api.cardboarddex.app/cards/search > /dev/null
+# Releases run as the SSH deployment user; system services require root.
+# Keep failures visible rather than declaring success with backups disabled.
+sudo -n systemctl enable --now cardboarddex-backup.timer
+systemctl is-active --quiet cardboarddex-backup.timer
 if [[ -n "$old" && "$old" != "$release" ]]; then
   ln -sfn "$old" /opt/cardboarddex/previous
 fi
 ln -sfn "$release" /opt/cardboarddex/current
-systemctl enable --now cardboarddex-backup.timer 2>/dev/null || true
 trap - EXIT
 echo 'Verified deployment completed'

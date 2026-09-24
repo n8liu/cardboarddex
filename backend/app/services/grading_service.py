@@ -8,8 +8,8 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from redis.exceptions import RedisError
-from sqlalchemy import or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy.orm import Session, load_only
 
 from app.common.formatters import escape_like
 from app.common.redis import get_redis
@@ -121,10 +121,34 @@ def calculate_grading_profit(
             updated_at=datetime.now(UTC),
         )
 
-    # Fetch all price observations for these cards
+    # Four latest rows per card suffice: raw, PSA 9, PSA 10, and any other
+    # graded comp (retained for the most-recent-observation timestamp).
+    category = case(
+        (PriceObservation.grading_company.is_(None), "raw"),
+        (and_(func.upper(PriceObservation.grading_company) == "PSA", PriceObservation.grade == 9), "psa9"),
+        (and_(func.upper(PriceObservation.grading_company) == "PSA", PriceObservation.grade == 10), "psa10"),
+        else_="other",
+    )
+    ranked = (
+        select(
+            PriceObservation.id,
+            func.row_number().over(
+                partition_by=(PriceObservation.card_id, category),
+                order_by=(PriceObservation.observed_at.desc(), PriceObservation.id.desc()),
+            ).label("position"),
+        )
+        .where(PriceObservation.card_id.in_(filtered_card_ids))
+        .subquery()
+    )
     all_obs = db.scalars(
         select(PriceObservation)
-        .where(PriceObservation.card_id.in_(filtered_card_ids))
+        .join(ranked, ranked.c.id == PriceObservation.id)
+        .where(ranked.c.position == 1)
+        .options(load_only(
+            PriceObservation.card_id, PriceObservation.price,
+            PriceObservation.grading_company, PriceObservation.grade,
+            PriceObservation.observed_at,
+        ))
         .order_by(PriceObservation.observed_at.desc(), PriceObservation.id.desc())
     ).all()
 
@@ -302,4 +326,3 @@ def calculate_grading_profit(
 
     _GRADING_PROFIT_LOCAL_FALLBACK[redis_key] = (now, response)
     return response
-

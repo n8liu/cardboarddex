@@ -2,7 +2,15 @@
 
 The original production design used the $5 `nano_3_0` (512 MB RAM) bundle in `us-west-2`, Cloudflare Tunnel, PostgreSQL 16, a single Celery worker, one Beat scheduler, and separate durable/cache Redis services. The frontend stays on Cloudflare Pages. The target is strictly $5/month for the server base; domain renewal and third-party APIs are separate, and backup/image storage, temporary recovery snapshots, and management usage are separate.
 
-## IPv6 migration on 2026-09-18 — verification in progress
+## Production recovery on 2026-09-23/24
+
+The active host remains `cardboarddex-ipv6`, now on the $5/month `nano_3_0` dual-stack bundle. Its IPv4 address is dynamic; query Lightsail before direct access. GitHub deploys over SSM target `mi-04eda276674cf91be`. The old `mi-07cf7e6e80daf232f` registration is stale. Recovery used temporary Lightsail SSH access certificates with independently verified host keys; no new persistent SSH key was installed.
+
+The outage exhausted memory and CPU burst capacity, leaving SSM offline and backups timing out. Dashboard queries now aggregate history in SQL and load only the required latest observations. PostgreSQL shared buffers are 16 MB, steady-state health probes run every minute, and the API probe uses curl. On hosts with at most 600,000 kB usable RAM, bootstrap and deployment install `cardboarddex-zram.service`: a 512 MB LZ4 compressed swap device at priority 100 before Docker starts. Existing disk swap is retained. Inspect `zramctl`, `free -m`, and `vmstat`; compressed swap does not increase CPU capacity or guarantee sufficient memory for every workload.
+
+See `PROJECT_CONTEXT.md` for the active recovery image, checks, backup status, and source-publication status. Preserve the recovery snapshot and database volumes. Do not redeploy an older commit that lacks the query and runtime fixes.
+
+## IPv6 migration on 2026-09-18 — historical record
 
 The owner explicitly authorized deleting the old instance before replacement because AWS enforces a one-instance account limit. The stopped source was saved as `cardboarddex-pre-ipv6-20260918`; AWS confirmed the snapshot available before deletion. An additional S3 database backup restored successfully off-server with 54,726 cards, 489 sets, and revision `0004_price_obs_search_index`.
 

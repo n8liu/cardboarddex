@@ -94,6 +94,7 @@ def test_persistent_authenticated_stall_stops_before_deployment(tmp_path):
 
 
 @pytest.mark.parametrize(('message', 'diagnostic'), [
+    ('TargetNotConnected: managed node is not connected.\n', 'SSM cannot open a session'),
     ('Host key verification failed.\n', 'SSH host verification failed'),
     ('ubuntu@192.0.2.1: Permission denied (publickey).\n', 'SSH authentication failed'),
     ('ssh: connect to host 192.0.2.1 port 22: Connection timed out\n', 'SSH did not complete authentication'),

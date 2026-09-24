@@ -510,9 +510,15 @@ def calculate_top_pokemon_volume(
     # Bulk Database Enrichment: card counts, top card, catalog average price
     name_filter = or_(*[Card.name.ilike(f"%{n}%") for n in POKEMON_TOP_50_NAMES])
     enrichment_rows = db.execute(
-        select(Card.id, Card.name, PriceObservation.price)
+        select(
+            Card.id, Card.name,
+            func.sum(PriceObservation.price),
+            func.count(PriceObservation.price),
+            func.max(PriceObservation.price),
+        )
         .outerjoin(PriceObservation, PriceObservation.card_id == Card.id)
         .where(name_filter, Card.name.not_ilike("%code card%"))
+        .group_by(Card.id, Card.name)
     ).all()
 
     cards_per_pokemon: dict[str, set[str]] = {n: set() for n in POKEMON_TOP_50_NAMES}
@@ -520,15 +526,15 @@ def calculate_top_pokemon_volume(
     price_counts: dict[str, int] = {n: 0 for n in POKEMON_TOP_50_NAMES}
     top_cards: dict[str, tuple[str, str, float] | None] = {n: None for n in POKEMON_TOP_50_NAMES}
 
-    for card_id, card_name, obs_price in enrichment_rows:
+    for card_id, card_name, total_price, observation_count, obs_price in enrichment_rows:
         poke = match_to_pokemon(card_name)
         if poke is None or poke not in cards_per_pokemon:
             continue
         cards_per_pokemon[poke].add(card_id)
         if obs_price is not None:
             price_flt = float(obs_price)
-            price_totals[poke] += price_flt
-            price_counts[poke] += 1
+            price_totals[poke] += float(total_price)
+            price_counts[poke] += observation_count
             current_top = top_cards[poke]
             if current_top is None or price_flt > current_top[2]:
                 top_cards[poke] = (card_id, card_name, price_flt)
@@ -791,4 +797,3 @@ def get_set_statistics(
             logger.warning("Redis set_stats cache write failed error=%s: %s", type(exc).__name__, exc)
 
     return response
-

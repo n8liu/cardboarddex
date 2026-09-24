@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from redis.exceptions import RedisError
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.common.formatters import escape_like, extract_float
@@ -131,13 +131,22 @@ def calculate_sealed_signals(
         )
 
     card_ids = [c.id for c, _ in sealed_rows]
-    # Fetch TCG API observations for these sealed products
+    # Only materialize the latest payload for each product, not its full history.
+    ranked = (
+        select(
+            PriceObservation.id,
+            func.row_number().over(
+                partition_by=PriceObservation.card_id,
+                order_by=(PriceObservation.observed_at.desc(), PriceObservation.id.desc()),
+            ).label("position"),
+        )
+        .where(PriceObservation.card_id.in_(card_ids), PriceObservation.provider == "tcgapi")
+        .subquery()
+    )
     obs_list = db.scalars(
         select(PriceObservation)
-        .where(
-            PriceObservation.card_id.in_(card_ids),
-            PriceObservation.provider == "tcgapi",
-        )
+        .join(ranked, ranked.c.id == PriceObservation.id)
+        .where(ranked.c.position == 1)
     ).all()
     obs_map: dict[str, PriceObservation] = {o.card_id: o for o in obs_list}
 
@@ -359,4 +368,3 @@ def calculate_sealed_signals(
 
     _SEALED_SIGNALS_LOCAL_FALLBACK[redis_key] = (now, response)
     return response
-
