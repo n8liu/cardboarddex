@@ -458,13 +458,16 @@ Recovery follow-up: **2026-09-24 UTC**. Earlier recoveries relapsed under dashbo
 
 ## R2 image delivery implementation (pending activation)
 
-- User published `54ec8612b190505fdfc68601020a8fd69d68bf59`. Backend run `36076526008` failed two clock-dependent manifest tests; image workflow run `36076525148` was rejected because `runner.temp` was used in job-level env. Local fixes use step-level RUNNER_TEMP and controlled test clocks; all 190 backend tests and actionlint pass. These follow-up fixes still require publication.
-- Both R2 buckets were created by the user. GitHub contains R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, and R2_ENDPOINT_URL secrets. Public DNS resolves images.cardboarddex.app and HTTPS responds; placeholder.svg returned a cacheable 404 before any upload. Do not enable CDN mode until pilot/backfill and error-cache checks pass.
-
-- R2/CDN implementation uses a local verified manifest, direct public image URLs, and a bounded GitHub runner synchronization job. Cards/Sets schemas are unchanged.
-- Live Cloudflare setup, credentials, initial backfill, cutover, and the 24-hour observation remain pending; no CPU savings are claimed yet. CDN mode and scheduled synchronization default to disabled.
-- See [R2 image setup and cutover](docs/r2-images.md) for exact configuration, validation, costs, and rollback. Production ingestion must stay paused during rollout.
-- Local verification: 190 backend tests passed (15 live checks skipped), 40 deployment/tooling tests passed (two container checks skipped), 22 frontend tests passed, TypeScript and production build passed. Cloudflare provisioning has only been previewed; no live R2 credentials or activation were available in this session.
+- User published `9b4c787158473fb3b3deb460e20668aae47161ea`; [backend deployment 36076917738](https://github.com/n8liu/cardboarddex/actions/runs/36076917738) succeeded. `/opt/cardboarddex/current` points to that release. API readiness is successful, backend restart count is zero, and worker/Beat remain stopped with the ingestion pause marker present.
+- The preceding workflow-expression and clock-dependent test failures are fixed and published. Local verification: 190 backend tests passed (15 live checks skipped), 40 deployment/tooling tests passed (two container checks skipped), 22 frontend tests passed, TypeScript/build/actionlint passed.
+- The user created both R2 buckets and configured GitHub secrets R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, and R2_ENDPOINT_URL. Public DNS resolves images.cardboarddex.app. A real uploaded image returned HTTP 200, correct JPEG/immutable headers, then CF-Cache-Status HIT. The shared placeholder also returns 200.
+- [100-image pilot 36078751849](https://github.com/n8liu/cardboarddex/actions/runs/36078751849) uploaded 90 images (2,608,786 bytes), reported 10 failures, and published a verified 90-image manifest. Representative failures were provider HTTP 404s; the workflow reports failure when any image fails even though successful objects and the manifest are published. Inventory contains 54,968 source image records. No whole-catalog size guarantee is inferred from the pilot.
+- [500-image continuation 36079017839](https://github.com/n8liu/cardboarddex/actions/runs/36079017839) completed: 494 uploaded, six provider 404s, 16,723,862 new bytes; manifest contains 584 verified images.
+- User configured the Cloudflare Cache Rule. Verification PASSED: a new missing-image URL returned 404/BYPASS twice, while a real uploaded image returned 200/HIT twice with immutable headers.
+- Full backfill is running through ignored operational script `.system_generated/lightsail/r2_backfill.py` (exec session 2966), starting with run 36096212877. It dispatches sequential 500-image runs, checks published manifests/storage/error categories, and stops on unexpected failures, more than 100 failures in a batch, approaching the 8 GB cap, or a main-branch change. Read `.system_generated/lightsail/r2-backfill-progress.json` and its `.jsonl` history, and verify process/run status before starting another controller. Repository visibility was verified public.
+- Before cutover, API readiness returned 200 and the initial catalog still returned relative API image URLs. Latest Lightsail metrics: burst capacity about 50.4%, CPU about 2.4%, with ingestion paused. Baseline saved in ignored `r2-before-cutover.json`.
+- Production CDN mode and scheduled synchronization remain disabled. Full backfill, cutover, and the 24-hour observation remain pending; no production CPU savings are claimed yet. Cards/Sets schemas are unchanged. Keep ingestion paused.
+- See [R2 image setup and cutover](docs/r2-images.md) for configuration, validation, costs, and rollback.
 
 ## Configuration
 
