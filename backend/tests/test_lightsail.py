@@ -1,4 +1,10 @@
 from unittest.mock import Mock
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
+import time
+from types import SimpleNamespace
+from anyio import to_thread
 import pytest
 from fastapi.testclient import TestClient
 from redis.exceptions import ConnectionError as RedisConnectionError
@@ -10,6 +16,7 @@ from app.providers.limiter import DailyRequestLimiter
 import app.common.cache as cache_module
 import app.common.redis as redis_module
 import app.main as main
+import app.routers.cards as cards
 
 
 def test_special_characters_in_database_password_roundtrip():
@@ -25,6 +32,59 @@ def test_database_pool_settings_reject_unbounded_values():
         Settings(_env_file=None, db_pool_size=0)
     with pytest.raises(ValueError):
         Settings(_env_file=None, db_max_overflow=-1)
+
+
+def test_api_lifespan_bounds_concurrent_sync_work(monkeypatch):
+    monkeypatch.setattr(main.settings, 'api_thread_limit', 2)
+    lock = Lock()
+    active = peak = 0
+
+    def work():
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        time.sleep(0.02)
+        with lock:
+            active -= 1
+
+    async def run():
+        previous = to_thread.current_default_thread_limiter().total_tokens
+        async with main.lifespan(main.app):
+            await asyncio.gather(*(to_thread.run_sync(work) for _ in range(10)))
+        assert to_thread.current_default_thread_limiter().total_tokens == previous
+
+    asyncio.run(run())
+    assert peak == 2
+
+
+def test_image_releases_database_before_external_io(monkeypatch):
+    db = Mock()
+    db.get.return_value = SimpleNamespace(image_url='https://images.pokemontcg.io/test.png')
+    monkeypatch.setattr(cards, '_get_redis', lambda: None)
+    monkeypatch.setattr(cards, 'get_settings', lambda: Settings(_env_file=None, s3_bucket_name=None))
+
+    def download(url):
+        db.close.assert_called_once()
+        return b'image', 'image/png'
+
+    result = cards.get_card_image('test', db=db, client=SimpleNamespace(get_image=download))
+    assert result.body == b'image'
+
+
+def test_concurrent_images_initialize_one_s3_client(monkeypatch):
+    import boto3
+    instance = object()
+    def create(*args, **kwargs):
+        time.sleep(0.02)
+        return instance
+    factory = Mock(side_effect=create)
+    monkeypatch.setattr(cards, '_S3_CLIENT', None)
+    monkeypatch.setattr(boto3, 'client', factory)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(cards._get_s3_client, ['us-west-2'] * 8))
+    assert all(result is instance for result in results)
+    factory.assert_called_once_with('s3', region_name='us-west-2')
 
 
 def test_cache_evicts_and_expires(monkeypatch):

@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
-import Image from "next/image";
+import Image from "@/components/card-image";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { BackToTop } from "@/components/ui/back-to-top";

@@ -1,0 +1,87 @@
+name: R2 card image synchronization
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Images to attempt (pilot: 100, maximum: 500)'
+        default: '100'
+        required: true
+      refresh:
+        description: 'Refresh existing images as well as missing images'
+        type: boolean
+        default: false
+  schedule:
+    - cron: '40 9 * * *'
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: production-image-sync
+  cancel-in-progress: false
+jobs:
+  sync:
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || vars.R2_IMAGE_SYNC_SCHEDULE_ENABLED == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      LIGHTSAIL_HOST: ${{ vars.LIGHTSAIL_HOST }}
+      LIGHTSAIL_SSM_TARGET: ${{ vars.LIGHTSAIL_SSM_TARGET }}
+      R2_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL || secrets.R2_ENDPOINT_URL }}
+      R2_BUCKET: cardboarddex-images
+      R2_STATE_BUCKET: cardboarddex-images-state
+      KEY_PATH: ${{ runner.temp }}/image-sync-key
+      KNOWN_HOSTS_FILE: ${{ runner.temp }}/image-sync-known-hosts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r backend/requirements.txt
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::349558247779:role/github-actions-cardboarddex-deploy
+          aws-region: us-west-2
+      - name: Install Session Manager plugin
+        run: |
+          curl --fail --silent --show-error --location https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb -o "$RUNNER_TEMP/ssm.deb"
+          sudo dpkg -i "$RUNNER_TEMP/ssm.deb"
+      - name: Configure verified SSH
+        env:
+          SSH_KEY: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+          HOST_KEYS: ${{ secrets.LIGHTSAIL_KNOWN_HOSTS }}
+        run: |
+          umask 077
+          printf '%s\n' "$SSH_KEY" > "$KEY_PATH"
+          printf '%s\n' "$HOST_KEYS" > "$KNOWN_HOSTS_FILE"
+      - name: Export image inventory
+        run: bash scripts/images/remote.sh export > "$RUNNER_TEMP/image-inventory.jsonl"
+      - name: Synchronize bounded batch
+        id: transfer
+        env:
+          PYTHONPATH: backend
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          SYNC_LIMIT: ${{ inputs.limit || '500' }}
+          SYNC_REFRESH: ${{ inputs.refresh || 'false' }}
+        run: |
+          args=()
+          if [[ "$SYNC_REFRESH" == true ]]; then args+=(--refresh); fi
+          set +e
+          python -m jobs.sync_images_to_r2 --inventory "$RUNNER_TEMP/image-inventory.jsonl" --output manifest.json --limit "$SYNC_LIMIT" "${args[@]}"
+          status=$?
+          set -e
+          if [[ $status != 0 && $status != 2 ]]; then exit "$status"; fi
+          echo "partial_failure=$status" >> "$GITHUB_OUTPUT"
+      - name: Publish verified manifest
+        run: bash scripts/images/remote.sh publish
+      - name: Report usage and failures
+        if: always()
+        run: |
+          if [[ -f summary.json ]]; then
+            echo '### R2 image sync' >> "$GITHUB_STEP_SUMMARY"
+            cat summary.json >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [[ '${{ steps.transfer.outputs.partial_failure }}' == 2 ]]; then exit 1; fi
+      - name: Remove temporary credentials and inventory
+        if: always()
+        run: rm -f "$KEY_PATH" "$KNOWN_HOSTS_FILE" "$RUNNER_TEMP/image-inventory.jsonl"

@@ -1,7 +1,9 @@
 import logging
 import re
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
+from anyio import to_thread
 
 from fastapi import Depends, FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -41,12 +43,24 @@ docs_url = "/docs" if settings.enable_api_docs else None
 redoc_url = "/redoc" if settings.enable_api_docs else None
 openapi_url = "/openapi.json" if settings.enable_api_docs else None
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    limiter = to_thread.current_default_thread_limiter()
+    previous_limit = limiter.total_tokens
+    limiter.total_tokens = settings.api_thread_limit
+    try:
+        yield
+    finally:
+        limiter.total_tokens = previous_limit
+
+
 app = FastAPI(
     title="CardboardDex API",
     version="0.1.0",
     docs_url=docs_url,
     redoc_url=redoc_url,
     openapi_url=openapi_url,
+    lifespan=lifespan,
 )
 
 

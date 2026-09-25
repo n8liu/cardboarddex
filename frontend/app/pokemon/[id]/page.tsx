@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import Image from "next/image";
+import Image from "@/components/card-image";
 import Link from "next/link";
 import { getPokemonByIdOrSlug } from "@/lib/pokedex-data";
 import { getPokemonDetail, TYPE_THEMES, formatDexNumber } from "@/lib/pokeapi";

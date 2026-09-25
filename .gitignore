@@ -95,3 +95,8 @@ logs/
 .gemini/
 scratch/
 .system_generated/
+
+# Local R2 image synchronization outputs
+/manifest.json
+/summary.json
+/image-inventory.jsonl

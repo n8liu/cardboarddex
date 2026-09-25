@@ -1,3 +1,4 @@
+from app.services.image_delivery import card_image_url
 try:
     from app.common.cache import TTLCache
 except ImportError:
@@ -157,7 +158,7 @@ def _build_mover_item(
             set_name=card_set.name,
             number=card.number,
             rarity=card.rarity,
-            image_url=f"/cards/{card.id}/image",
+            image_url=card_image_url(card.id),
             printing=printing,
             market_price=market_price,
             price_change_percentage=round(pct, 2),
@@ -174,7 +175,7 @@ def _build_mover_item(
             set_name=set_name,
             number=None,
             rarity=None,
-            image_url=f"/cards/{card_id}/image",
+            image_url=card_image_url(card_id),
             printing=printing,
             market_price=market_price,
             price_change_percentage=round(pct, 2),
@@ -769,7 +770,7 @@ def get_live_updates(
                 set_name=card_set.name,
                 set_id=card.set_id,
                 card_number=card.number,
-                image_url=f"/cards/{card.id}/image",
+                image_url=card_image_url(card.id),
                 provider=obs.provider,
                 price=price_val,
                 currency=obs.currency or "USD",

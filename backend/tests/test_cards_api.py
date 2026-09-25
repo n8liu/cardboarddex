@@ -304,6 +304,44 @@ def test_search_cards_price_filter(client: TestClient) -> None:
     assert len(under_5.json()) == 0
 
 
+@pytest.mark.parametrize("filters", [{}, {"q": "pika"}, {"set_id": "1"}])
+def test_search_latest_price_history_and_ties(client: TestClient, filters: dict) -> None:
+    sessions = app.dependency_overrides[get_db]()
+    try:
+        db = next(sessions)
+        for index, (price, updated, observed, company) in enumerate([
+            (999, datetime(2025, 1, 1, tzinfo=UTC), datetime(2030, 1, 1, tzinfo=UTC), None),
+            (888, None, datetime(2031, 1, 1, tzinfo=UTC), None),
+            (41, datetime(2027, 1, 1, tzinfo=UTC), datetime(2027, 1, 2, tzinfo=UTC), None),
+            (42, datetime(2027, 1, 1, tzinfo=UTC), datetime(2027, 1, 2, tzinfo=UTC), None),
+            (777, datetime(2032, 1, 1, tzinfo=UTC), datetime(2032, 1, 1, tzinfo=UTC), "PSA"),
+        ]):
+            db.add(PriceObservation(
+                fingerprint=f"search-history-{index}", card_id="pikachu-1",
+                provider_card_id="provider-pikachu", variant_id="normal",
+                provider="tcgapi", price=Decimal(price), currency="USD",
+                provider_updated_at=updated, observed_at=observed,
+                grading_company=company,
+            ))
+        db.commit()
+    finally:
+        sessions.close()
+
+    response = client.get("/cards/search", params={**filters, "sort_by": "price_desc"})
+    assert response.status_code == 200
+    cards = response.json()
+    assert len({card["id"] for card in cards}) == len(cards)
+    pika = next(card for card in cards if card["id"] == "pikachu-1")
+    assert pika["market_price"] == 42
+    assert pika["last_updated_at"].startswith("2027-01-01")
+    filtered = client.get("/cards/search", params={**filters, "min_price": 40, "max_price": 50})
+    assert [card["id"] for card in filtered.json()] == ["pikachu-1"]
+    if not filters:
+        assert [card["name"] for card in cards] == ["Venusaur", "Pikachu", "Eevee"]
+        page = client.get("/cards/search", params={"limit": 1, "offset": 1})
+        assert page.json()[0]["id"] == "pikachu-1"
+
+
 def test_set_stats_price_filter(client: TestClient) -> None:
     # Full set 1 has Pikachu ($12.34) and Venusaur ($150.00) = $162.34
     full_stats = client.get("/cards/sets/1/stats", params={"hide_sealed": "true"})
@@ -1129,3 +1167,25 @@ def test_get_trending_dashboard_endpoint(client: TestClient) -> None:
     data_q = res_q.json()
     assert len(data_q["trending_pokemon"]) >= 1
     assert "Pikachu" in [p["pokemon_name"] for p in data_q["trending_pokemon"]]
+
+
+def test_catalog_cdn_manifest_generation_replaces_cached_placeholder(client, monkeypatch, tmp_path):
+    import json
+    from app.config import get_settings
+    from app.services import image_delivery
+    settings = get_settings()
+    monkeypatch.setattr(settings, 'image_cdn_enabled', True)
+    monkeypatch.setattr(settings, 'image_manifest_path', str(tmp_path / 'manifest.json'))
+    monkeypatch.setattr(image_delivery, '_path', None)
+    first = client.get('/cards/search', params={'q':'pikachu'}).json()
+    assert first[0]['image_url'].endswith('/placeholder.svg')
+    key = 'cards/pikachu-1/' + 'a' * 64 + '.png'
+    (tmp_path / 'manifest.json').write_text(json.dumps({'version':1, 'images':{'pikachu-1':key}}))
+    monkeypatch.setattr(image_delivery, '_checked', 0)
+    second = client.get('/cards/search', params={'q':'pikachu'}).json()
+    assert second[0]['image_url'] == 'https://images.cardboarddex.app/' + key
+    detail = client.get('/cards/pikachu-1').json()
+    assert detail['image_url'] == second[0]['image_url']
+    redirect = client.get('/cards/pikachu-1/image', follow_redirects=False)
+    assert redirect.status_code == 307
+    assert redirect.headers['location'] == second[0]['image_url']

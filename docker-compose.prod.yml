@@ -18,6 +18,7 @@ x-app: &app
     CACHE_REDIS_URL: redis://redis-cache:6379/0
     DB_POOL_SIZE: "3"
     DB_MAX_OVERFLOW: "2"
+    MALLOC_ARENA_MAX: "2"
   depends_on:
     postgres:
       condition: service_healthy
@@ -33,7 +34,7 @@ services:
       POSTGRES_DB: cardboarddex
       POSTGRES_USER: cardboarddex
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a unique database password}
-    command: [postgres, -c, shared_buffers=16MB, -c, work_mem=4MB, -c, maintenance_work_mem=16MB, -c, max_connections=25]
+    command: [postgres, -c, shared_buffers=16MB, -c, work_mem=4MB, -c, maintenance_work_mem=16MB, -c, max_connections=25, -c, jit=off, -c, max_parallel_workers_per_gather=0, -c, statement_timeout=12000]
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -69,6 +70,15 @@ services:
       retries: 10
   backend:
     <<: *app
+    environment:
+      <<: *app-env
+      API_THREAD_LIMIT: "4"
+      IMAGE_MANIFEST_PATH: /var/lib/cardboarddex/images/manifest.json
+    volumes:
+      - ${IMAGE_MANIFEST_DIR:-/opt/cardboarddex/images}:/var/lib/cardboarddex/images:ro
+    # Bound both RAM and total RAM+swap so a request cannot exhaust the host.
+    mem_limit: 160m
+    memswap_limit: 224m
     ports: ["127.0.0.1:8000:8000"]
     healthcheck:
       test: [CMD, curl, --fail, --silent, --show-error, --max-time, "8", "http://127.0.0.1:8000/ready"]
@@ -79,16 +89,20 @@ services:
       start_interval: 5s
   celery-worker:
     <<: *app
+    mem_limit: 96m
+    memswap_limit: 160m
     environment:
       <<: *app-env
       DB_POOL_SIZE: "2"
       DB_MAX_OVERFLOW: "0"
-    command: [celery, -A, app.celery_app, worker, --loglevel=info, --concurrency=1, "--hostname=worker@%h"]
+    command: [celery, -A, app.celery_app, worker, --loglevel=info, --concurrency=1, --max-tasks-per-child=10, "--hostname=worker@%h"]
     stop_grace_period: 3600s
     healthcheck:
       disable: true
   celery-beat:
     <<: *app
+    mem_limit: 48m
+    memswap_limit: 80m
     command: [celery, -A, app.celery_app, beat, --loglevel=info, --schedule=/beat/celerybeat-schedule, --pidfile=]
     volumes:
       - beat_data:/beat

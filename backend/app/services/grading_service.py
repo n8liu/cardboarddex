@@ -1,3 +1,4 @@
+from app.services.image_delivery import card_image_url, image_generation
 from app.common.cache import TTLCache
 import hashlib
 import json
@@ -55,6 +56,7 @@ def calculate_grading_profit(
     )
     cache_hash = hashlib.md5(cache_key_raw.encode()).hexdigest()
     redis_key = f"cardboarddex:grading_profit:{cache_hash}"
+    redis_key = f"{image_generation()}:{redis_key}"
 
     # 1. Try Redis cache first
     r = get_redis()
@@ -267,7 +269,7 @@ def calculate_grading_profit(
                 set_name=cset.name,
                 number=card.number,
                 rarity=card.rarity,
-                image_url=f"/cards/{card.id}/image",
+                image_url=card_image_url(card.id),
                 raw_price=round(raw_price, 2),
                 psa10_price=round(psa10_price, 2) if psa10_price is not None else None,
                 psa10_profit=psa10_profit,

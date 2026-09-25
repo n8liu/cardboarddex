@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import Image from "next/image";
+import Image from "@/components/card-image";
 import Link from "next/link";
 import { HoloCard } from "@/components/ui/holo-card";
 import { cardImageUrl } from "@/lib/api";

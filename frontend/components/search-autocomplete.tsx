@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo, type FormEvent, type KeyboardEvent } from "react";
-import Image from "next/image";
+import Image from "@/components/card-image";
 import { useRouter } from "next/navigation";
 import { POKEDEX_DATA } from "@/lib/pokedex-data";
 import { getCardSets, searchCards, cardImageUrl } from "@/lib/api";

@@ -2,6 +2,7 @@
 
 from collections.abc import Generator
 import os
+from time import monotonic
 
 import httpx
 import pytest
@@ -91,6 +92,39 @@ def test_cloudflare_catalog_image(cloudflare_client: httpx.Client) -> None:
 
 def test_cloudflare_tunnel_catalog_search(cloudflare_client: httpx.Client) -> None:
     _search_first_card(cloudflare_client)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/cards/sets",
+        "/cards/search?limit=24&offset=0&sort_by=price_desc&hide_sealed=true",
+    ],
+)
+def test_catalog_initial_requests(cloudflare_client: httpx.Client, path: str) -> None:
+    started = monotonic()
+    response = cloudflare_client.get(
+        path, headers={"Origin": "https://cardboarddex.app"}, timeout=15,
+    )
+    assert monotonic() - started < 15, "catalog exceeded the frontend's 15-second timeout"
+    assert response.status_code == 200, response.text
+    assert response.headers.get("access-control-allow-origin") == "https://cardboarddex.app"
+    assert isinstance(response.json(), list)
+    assert response.json(), "expected a populated production catalog"
+
+
+@pytest.mark.parametrize("path", [
+    "/cards/live-updates?provider=all&grade_filter=all&page=1&per_page=24",
+    "/cards/market-movers", "/cards/sealed-signals", "/cards/grading-profit",
+    "/cards/trending", "/cards/top-pokemon-volume",
+])
+def test_dashboard_requests(cloudflare_client: httpx.Client, path: str) -> None:
+    started = monotonic()
+    response = cloudflare_client.get(path, headers={"Origin": "https://cardboarddex.app"}, timeout=15)
+    assert response.status_code == 200, response.text
+    assert monotonic() - started < 15
+    assert response.headers.get("access-control-allow-origin") == "https://cardboarddex.app"
+    assert isinstance(response.json(), dict)
 
 
 def test_cloudflare_tunnel_allows_production_cors(

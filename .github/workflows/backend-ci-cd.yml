@@ -10,6 +10,7 @@ on:
       - "deploy/ebay-relay/**"
       - "docker-compose.prod.yml"
       - ".github/workflows/backend-ci-cd.yml"
+      - ".github/workflows/image-sync.yml"
   pull_request:
     branches: [main]
     paths:
@@ -19,6 +20,7 @@ on:
       - "deploy/ebay-relay/**"
       - "docker-compose.prod.yml"
       - ".github/workflows/backend-ci-cd.yml"
+      - ".github/workflows/image-sync.yml"
   workflow_dispatch:
 
 permissions:
@@ -68,13 +70,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install pytest boto3
+      - run: pip install pytest boto3 httpx
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - run: node --test deploy/ebay-relay/worker.test.mjs
       - run: bash scripts/lightsail/validate.sh
-      - run: RUN_CONTAINER_TESTS=1 pytest scripts/lightsail/test_*.py -q
+      - run: RUN_CONTAINER_TESTS=1 pytest scripts/lightsail/test_*.py scripts/images/test_*.py -q
 
   build-and-push:
     name: Build & Push Docker Image to Amazon ECR

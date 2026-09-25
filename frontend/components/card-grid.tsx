@@ -1,6 +1,6 @@
 "use client";
 
-import Image from "next/image";
+import Image from "@/components/card-image";
 import Link from "next/link";
 import { useState } from "react";
 

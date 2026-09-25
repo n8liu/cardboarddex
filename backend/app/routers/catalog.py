@@ -1,3 +1,4 @@
+from app.services.image_delivery import card_image_url, image_generation
 from app.common.cache import TTLCache
 import json
 import logging
@@ -6,7 +7,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Query, Response
 from redis.exceptions import RedisError
-from sqlalchemy import case, func, literal, not_, or_, select
+from sqlalchemy import and_, case, func, literal, not_, or_, select
 from sqlalchemy.orm import Session
 
 from app.common.formatters import escape_like as _escape_like
@@ -79,7 +80,8 @@ def search_cards(
     response.headers["Cache-Control"] = "public, max-age=30, s-maxage=60, stale-while-revalidate=120"
     clean_q = q.strip()
     cache_key = f"{game}:{sort_by}:{limit}:{offset}:{hide_sealed}:{sealed_only}:{min_price}:{max_price}:{set_id}:{clean_q}"
-    redis_key = f"cardboarddex:catalog:search:{cache_key}"
+    cache_key = f"{image_generation()}:{cache_key}"
+    redis_key = f"cardboarddex:catalog:search:v2:{cache_key}"
 
     now = time.time()
     # 1. Fast in-process cache (<0.1ms)
@@ -113,6 +115,7 @@ def search_cards(
         .order_by(
             PriceObservation.provider_updated_at.desc().nullslast(),
             PriceObservation.observed_at.desc(),
+            PriceObservation.id.desc(),
         )
         .limit(1)
         .correlate(Card)
@@ -132,11 +135,43 @@ def search_cards(
         .order_by(
             PriceObservation.provider_updated_at.desc().nullslast(),
             PriceObservation.observed_at.desc(),
+            PriceObservation.id.desc(),
         )
         .limit(1)
         .correlate(Card)
         .scalar_subquery()
     )
+
+    ranked_prices = None
+    if not clean_q and not set_id and (
+        sort_by in {"price_asc", "price_desc"}
+        or min_price is not None or max_price is not None
+    ):
+        # Broad price sorts must inspect every matching card. Rank history once
+        # instead of running tens of thousands of random index scans and sorts.
+        # Selective searches retain the cheaper per-card index lookup above.
+        ranked_prices = (
+            select(
+                PriceObservation.card_id,
+                PriceObservation.price,
+                PriceObservation.provider_updated_at,
+                func.row_number().over(
+                    partition_by=PriceObservation.card_id,
+                    order_by=(
+                        PriceObservation.provider_updated_at.desc().nullslast(),
+                        PriceObservation.observed_at.desc(),
+                        PriceObservation.id.desc(),
+                    ),
+                ).label("position"),
+            )
+            .where(
+                PriceObservation.provider == "tcgapi",
+                PriceObservation.grading_company.is_(None),
+            )
+            .subquery()
+        )
+        latest_price = ranked_prices.c.price
+        latest_synced = ranked_prices.c.provider_updated_at
 
     statement = (
         select(
@@ -149,6 +184,11 @@ def search_cards(
         .join(Set, Card.set_id == Set.id)
         .where(Card.name.not_ilike("%code card%"))
     )
+    if ranked_prices is not None:
+        statement = statement.outerjoin(
+            ranked_prices,
+            and_(ranked_prices.c.card_id == Card.id, ranked_prices.c.position == 1),
+        )
 
     # Language/series filtering
     if game == "pokemon":
@@ -259,6 +299,7 @@ def list_card_sets(
 ) -> list[CardSetOption]:
     response.headers["Cache-Control"] = "public, max-age=300, s-maxage=86400, stale-while-revalidate=3600"
     cache_key = game
+    cache_key = f"{image_generation()}:{cache_key}"
     redis_key = f"cardboarddex:catalog:sets:{cache_key}"
 
     now = time.time()
@@ -316,7 +357,7 @@ def list_card_sets(
             name=card_set.name,
             series=card_set.series,
             release_date=card_set.release_date,
-            image_url=f"/cards/{set_images[card_set.id]}/image" if card_set.id in set_images else None,
+            image_url=card_image_url(set_images[card_set.id]) if card_set.id in set_images else None,
         )
         for card_set in card_sets
     ]

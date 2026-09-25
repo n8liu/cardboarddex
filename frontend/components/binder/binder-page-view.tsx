@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import Image from "next/image";
+import Image from "@/components/card-image";
 import Link from "next/link";
 import { useBinder } from "@/context/binder-context";
 import { useCurrency } from "@/context/currency-context";

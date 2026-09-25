@@ -1,3 +1,4 @@
+from app.services.image_delivery import card_image_url, image_generation
 from app.common.cache import TTLCache
 import logging
 import re
@@ -41,7 +42,7 @@ def build_card_summary(
         number=card.number,
         printed_total=card.printed_total,
         rarity=card.rarity,
-        image_url=f"/cards/{card.id}/image",
+        image_url=card_image_url(card.id),
         market_price=float(market_price) if market_price is not None else None,
         market_currency=market_currency,
         last_updated_at=last_updated_at or card.updated_at,
@@ -457,6 +458,7 @@ def calculate_top_pokemon_volume(
     """Calculate top 50 Pokémon ranked by aggregated observed market value, sales count, or momentum."""
     clean_q = (q or "").strip().lower()
     cache_key = f"{timeframe}:{sort_by}:{clean_q}"
+    cache_key = f"{image_generation()}:{cache_key}"
     redis_key = f"cardboarddex:top_volume:{cache_key}"
     now = datetime.now(UTC)
 

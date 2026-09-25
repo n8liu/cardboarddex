@@ -1,3 +1,4 @@
+from app.services.image_delivery import card_image_url, image_generation
 from app.common.cache import TTLCache
 import hashlib
 import json
@@ -77,6 +78,7 @@ def calculate_sealed_signals(
     cache_key_raw = f"{signal}:{product_type}:{sort_by}:{set_id}:{q.strip().lower()}:{page}:{per_page}"
     cache_hash = hashlib.md5(cache_key_raw.encode()).hexdigest()
     redis_key = f"cardboarddex:sealed_signals:{cache_hash}"
+    redis_key = f"{image_generation()}:{redis_key}"
 
     # 1. Try Redis cache first
     r = get_redis()
@@ -282,7 +284,7 @@ def calculate_sealed_signals(
             set_name=cset.name,
             series=cset.series,
             release_date=cset.release_date,
-            image_url=f"/cards/{card.id}/image",
+            image_url=card_image_url(card.id),
             product_type=disp_type,
             market_price=round(market_price, 2),
             low_price=round(low_price, 2) if low_price is not None else None,

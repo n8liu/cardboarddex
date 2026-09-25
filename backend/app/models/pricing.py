@@ -31,6 +31,12 @@ class PriceObservation(Base):
         UniqueConstraint("fingerprint", name="uq_price_observations_fingerprint"),
         Index("ix_price_observations_card_provider_time", "card_id", "provider", "observed_at"),
         Index(
+            "ix_price_observations_analytics_cover", "card_id",
+            postgresql_include=[
+                "id", "price", "provider", "grading_company", "observed_at", "provider_updated_at",
+            ],
+        ),
+        Index(
             "ix_price_observations_search_lookup",
             "card_id",
             "provider",
@@ -80,4 +86,3 @@ class RawEbayListing(Base):
     grade: Mapped[Decimal | None] = mapped_column(Numeric(4, 1))
     raw_payload: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-

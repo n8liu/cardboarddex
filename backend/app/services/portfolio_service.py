@@ -1,3 +1,4 @@
+from app.services.image_delivery import card_image_url, image_generation
 from app.common.cache import TTLCache
 import hashlib
 import json
@@ -65,6 +66,7 @@ def calculate_portfolio_valuation(
     cache_str = f"{','.join(clean_ids)}:{days}"
     cache_hash = hashlib.md5(cache_str.encode("utf-8")).hexdigest()
     cache_key = f"cardboarddex:portfolio:{cache_hash}"
+    cache_key = f"{image_generation()}:{cache_key}"
 
     try:
         redis_client = get_redis()
@@ -189,7 +191,7 @@ def calculate_portfolio_valuation(
                 set_name=card_set.name,
                 number=f"{card.number}/{card.printed_total}" if card.printed_total else card.number,
                 rarity=card.rarity,
-                image_url=f"/cards/{card.id}/image",
+                image_url=card_image_url(card.id),
                 market_price=round(market_price, 2) if market_price is not None else None,
                 market_currency="USD",
                 price_change_24h=round(p_24h, 2) if p_24h is not None else None,

@@ -1,3 +1,4 @@
+from app.services.image_delivery import card_image_url, image_generation
 from app.common.cache import TTLCache
 import logging
 import re
@@ -270,7 +271,7 @@ def calculate_trending_cards(
             "set_id": r.set_id,
             "number": r.number,
             "rarity": r.rarity,
-            "image_url": f"/cards/{cid}/image",
+            "image_url": card_image_url(cid),
             "market_price": market_price,
             "price_change_7d": price_change_7d,
             "clicks_count": clicks,
@@ -434,6 +435,7 @@ def get_trending_dashboard(
     """Calculate all three trending columns in a single unified payload with caching."""
     clean_q = (q or "").strip().lower()
     cache_key = f"{timeframe}:{clean_q}"
+    cache_key = f"{image_generation()}:{cache_key}"
     redis_key = f"cardboarddex:trending:{cache_key}"
     now = datetime.now(UTC)
 

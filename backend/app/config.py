@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     redis_socket_timeout: float = Field(default=2.0, gt=0, le=30)
     db_pool_size: int = Field(default=3, ge=1, le=10)
     db_max_overflow: int = Field(default=2, ge=0, le=10)
+    api_thread_limit: int = Field(default=8, ge=1, le=40)
     postgres_host: str | None = None
     postgres_user: str = "cardboarddex"
     postgres_db: str = "cardboarddex"
@@ -46,6 +47,9 @@ class Settings(BaseSettings):
     price_collection_card_limit: int = 5
     backend_cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"
     psa_value_fee: float = 24.99
+    image_cdn_enabled: bool = False
+    image_cdn_base_url: str = Field(default="https://images.cardboarddex.app", pattern=r"^https://images\.cardboarddex\.app/?$")
+    image_manifest_path: str = "/var/lib/cardboarddex/images/manifest.json"
     s3_bucket_name: str | None = None
     aws_region: str = "us-west-2"
     cloudfront_domain: str | None = None

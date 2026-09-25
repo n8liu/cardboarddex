@@ -4,6 +4,7 @@ import re
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from typing import Any
+from threading import Lock
 from urllib.parse import urlparse
 
 import httpx
@@ -14,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.common.formatters import parse_iso_datetime as _parse_iso_datetime
 from app.common.redis import get_redis as _get_redis
+from app.services.image_delivery import card_image_url
 from app.config import get_settings
 from app.database import get_db
 from app.models import Card, PriceObservation, ProviderCardState, Set
@@ -53,17 +55,19 @@ router = APIRouter(prefix="/cards", tags=["Cards"])
 ALLOWED_MARKETPLACE_DOMAINS = {"ebay.com", "tcgplayer.com"}
 RE_SAFE_CARD_ID = re.compile(r"^[a-zA-Z0-9_\-]+$")
 _S3_CLIENT = None
+_S3_CLIENT_LOCK = Lock()
 
 
 def _get_s3_client(region_name: str) -> Any:
     global _S3_CLIENT
-    if _S3_CLIENT is None:
-        try:
-            import boto3
-            _S3_CLIENT = boto3.client("s3", region_name=region_name)
-        except Exception as exc:
-            logger.warning("Failed initializing boto3 S3 client error=%s: %s", type(exc).__name__, exc)
-            return None
+    with _S3_CLIENT_LOCK:
+        if _S3_CLIENT is None:
+            try:
+                import boto3
+                _S3_CLIENT = boto3.client("s3", region_name=region_name)
+            except Exception as exc:
+                logger.warning("Failed initializing boto3 S3 client error=%s: %s", type(exc).__name__, exc)
+                return None
     return _S3_CLIENT
 
 
@@ -313,6 +317,12 @@ def get_card_image(
             detail="Invalid card ID format",
         )
 
+    if get_settings().image_cdn_enabled:
+        return Response(status_code=307, headers={
+            "Location": card_image_url(card_id),
+            "Cache-Control": "public, max-age=60, s-maxage=60",
+        })
+
     _img_redis = _get_redis()
     _broken_key = f"cardboarddex:broken_img:{card_id}"
     _is_broken = False
@@ -334,7 +344,10 @@ def get_card_image(
         )
 
     card = db.get(Card, card_id)
-    if card is None or not card.image_url:
+    source_url = card.image_url if card is not None else None
+    # Image downloads/uploads must not hold a scarce database connection.
+    db.close()
+    if not source_url:
         return Response(
             content=_PLACEHOLDER_SVG,
             media_type="image/svg+xml",
@@ -359,7 +372,7 @@ def get_card_image(
             logger.debug("S3 image check skipped card_id=%s: %s", card_id, exc)
 
     try:
-        content, content_type = client.get_image(card.image_url)
+        content, content_type = client.get_image(source_url)
         if settings.s3_bucket_name:
             try:
                 _s3 = _get_s3_client(settings.aws_region)
@@ -388,7 +401,7 @@ def get_card_image(
             logger.info(
                 "Card image not found upstream card_id=%s url=%s; caching 404 fallback",
                 card_id,
-                card.image_url,
+                source_url,
             )
             return Response(
                 content=_PLACEHOLDER_SVG,

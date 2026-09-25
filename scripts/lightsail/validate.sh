@@ -2,7 +2,7 @@
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$repo"
-for script in scripts/*.sh scripts/lightsail/*.sh; do bash -n "$script"; done
+for script in scripts/*.sh scripts/lightsail/*.sh scripts/images/*.sh; do bash -n "$script"; done
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 cp deploy/lightsail/.env.example "$stage/app.env"

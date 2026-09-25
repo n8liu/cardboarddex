@@ -1,6 +1,6 @@
 "use client";
 
-import Image from "next/image";
+import Image from "@/components/card-image";
 import Link from "next/link";
 import { FEATURED_POKEMON } from "@/lib/featured-pokemon";
 import { TYPE_THEMES, formatDexNumber } from "@/lib/pokeapi";
