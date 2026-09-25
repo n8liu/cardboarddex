@@ -1173,6 +1173,8 @@ def test_catalog_cdn_manifest_generation_replaces_cached_placeholder(client, mon
     import json
     from app.config import get_settings
     from app.services import image_delivery
+    clock = [0.0]
+    monkeypatch.setattr(image_delivery, 'monotonic', lambda: clock[0])
     settings = get_settings()
     monkeypatch.setattr(settings, 'image_cdn_enabled', True)
     monkeypatch.setattr(settings, 'image_manifest_path', str(tmp_path / 'manifest.json'))
@@ -1181,7 +1183,9 @@ def test_catalog_cdn_manifest_generation_replaces_cached_placeholder(client, mon
     assert first[0]['image_url'].endswith('/placeholder.svg')
     key = 'cards/pikachu-1/' + 'a' * 64 + '.png'
     (tmp_path / 'manifest.json').write_text(json.dumps({'version':1, 'images':{'pikachu-1':key}}))
-    monkeypatch.setattr(image_delivery, '_checked', 0)
+    clock[0] = 59
+    assert client.get('/cards/search', params={'q':'pikachu'}).json()[0]['image_url'].endswith('/placeholder.svg')
+    clock[0] = 61
     second = client.get('/cards/search', params={'q':'pikachu'}).json()
     assert second[0]['image_url'] == 'https://images.cardboarddex.app/' + key
     detail = client.get('/cards/pikachu-1').json()

@@ -29,8 +29,6 @@ jobs:
       R2_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL || secrets.R2_ENDPOINT_URL }}
       R2_BUCKET: cardboarddex-images
       R2_STATE_BUCKET: cardboarddex-images-state
-      KEY_PATH: ${{ runner.temp }}/image-sync-key
-      KNOWN_HOSTS_FILE: ${{ runner.temp }}/image-sync-known-hosts
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -51,8 +49,10 @@ jobs:
           HOST_KEYS: ${{ secrets.LIGHTSAIL_KNOWN_HOSTS }}
         run: |
           umask 077
-          printf '%s\n' "$SSH_KEY" > "$KEY_PATH"
-          printf '%s\n' "$HOST_KEYS" > "$KNOWN_HOSTS_FILE"
+          printf '%s\n' "$SSH_KEY" > "$RUNNER_TEMP/image-sync-key"
+          printf '%s\n' "$HOST_KEYS" > "$RUNNER_TEMP/image-sync-known-hosts"
+          echo "KEY_PATH=$RUNNER_TEMP/image-sync-key" >> "$GITHUB_ENV"
+          echo "KNOWN_HOSTS_FILE=$RUNNER_TEMP/image-sync-known-hosts" >> "$GITHUB_ENV"
       - name: Export image inventory
         run: bash scripts/images/remote.sh export > "$RUNNER_TEMP/image-inventory.jsonl"
       - name: Synchronize bounded batch
@@ -84,4 +84,4 @@ jobs:
           if [[ '${{ steps.transfer.outputs.partial_failure }}' == 2 ]]; then exit 1; fi
       - name: Remove temporary credentials and inventory
         if: always()
-        run: rm -f "$KEY_PATH" "$KNOWN_HOSTS_FILE" "$RUNNER_TEMP/image-inventory.jsonl"
+        run: rm -f "$RUNNER_TEMP/image-sync-key" "$RUNNER_TEMP/image-sync-known-hosts" "$RUNNER_TEMP/image-inventory.jsonl"

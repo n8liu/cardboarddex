@@ -10,7 +10,14 @@ from jobs.publish_image_manifest import validate_manifest
 
 
 @pytest.fixture
-def cdn(monkeypatch, tmp_path):
+def clock(monkeypatch):
+    now = [0.0]
+    monkeypatch.setattr(delivery, 'monotonic', lambda: now[0])
+    return now
+
+
+@pytest.fixture
+def cdn(monkeypatch, tmp_path, clock):
     settings = Mock(image_cdn_enabled=True, image_cdn_base_url='https://images.cardboarddex.app', image_manifest_path=str(tmp_path / 'manifest.json'))
     monkeypatch.setattr(delivery, 'get_settings', lambda: settings)
     monkeypatch.setattr(delivery, '_path', None)
@@ -23,19 +30,19 @@ def write_manifest(settings, images):
     Path(settings.image_manifest_path).write_text(json.dumps({'version': 1, 'images': images}))
 
 
-def test_atomic_reload_retains_previous_on_corruption(cdn, monkeypatch):
+def test_atomic_reload_retains_previous_on_corruption(cdn, clock):
     key = f'cards/a/{hashlib.sha256(b"a").hexdigest()}.jpg'
     write_manifest(cdn, {'a': key})
     assert delivery.card_image_url('a').endswith(key)
     initial = delivery.image_generation()
     assert delivery.card_image_url('missing').endswith('/placeholder.svg')
     write_manifest(cdn, {'a': '../bad.jpg'})
-    monkeypatch.setattr(delivery, '_checked', 0)
+    clock[0] += 61
     assert delivery.card_image_url('a').endswith(key)
     assert delivery.image_generation() == initial
     key2 = f'cards/a/{hashlib.sha256(b"b").hexdigest()}.png'
     write_manifest(cdn, {'a': key2})
-    monkeypatch.setattr(delivery, '_checked', 0)
+    clock[0] += 61
     assert delivery.card_image_url('a').endswith(key2)
     assert delivery.image_generation() != initial
 

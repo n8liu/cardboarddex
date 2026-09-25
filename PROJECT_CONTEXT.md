@@ -458,6 +458,9 @@ Recovery follow-up: **2026-09-24 UTC**. Earlier recoveries relapsed under dashbo
 
 ## R2 image delivery implementation (pending activation)
 
+- User published `54ec8612b190505fdfc68601020a8fd69d68bf59`. Backend run `36076526008` failed two clock-dependent manifest tests; image workflow run `36076525148` was rejected because `runner.temp` was used in job-level env. Local fixes use step-level RUNNER_TEMP and controlled test clocks; all 190 backend tests and actionlint pass. These follow-up fixes still require publication.
+- Both R2 buckets were created by the user. GitHub contains R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, and R2_ENDPOINT_URL secrets. Public DNS resolves images.cardboarddex.app and HTTPS responds; placeholder.svg returned a cacheable 404 before any upload. Do not enable CDN mode until pilot/backfill and error-cache checks pass.
+
 - R2/CDN implementation uses a local verified manifest, direct public image URLs, and a bounded GitHub runner synchronization job. Cards/Sets schemas are unchanged.
 - Live Cloudflare setup, credentials, initial backfill, cutover, and the 24-hour observation remain pending; no CPU savings are claimed yet. CDN mode and scheduled synchronization default to disabled.
 - See [R2 image setup and cutover](docs/r2-images.md) for exact configuration, validation, costs, and rollback. Production ingestion must stay paused during rollout.
