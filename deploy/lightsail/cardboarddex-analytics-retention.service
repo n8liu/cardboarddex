@@ -1,0 +1,13 @@
+[Unit]
+Description=CardboardDex site analytics retention
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+Environment=APP_ENV_FILE=/etc/cardboarddex/app.env
+WorkingDirectory=/opt/cardboarddex/current
+ExecStart=/usr/bin/docker compose -p app --env-file /etc/cardboarddex/app.env -f /opt/cardboarddex/current/docker-compose.prod.yml exec -T backend python -m jobs.cleanup_analytics
+UMask=0077
+TimeoutStartSec=300
+Nice=10

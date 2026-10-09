@@ -90,7 +90,6 @@ export function resolveApiUrl(): string {
   return (url || "http://localhost:8000").replace(/\/+$/, "");
 }
 
-export const API_URL = resolveApiUrl();
 export const CARD_PAGE_SIZE = 24;
 
 export function buildQueryString(
@@ -114,6 +113,19 @@ interface CacheEntry<T> {
 const clientCache = new Map<string, CacheEntry<unknown>>();
 const clientInflight = new Map<string, Promise<unknown>>();
 const CLIENT_CACHE_TTL_MS = 60_000; // 60s memory cache for browser GET requests
+const CLIENT_CACHE_MAX_ENTRIES = 64;
+
+function cacheResponse(url: string, data: unknown): void {
+  const now = Date.now();
+  for (const [key, entry] of clientCache) {
+    if (now - entry.timestamp >= CLIENT_CACHE_TTL_MS) clientCache.delete(key);
+  }
+  clientCache.delete(url);
+  clientCache.set(url, { data, timestamp: now });
+  while (clientCache.size > CLIENT_CACHE_MAX_ENTRIES) {
+    clientCache.delete(clientCache.keys().next().value!);
+  }
+}
 
 export function clearClientCache(): void {
   clientCache.clear();
@@ -126,12 +138,14 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   const isClient = typeof window !== "undefined";
   const isGet = !options.method || options.method.toUpperCase() === "GET";
+  const canCache = isClient && isGet && options.cache !== "no-store";
 
-  if (isClient && isGet) {
+  if (canCache) {
     const cached = clientCache.get(fullUrl);
     if (cached && Date.now() - cached.timestamp < CLIENT_CACHE_TTL_MS) {
       return cached.data as T;
     }
+    clientCache.delete(fullUrl);
     const inflight = clientInflight.get(fullUrl);
     if (inflight) {
       return inflight as Promise<T>;
@@ -162,19 +176,19 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
         throw new Error(`CardboardDex API ${path} returned ${response.status}`);
       }
       const data = (await response.json()) as T;
-      if (isClient && isGet) {
-        clientCache.set(fullUrl, { data, timestamp: Date.now() });
+      if (canCache) {
+        cacheResponse(fullUrl, data);
       }
       return data;
     } finally {
       clearTimeout(timeoutId);
-      if (isClient && isGet) {
+      if (canCache) {
         clientInflight.delete(fullUrl);
       }
     }
   })();
 
-  if (isClient && isGet) {
+  if (canCache) {
     clientInflight.set(fullUrl, fetchPromise);
   }
 

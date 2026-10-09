@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Image from "@/components/card-image";
-import Link from "next/link";
 import { getPokemonByIdOrSlug } from "@/lib/pokedex-data";
 import { getPokemonDetail, TYPE_THEMES, formatDexNumber } from "@/lib/pokeapi";
 import { getPokemonCards } from "@/lib/api";
@@ -9,7 +8,6 @@ import { PokemonAudioPlayer } from "@/components/pokemon-audio-player";
 import { PokemonCardsView } from "@/components/pokemon-cards-view";
 import {
   PokemonCycleHeader,
-  PokemonArrowButton,
   PokemonKeyboardCycle,
 } from "@/components/pokemon-cycle-nav";
 import type { PokemonType } from "@/types/pokemon";

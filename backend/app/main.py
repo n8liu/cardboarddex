@@ -15,7 +15,7 @@ from app.common.rate_limiter import check_rate_limit, get_client_ip
 from app.common.redis import get_redis as _get_redis, get_durable_redis
 from app.config import get_settings
 from app.database import get_db
-from app.routers import analytics, cards, catalog, market
+from app.routers import admin, analytics, cards, catalog, market, telemetry
 
 logging.basicConfig(
     level=logging.INFO,
@@ -130,6 +130,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(admin.router)
+app.include_router(telemetry.router)
 app.include_router(catalog.router)
 app.include_router(market.router)
 app.include_router(analytics.router)
@@ -151,6 +153,9 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
         headers["Access-Control-Allow-Origin"] = origin  # type: ignore[assignment]
         headers["Access-Control-Allow-Credentials"] = "true"
         headers["Vary"] = "Origin"
+
+    if request.url.path.startswith(("/admin/", "/telemetry/")):
+        headers["Cache-Control"] = "no-store"
 
     return JSONResponse(
         status_code=500,
@@ -239,3 +244,11 @@ def get_quotas() -> dict[str, Any]:
         },
         "timestamp": datetime.now(UTC).isoformat(),
     }
+
+
+@app.middleware("http")
+async def private_analytics_headers(request: Request, call_next) -> Response:
+    response = await call_next(request)
+    if request.url.path.startswith(("/admin/", "/telemetry/")):
+        response.headers["Cache-Control"] = "no-store"
+    return response

@@ -1,41 +1,5 @@
 from app.services.image_delivery import card_image_url
-try:
-    from app.common.cache import TTLCache
-except ImportError:
-    from collections import OrderedDict
-    from threading import RLock
-    from time import monotonic
-
-    class TTLCache:  # type: ignore[no-redef]
-        def __init__(self, max_entries: int = 64, ttl: float = 300):
-            self.max_entries = max_entries
-            self.ttl = ttl
-            self._data: OrderedDict[str, tuple[float, Any]] = OrderedDict()
-            self._lock = RLock()
-
-        def _expire(self) -> None:
-            cutoff = monotonic() - self.ttl
-            while self._data and next(iter(self._data.values()))[0] <= cutoff:
-                self._data.popitem(last=False)
-
-        def get(self, key: str, default: Any = None) -> Any:
-            with self._lock:
-                self._expire()
-                item = self._data.get(key)
-                return item[1] if item else default
-
-        def __getitem__(self, key: str) -> Any:
-            with self._lock:
-                self._expire()
-                return self._data[key][1]
-
-        def __setitem__(self, key: str, value: Any) -> None:
-            with self._lock:
-                self._expire()
-                self._data.pop(key, None)
-                self._data[key] = (monotonic(), value)
-                while len(self._data) > self.max_entries:
-                    self._data.popitem(last=False)
+from app.common.cache import TTLCache
 
 import json
 import logging
@@ -48,11 +12,10 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Query, Response
 from redis.exceptions import RedisError
-from sqlalchemy import case, func, not_, or_, select, text
+from sqlalchemy import case, func, or_, select, text
 from sqlalchemy.orm import Session, aliased
 
 from app.common.formatters import (
-    extract_float as _extract_float,
     parse_iso_datetime as _parse_iso_datetime,
 )
 from app.common.redis import get_redis as _get_redis

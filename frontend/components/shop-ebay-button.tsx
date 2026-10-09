@@ -1,5 +1,3 @@
-import type { CardDetail } from "@/types/card";
-
 export type EbaySearchCardTarget = {
   name: string;
   number?: string | null;

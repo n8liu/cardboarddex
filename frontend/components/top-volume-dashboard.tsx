@@ -24,15 +24,6 @@ type TopVolumeDashboardProps = {
 
 type ViewMode = "overview" | "cards" | "pokemon" | "volume";
 
-function formatMoney(value: number | null | undefined): string {
-  if (value === null || value === undefined) return "—";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 2,
-  }).format(value);
-}
-
 function formatRank(rank: number): string {
   return rank < 10 ? `#0${rank}` : `#${rank}`;
 }
@@ -395,15 +386,6 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
   const topCard = data.trending_cards[0] || null;
   const topPokemon = data.trending_pokemon[0] || null;
   const topVolume = data.volume_pokemon[0] || null;
-
-  const totalVolumeFormatted = useMemo(() => {
-    const rawSum = data.total_volume_usd ?? 0;
-    const sum = convertPrice(rawSum) ?? 0;
-    if (sum >= 1_000_000_000) return `${symbol}${(sum / 1_000_000_000).toFixed(2)}B`;
-    if (sum >= 1_000_000) return `${symbol}${(sum / 1_000_000).toFixed(2)}M`;
-    if (sum >= 1_000) return `${symbol}${(sum / 1_000).toFixed(1)}K`;
-    return `${symbol}${sum.toFixed(2)}`;
-  }, [data.total_volume_usd, convertPrice, symbol]);
 
   return (
     <div className="mx-auto max-w-[1600px] px-4 py-8 sm:px-6 lg:px-8">

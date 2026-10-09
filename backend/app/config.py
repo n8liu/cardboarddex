@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
+from pydantic import Field, field_validator, model_validator
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -54,10 +54,31 @@ class Settings(BaseSettings):
     aws_region: str = "us-west-2"
     cloudfront_domain: str | None = None
     admin_api_key: str | None = None
+    analytics_enabled: bool = False
+    analytics_identity_secret: str | None = None
+    # Only trust country/client headers from explicitly configured network peers.
+    analytics_trusted_proxy_cidrs: str = ""
+    admin_allowed_origins: str = "https://cardboarddex.app,https://www.cardboarddex.app,http://localhost:3000,http://127.0.0.1:3000"
+    admin_cookie_secure: bool = True
     enable_api_docs: bool = False
     rate_limit_per_minute: int = 300
     rate_limit_track_action_per_minute: int = 30
     rate_limit_heavy_per_minute: int = 60
+
+    @field_validator("analytics_trusted_proxy_cidrs")
+    @classmethod
+    def valid_analytics_proxies(cls, value: str) -> str:
+        from ipaddress import ip_network
+        for cidr in value.split(","):
+            if cidr.strip():
+                ip_network(cidr.strip())
+        return value
+
+    @model_validator(mode="after")
+    def valid_analytics_secret(self):
+        if self.analytics_enabled and len(self.analytics_identity_secret or "") < 32:
+            raise ValueError("ANALYTICS_IDENTITY_SECRET must contain at least 32 characters when tracking is enabled")
+        return self
 
     @property
     def cors_origins(self) -> list[str]:

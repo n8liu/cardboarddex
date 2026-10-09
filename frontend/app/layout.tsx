@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
+import { AnalyticsTracker, AnalyticsPreference } from "@/components/analytics-tracker";
 
 import { CommandPalette } from "@/components/command-palette-lazy";
 import { NavHeader } from "@/components/nav-header";
@@ -31,6 +33,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <link rel="dns-prefetch" href="https://raw.githubusercontent.com" />
       </head>
       <body suppressHydrationWarning>
+        <Suspense fallback={null}><AnalyticsTracker /></Suspense>
         <CurrencyProvider>
           <BinderProvider>
             <CommandPalette />
@@ -39,6 +42,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             <footer className="border-t border-slate-200 bg-white">
               <div className="mx-auto max-w-[1600px] px-5 py-8 text-xs text-slate-500 sm:px-8">
                 Pokémon catalog and market pricing via TCG API. Sold-market analytics via verified eBay listings.
+                <AnalyticsPreference />
               </div>
             </footer>
           </BinderProvider>

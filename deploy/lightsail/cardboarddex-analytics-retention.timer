@@ -1,0 +1,11 @@
+[Unit]
+Description=Clean expired site analytics daily
+
+[Timer]
+OnCalendar=*-*-* 04:40:00 UTC
+Persistent=true
+RandomizedDelaySec=300
+Unit=cardboarddex-analytics-retention.service
+
+[Install]
+WantedBy=timers.target

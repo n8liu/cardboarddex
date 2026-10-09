@@ -1,11 +1,9 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Image from "@/components/card-image";
-import Link from "next/link";
 import { useBinder } from "@/context/binder-context";
 import { useCurrency } from "@/context/currency-context";
-import { AnimatedNumber } from "@/components/ui/animated-number";
 import { cardImageUrl } from "@/lib/api";
 import { fetchPortfolioDataWithFallback } from "@/lib/portfolio";
 import type { PortfolioCardItem, PortfolioValuationResponse } from "@/types/binder";
@@ -30,11 +28,10 @@ export function BinderPageView() {
     isHydrated,
   } = useBinder();
 
-  const { formatPrice, convertPrice, currency } = useCurrency();
+  const { formatPrice } = useCurrency();
 
   // Valuation state
   const [valuation, setValuation] = useState<PortfolioValuationResponse | null>(null);
-  const [loadingValuation, setLoadingValuation] = useState(false);
 
   // Card picker modal state
   const [pickerTarget, setPickerTarget] = useState<{
@@ -55,7 +52,6 @@ export function BinderPageView() {
     if (!isHydrated) return;
 
     let cancelled = false;
-    setLoadingValuation(true);
 
     fetchPortfolioDataWithFallback(allCardIds, 365)
       .then((data) => {
@@ -65,9 +61,6 @@ export function BinderPageView() {
       })
       .catch((err) => {
         console.error("[BinderPageView] Valuation fetch error:", err);
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingValuation(false);
       });
 
     return () => {

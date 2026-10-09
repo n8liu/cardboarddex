@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Image from "@/components/card-image";
 import { useCurrency } from "@/context/currency-context";
 import { cardImageUrl, searchCards } from "@/lib/api";

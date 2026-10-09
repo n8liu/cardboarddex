@@ -13,15 +13,6 @@ import { useCurrency } from "@/context/currency-context";
 import { CARD_PAGE_SIZE, getCardSets, getSetStats, searchCards } from "@/lib/api";
 import type { CardSetOption, CardSort, CardSummary, GameLanguage, SetStats } from "@/types/card";
 
-function formatMoney(value: number | null | undefined, currency: string = "USD"): string {
-  if (value === null || value === undefined) return "Price pending";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: currency || "USD",
-    maximumFractionDigits: 2,
-  }).format(value);
-}
-
 type CatalogQuickFilter = "all" | "under10" | "10to50" | "grails" | "specials";
 
 const QUICK_FILTERS: { id: CatalogQuickFilter; label: string }[] = [
@@ -289,7 +280,6 @@ export function CatalogBrowser({
       }).catch(() => {});
     }
   }, [sets]);
-
 
   useEffect(() => {
     if (!isInitialized.current) return;

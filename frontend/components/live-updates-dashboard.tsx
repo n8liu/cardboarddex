@@ -3,7 +3,7 @@
 import Image from "@/components/card-image";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { cardImageUrl, getLiveUpdates } from "@/lib/api";
 import { BackToTop } from "@/components/ui/back-to-top";
@@ -369,11 +369,6 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
   const handleGradeChange = (newGf: LiveUpdateGradeFilter) => {
     setGradeFilter(newGf);
     fetchFresh(provider, newGf, searchQuery);
-  };
-
-  const handleSearchSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    fetchFresh(provider, gradeFilter, searchQuery);
   };
 
   return (
