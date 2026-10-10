@@ -66,6 +66,29 @@ npm run build
 ```
 
 
-Verification on 2026-10-09: 202 backend tests passed (16 opt-in tests skipped), 38 frontend tests passed, TypeScript and production build passed. A separate PostgreSQL 16 integration test passed migration upgrade/downgrade/re-upgrade, unchanged catalog schema, concurrent initial visits/duplicate retries, and UTC reporting with a non-UTC database session. The disposable database was removed. Production deployment and country-header verification remain rollout work.
+Verification on 2026-10-09: 202 backend tests passed (16 opt-in tests skipped), 38 frontend tests passed, TypeScript and production build passed. A separate PostgreSQL 16 integration test passed migration upgrade/downgrade/re-upgrade, unchanged catalog schema, concurrent initial visits/duplicate retries, and UTC reporting with a non-UTC database session. The disposable database was removed. Production deployment and country-header verification completed on 2026-10-10; see the rollout record below.
 
 The PostgreSQL integration test is `backend/tests/test_site_analytics_postgres.py`. It is opt-in via `TEST_ANALYTICS_POSTGRES_URL`, accepts only a loopback PostgreSQL database named `analytics_test`, and must be run against a fresh disposable database because it migrates it.
+
+
+## Production rollout verified — 2026-10-10 UTC
+
+The stats feature is live at `https://cardboarddex.app/admin/stats` from commit `22869ded33d9c64e2365d440e6e5232c12142163`. The 404 was caused by frontend/backend release mismatch while Backend CI/CD was disabled. The backend was deployed manually after testing its exact AMD64 image and verifying the latest production backup by restoration.
+
+- Database revision: `0006_site_analytics`; Cards and Sets counts remain unchanged.
+- Backend tracking is enabled. Cloudflare discarded dashboard-set tracking variables during a rebuild, so its build command now sets `NEXT_PUBLIC_ANALYTICS_ENABLED=true` only for `CF_PAGES_BRANCH=main` and `NEXT_PUBLIC_ANALYTICS_ALLOW_LOCAL=false` before running the existing Next.js adapter. Preview branches set tracking false. Final Pages deployment `f2b7c1b9-bdaa-4ccd-b4a5-62d16c8ee436` succeeded; the live layout bundle was verified with the tracker enabled, public flags compiled, and the opt-out UI present.
+- Use the existing **production** admin secret. The local preview secret is separate; no production admin-secret rotation was performed.
+- Trusted proxy: `172.18.0.1/32`, with Uvicorn forwarded-header trust disabled through `FORWARDED_ALLOW_IPS=`. Country attribution was verified as US over the public Cloudflare path.
+- The daily retention timer is installed and its initial run succeeded. Login, stats, secure cookie attributes, no-store responses, origin checks, deduplicated telemetry, and logout passed public verification. The synthetic test visit was removed from analytics afterward.
+- Backend CI/CD remains disabled because its pre-existing run `34748756712` is stuck queued. Future backend commits will require a deliberate deployment until that workflow issue is resolved. Existing ingestion remains paused.
+
+The active image digest is `sha256:fbf2bd0f5996712ac8d16db159917bf031c9a7080edf86489937b39a1af54777`; detailed receipts are recorded in `PROJECT_CONTEXT.md`.
+
+
+The verified Pages build command is:
+
+```sh
+if [ "$CF_PAGES_BRANCH" = "main" ]; then export NEXT_PUBLIC_ANALYTICS_ENABLED=true; else export NEXT_PUBLIC_ANALYTICS_ENABLED=false; fi; export NEXT_PUBLIC_ANALYTICS_ALLOW_LOCAL=false; npx @cloudflare/next-on-pages
+```
+
+Keep this branch gate when changing the build command, or provide equivalent compile-time variables through a verified build configuration. Dashboard variable edits alone did not survive this project's initial rebuild. The production admin endpoint now returns 401 before login and 200 after login; a 401 is expected authentication behavior, not a missing route.
