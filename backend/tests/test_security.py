@@ -43,6 +43,7 @@ def test_cors_origin_validation() -> None:
     assert is_allowed_origin("https://cardboarddex.pages.dev") is True
     assert is_allowed_origin("https://cardboarddex.app") is True
     assert is_allowed_origin("https://www.cardboarddex.app") is True
+    assert is_allowed_origin("https://cardboarddex.nliu.org") is True
     assert is_allowed_origin("http://localhost:3000") is True
     assert is_allowed_origin("http://127.0.0.1:3000") is True
 
@@ -53,9 +54,27 @@ def test_cors_origin_validation() -> None:
     assert is_allowed_origin("https://cardboarddex.com.attacker.com") is False
     assert is_allowed_origin("https://evilcardboarddex.app") is False
     assert is_allowed_origin("https://cardboarddex.app.attacker.com") is False
+    assert is_allowed_origin("https://cardboarddex.nliu.org.attacker.com") is False
+    assert is_allowed_origin("https://evilcardboarddex.nliu.org") is False
+    assert is_allowed_origin("https://other.nliu.org") is False
+    assert is_allowed_origin("http://cardboarddex.nliu.org") is False
     assert is_allowed_origin("https://random-app.pages.dev") is False
     assert is_allowed_origin(None) is False
     assert is_allowed_origin("") is False
+
+
+def test_custom_domain_cors(client: TestClient) -> None:
+    origin = "https://cardboarddex.nliu.org"
+    response = client.get("/health", headers={"Origin": origin})
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == origin
+
+    preflight = client.options(
+        "/cards/search",
+        headers={"Origin": origin, "Access-Control-Request-Method": "GET"},
+    )
+    assert preflight.status_code == 200
+    assert preflight.headers["access-control-allow-origin"] == origin
 
 
 def test_extract_listing_url_sanitization() -> None:

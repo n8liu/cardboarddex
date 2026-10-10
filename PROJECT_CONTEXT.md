@@ -558,7 +558,7 @@ Backend settings are loaded from environment variables and the repository-root `
 | `S3_BUCKET_NAME` | Optional bucket for image caching/sync. |
 | `AWS_REGION` | Image-storage client region; `us-west-2`. |
 | `CLOUDFRONT_DOMAIN` | Optional asset hostname without a scheme. |
-| `BACKEND_CORS_ORIGINS` | Comma-separated origins; defaults to localhost/127.0.0.1 on ports 3000/3001. `main.py` additionally allows matching production/preview origins. |
+| `BACKEND_CORS_ORIGINS` | Comma-separated origins; defaults to localhost/127.0.0.1 on ports 3000/3001. `main.py` additionally allows matching production/preview origins and exact HTTPS origin `https://cardboarddex.nliu.org` (added locally 2026-10-10; deployment pending). Admin origin authorization remains separately configured through `ADMIN_ALLOWED_ORIGINS`. |
 | `NEXT_PUBLIC_API_URL` | Browser-visible API base URL; resolved by [next.config.ts](frontend/next.config.ts) and [api.ts](frontend/lib/api.ts). Never put credentials here. |
 | `PSA_VALUE_FEE` | Grading-fee assumption; `24.99`. |
 | `ADMIN_API_KEY` | Token for privileged routes through `X-Admin-Token`; admin actions disabled when unset. |
