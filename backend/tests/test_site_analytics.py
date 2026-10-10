@@ -203,3 +203,18 @@ def test_analytics_configuration_rejects_invalid_secrets_and_proxy_networks():
         Settings(_env_file=None, analytics_enabled=True, analytics_identity_secret="short")
     with pytest.raises(ValidationError):
         Settings(_env_file=None, analytics_trusted_proxy_cidrs="not-a-network")
+
+
+def test_repeat_page_visits_keep_one_visitor_across_sessions_and_days(db):
+    now = datetime.now(UTC).replace(hour=12, minute=0, second=0, microsecond=0)
+    visitor = uuid4()
+    for offset in (timedelta(days=-1), timedelta(), timedelta(minutes=1), timedelta(minutes=31)):
+        view = event(visitor, "/catalog")
+        assert record_page_view(db, view, "US", now + offset)
+        assert not record_page_view(db, view, "US", now + offset)
+    result = report(db, (now - timedelta(days=1)).date(), now.date(), now)
+    assert result["current"] == {"views": 4, "visitors": 1, "sessions": 3}
+    assert result["total_views"] == 4
+    assert result["total_visitors"] == 1
+    assert [row["views"] for row in result["daily"]] == [1, 3]
+    assert [row["visitors"] for row in result["daily"]] == [1, 1]

@@ -69,3 +69,31 @@ it("excludes development traffic unless explicitly enabled", async () => {
   await trackPageView("/catalog");
   expect(fetchMock).not.toHaveBeenCalled();
 });
+
+it("retains the visitor across document reloads but sends a new view", async () => {
+  await (await import("@/lib/analytics")).trackPageView("/catalog");
+  vi.resetModules(); // A new document resets module state, but preserves localStorage.
+  await (await import("@/lib/analytics")).trackPageView("/catalog");
+  const bodies = fetchMock.mock.calls.map((call) => JSON.parse(call[1].body));
+  expect(bodies).toHaveLength(2);
+  expect(bodies[0].visitor_id).toBe(bodies[1].visitor_id);
+  expect(bodies[0].event_id).not.toBe(bodies[1].event_id);
+});
+
+it("counts cached document restores without double counting ordinary pageshow", async () => {
+  const { AnalyticsTracker } = await import("@/components/analytics-tracker");
+  const view = render(<StrictMode><AnalyticsTracker /></StrictMode>);
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+  // Happy DOM aliases PageTransitionEvent to Event; supply the browser property.
+  const pageShow = (persisted: boolean) => Object.assign(new Event("pageshow"), { persisted });
+  window.dispatchEvent(pageShow(false));
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  window.dispatchEvent(pageShow(true));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  const bodies = fetchMock.mock.calls.map((call) => JSON.parse(call[1].body));
+  expect(bodies[0].visitor_id).toBe(bodies[1].visitor_id);
+  expect(bodies[0].event_id).not.toBe(bodies[1].event_id);
+  view.unmount();
+  window.dispatchEvent(pageShow(true));
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+});

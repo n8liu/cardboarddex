@@ -4,8 +4,8 @@
 
 ## Definitions and data
 
-- Views: browser initial mount/reload and pathname changes. Query-string/filter changes, prefetch, API requests, and auto-refresh polling do not count. Only recognized public routes are accepted. A failed page shell may still count as a visit.
-- Unique visitors: distinct HMACs of random browser UUIDs in the period; this is not a count of verified people. Storage clearing and other devices produce new visitors.
+- Total visits (page views): browser initial mount/reload, pathname changes, and restored documents from the back/forward cache. Repeat views from the same browser increase visits without increasing unique visitors; equal counts are valid when every browser has only one recorded view. Query-string/filter changes, prefetch, API requests, and auto-refresh polling do not count. Only recognized public routes are accepted. A failed page shell may still count as a visit.
+- Unique visitors: distinct HMACs of persistent random browser UUIDs in the period (shared across tabs and reloads, not grouped by IP); this is not a count of verified people. Storage clearing and other devices produce new visitors.
 - Sessions: backend-issued IDs after 30 minutes without a tracked page view. Counts measure sessions active in a period, not sessions started in it. No heartbeat or interaction-based activity is implemented in this phase.
 - Daily boundaries and all date selections use UTC. Current-day comparisons include the partial current day. Period uniques and sessions are deduplicated across days. Country and page rows can overlap.
 - Country: trusted Cloudflare `CF-IPCountry`, otherwise `ZZ` (Unknown). IP addresses are not stored in analytics tables. Existing infrastructure/rate-limit logs have their own policies.
@@ -13,6 +13,8 @@
 - Detailed events have a 90-calendar-day UTC window including today. The retention job physically deletes expired records in 1,000-row transactions. Minimal visitor HMAC/first-seen/last-seen/session records and daily view totals persist for lifetime counts. Deleting/rotating the identity secret breaks visitor continuity; keep it stable and backed up.
 - Stats use SQL aggregation over the date-indexed event table, never materialize all events, and never join catalog data. Reports are limited to the last 90 days and top 20 pages. Older period breakdowns are unavailable; lifetime views and visitors remain available.
 - The footer explains tracking and provides an opt-out. `Do Not Track: 1` is honored. A blocked localStorage means tracking is skipped. Development and loopback traffic are excluded unless explicitly enabled.
+
+The dashboard separates selected-period metrics from lifetime totals, shows views per visitor (views divided by period uniques), and shows country/page shares of period views. Additional views are views minus period uniques, not a count of returning people. Today is a partial UTC day. Existing historical counts are preserved; missed cache restores cannot be backfilled. Local refinement verification on 2026-10-10: 42 frontend tests, 13 analytics backend tests, TypeScript, and production build passed; this refinement has not been deployed.
 
 ## Configuration and local verification
 

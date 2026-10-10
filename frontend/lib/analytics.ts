@@ -23,9 +23,9 @@ export function setAnalyticsOptOut(value: boolean): void {
   }
 }
 
-export async function trackPageView(path: string): Promise<void> {
+export async function trackPageView(path: string, restored = false): Promise<void> {
   // Keep the previous path even for excluded pages so A -> admin -> A is a revisit.
-  if (path === lastPath) return;
+  if (path === lastPath && !restored) return;
   lastPath = path;
   const local = ["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname);
   if ((process.env.NODE_ENV !== "production" || local) && process.env.NEXT_PUBLIC_ANALYTICS_ALLOW_LOCAL !== "true") return;

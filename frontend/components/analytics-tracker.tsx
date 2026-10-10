@@ -7,6 +7,14 @@ import { analyticsOptedOut, setAnalyticsOptOut, trackPageView } from "@/lib/anal
 export function AnalyticsTracker() {
   const pathname = usePathname();
   useEffect(() => { void trackPageView(pathname); }, [pathname]);
+  useEffect(() => {
+    // A cached document resumes without remounting React or changing pathname.
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) void trackPageView(window.location.pathname, true);
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, []);
   return null;
 }
 

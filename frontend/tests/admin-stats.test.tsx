@@ -75,3 +75,24 @@ it("does not save the admin secret in browser storage", async () => {
   expect(local).not.toHaveBeenCalled(); expect(session).not.toHaveBeenCalled();
   local.mockRestore(); session.mockRestore();
 });
+
+it("separates repeat views from unique browsers and lifetime totals", async () => {
+  vi.mocked(getStats).mockResolvedValue({ ...report, total_views: 100, total_visitors: 20 });
+  render(<StatsDashboard />);
+  expect(await screen.findByRole("region", { name: "Total visits" })).toHaveTextContent("10");
+  expect(screen.getByRole("region", { name: "Unique visitors" })).toHaveTextContent("2");
+  expect(screen.getByRole("region", { name: "Views per visitor" })).toHaveTextContent("5.00");
+  expect(screen.getByText(/8 additional views/)).toBeInTheDocument();
+  expect(screen.getAllByText("100.0%")).toHaveLength(2);
+});
+
+it("explains equal counts and handles zero traffic without invalid ratios", async () => {
+  vi.mocked(getStats).mockResolvedValueOnce({ ...report, current: { views: 2, visitors: 2, sessions: 2 } });
+  const view = render(<StatsDashboard />);
+  expect(await screen.findByText(/Visits and visitors match because/)).toBeInTheDocument();
+  view.unmount();
+  vi.mocked(getStats).mockResolvedValue({ ...report, current: { views: 0, visitors: 0, sessions: 0 }, daily: [], countries: [], pages: [] });
+  render(<StatsDashboard />);
+  expect(await screen.findByRole("region", { name: "Views per visitor" })).toHaveTextContent("—");
+  expect(screen.queryByText(/Visits and visitors match because/)).not.toBeInTheDocument();
+});
