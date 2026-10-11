@@ -49,7 +49,7 @@ const PLATFORM_STATS: PlatformStatItem[] = [
     detail: "Generations I through IX",
   },
   {
-    numericValue: 66500,
+    numericValue: 280000,
     displaySuffix: "+",
     label: "Active Market Prices",
     detail: "Per-printing observations & comps",
