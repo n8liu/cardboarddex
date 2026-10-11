@@ -2,6 +2,12 @@
 
 `/admin/stats` is a public login shell; every statistics response is authenticated by FastAPI. It does not expose statistics in HTML or server rendering. No admin link is added to the public navigation. The existing Trending system remains separate. Search, binder, and outbound-link interaction events are deferred to phase two.
 
+## Custom frontend origin
+
+The default admin allowlist includes `https://cardboarddex.nliu.org`. An existing `ADMIN_ALLOWED_ORIGINS` environment variable overrides that default: append the exact HTTPS origin to the production value and recreate the API container to load it. The same setting also authorizes telemetry requests; general API CORS is configured separately.
+
+Origin authorization alone does not enable cross-site browser sessions. The current `SameSite=Strict` admin cookie is not sent from `cardboarddex.nliu.org` to `api.cardboarddex.app`. Use the same-site `https://cardboarddex.app/admin/stats` for authenticated browser access until a same-site API/proxy or a separately reviewed cross-site cookie configuration is available. TestClient authentication tests verify server authorization, not browser cookie policy.
+
 ## Definitions and data
 
 - Total visits (page views): browser initial mount/reload, pathname changes, and restored documents from the back/forward cache. Repeat views from the same browser increase visits without increasing unique visitors; equal counts are valid when every browser has only one recorded view. Query-string/filter changes, prefetch, API requests, and auto-refresh polling do not count. Only recognized public routes are accepted. A failed page shell may still count as a visit.

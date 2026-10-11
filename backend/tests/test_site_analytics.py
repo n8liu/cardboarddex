@@ -7,7 +7,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.database import Base, get_db
 from app.main import app
 from app.models.analytics import AdminSession, AnalyticsDay, AnalyticsEvent, AnalyticsVisitor
@@ -82,6 +82,26 @@ def test_expiry_and_origin_enforcement(client, db):
     for origin in ("https://evil.example", "https://preview.cardboarddex.pages.dev", "null", ""):
         assert client.post("/admin/login", headers={"Origin": origin}, json={"secret": "test-admin-secret"}).status_code == 403
         assert client.get("/admin/stats", headers={"Origin": origin}).status_code == 403
+
+
+def test_custom_domain_admin_origin(client, monkeypatch):
+    monkeypatch.delenv("ADMIN_ALLOWED_ORIGINS", raising=False)
+    monkeypatch.setattr(
+        get_settings(), "admin_allowed_origins", Settings(_env_file=None).admin_allowed_origins,
+    )
+    origin = "https://cardboarddex.nliu.org"
+    client.headers["Origin"] = origin
+    response = login(client)
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == origin
+    assert response.headers["access-control-allow-credentials"] == "true"
+    assert client.get("/admin/stats").status_code == 200
+    for rejected in ("https://other.nliu.org", "https://cardboarddex.nliu.org.attacker.com", "http://cardboarddex.nliu.org"):
+        headers = {"Origin": rejected}
+        assert client.post("/admin/login", headers=headers, json={"secret": "test-admin-secret"}).status_code == 403
+        assert client.get("/admin/stats", headers=headers).status_code == 403
+        assert client.post("/admin/logout", headers=headers).status_code == 403
+    assert client.post("/admin/logout").status_code == 200
 
 
 def test_login_rate_limit(client, monkeypatch):

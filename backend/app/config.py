@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     analytics_identity_secret: str | None = None
     # Only trust country/client headers from explicitly configured network peers.
     analytics_trusted_proxy_cidrs: str = ""
-    admin_allowed_origins: str = "https://cardboarddex.app,https://www.cardboarddex.app,http://localhost:3000,http://127.0.0.1:3000"
+    admin_allowed_origins: str = "https://cardboarddex.app,https://www.cardboarddex.app,https://cardboarddex.nliu.org,http://localhost:3000,http://127.0.0.1:3000"
     admin_cookie_secure: bool = True
     enable_api_docs: bool = False
     rate_limit_per_minute: int = 300
