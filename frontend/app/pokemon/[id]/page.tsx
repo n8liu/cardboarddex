@@ -292,12 +292,10 @@ export default async function PokemonDetailPage({ params, searchParams }: PagePr
 
         {/* Interactive Cards Component */}
         <PokemonCardsView
+          key={basePokemon.id}
           pokemonName={pokemon.name}
           initialCards={cardsData.cards}
           availableSets={cardsData.available_sets}
-          totalCards={cardsData.total_cards}
-          highestPrice={cardsData.highest_price}
-          lowestPrice={cardsData.lowest_price}
         />
       </div>
     </main>

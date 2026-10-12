@@ -15,7 +15,7 @@ from app.common.rate_limiter import check_rate_limit, get_client_ip
 from app.common.redis import get_redis as _get_redis, get_durable_redis
 from app.config import get_settings
 from app.database import get_db
-from app.routers import admin, analytics, cards, catalog, market, telemetry
+from app.routers import admin, analytics, cards, catalog, market, telemetry, market_data, home
 
 logging.basicConfig(
     level=logging.INFO,
@@ -131,10 +131,12 @@ app.add_middleware(
 )
 
 app.include_router(admin.router)
+app.include_router(home.router)
 app.include_router(telemetry.router)
 app.include_router(catalog.router)
 app.include_router(market.router)
 app.include_router(analytics.router)
+app.include_router(market_data.router)
 app.include_router(cards.router)
 
 

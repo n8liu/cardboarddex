@@ -70,6 +70,7 @@ def get_top_pokemon_volume(
 @router.get("/trending", response_model=TrendingDashboardResponse)
 def get_trending(
     response: Response,
+    include_observation_volume: bool = Query(default=True),
     timeframe: Literal["24h", "7d", "30d", "all_time", "2026_ytd"] = Query(
         default="7d", description="Timeframe for trending volume calculations"
     ),
@@ -78,7 +79,7 @@ def get_trending(
 ) -> TrendingDashboardResponse:
     """Returns the 3-column Trending Dashboard: Trending Cards, Popular Pokémon, and Volume Leaders."""
     response.headers["Cache-Control"] = "public, max-age=30, s-maxage=60, stale-while-revalidate=120"
-    return get_trending_dashboard(db, timeframe=timeframe, q=q)
+    return get_trending_dashboard(db, timeframe=timeframe, q=q, include_observation_volume=include_observation_volume)
 
 
 @router.post("/trending/reset", dependencies=[Depends(verify_admin_token)])

@@ -7,11 +7,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useCurrency } from "@/context/currency-context";
 import { cardImageUrl, getTrendingDashboard } from "@/lib/api";
 import { shimmerBlurDataUrl } from "@/lib/shimmer";
-import { AnimatedNumber } from "@/components/ui/animated-number";
+import { SalesActivityPanel } from "@/components/sales-activity-panel";
 import { SearchInput } from "@/components/ui/search-input";
 import { getPokemonByIdOrSlug } from "@/lib/pokedex-data";
 import type {
-  PokemonVolumeItem,
   TrendingCardItem,
   TrendingDashboardResponse,
   TrendingPokemonItem,
@@ -206,103 +205,8 @@ function PokemonRow({ item }: { item: TrendingPokemonItem }) {
 // ---------------------------------------------------------------------------
 // Row Component: Volume Leader
 // ---------------------------------------------------------------------------
-function VolumeRow({ item }: { item: PokemonVolumeItem }) {
-  const isRank1 = item.rank === 1;
-  const isRank2 = item.rank === 2;
-  const isRank3 = item.rank === 3;
-  const isUp = item.momentum_trend === "up" || item.yoy_trend === "up";
-  const isDown = item.momentum_trend === "down" || item.yoy_trend === "down";
-  const pct = item.momentum_percentage || item.yoy_percentage || 0;
-  const pokeData = getPokemonByIdOrSlug(item.dex_number > 0 ? item.dex_number : item.pokemon_name);
-  const dexNumber = pokeData?.id ?? item.dex_number;
-  const spriteUrl = pokeData?.artwork || pokeData?.sprite || (item.dex_number > 0 ? item.sprite_url : "");
-  const pokemonHref = `/pokemon/${dexNumber || item.pokemon_name.toLowerCase()}?ref=trending`;
-
-  return (
-    <Link
-      href={pokemonHref}
-      prefetch={false}
-      className="group flex h-[62px] items-center justify-between gap-3 rounded-xl border border-slate-200/80 bg-white px-3 transition duration-150 hover:border-slate-400 hover:bg-slate-50/70"
-    >
-      {/* Left: Rank, Sprite, Pokémon Name & Dex */}
-      <div className="flex min-w-0 flex-1 items-center gap-2.5">
-        <span
-          className={`w-7 shrink-0 font-mono text-xs font-bold text-center ${
-            isRank1
-              ? "text-amber-700 bg-amber-50 rounded px-1 py-0.5 border border-amber-200/60"
-              : isRank2
-              ? "text-slate-700 bg-slate-100 rounded px-1 py-0.5 border border-slate-200"
-              : isRank3
-              ? "text-amber-900 bg-amber-50/60 rounded px-1 py-0.5 border border-amber-200/40"
-              : "text-slate-400"
-          }`}
-        >
-          {formatRank(item.rank)}
-        </span>
-
-        {/* Artwork Sprite - standardized 40x40 container */}
-        <div className="relative h-10 w-10 shrink-0 flex items-center justify-center rounded-lg border border-slate-100 bg-slate-50/60 overflow-hidden">
-          {spriteUrl ? (
-            <Image
-              src={spriteUrl}
-              alt={item.pokemon_name}
-              fill
-              className="object-contain p-0.5 transition duration-150 group-hover:scale-110"
-              sizes="40px"
-              unoptimized
-            />
-          ) : (
-            <span className="font-mono text-xs font-bold text-slate-400">
-              {item.pokemon_name.slice(0, 2).toUpperCase()}
-            </span>
-          )}
-        </div>
-
-        {/* Name & Dex */}
-        <div className="min-w-0 flex-1">
-          <p className="truncate font-mono text-xs font-bold text-slate-950 group-hover:text-slate-900 sm:text-sm">
-            {item.pokemon_name}
-          </p>
-          <div className="mt-0.5 flex items-center gap-1.5 font-mono text-[11px] text-slate-500 truncate">
-            <span className="shrink-0">#{String(dexNumber).padStart(4, "0")}</span>
-            <span className="text-slate-300">•</span>
-            <span className="truncate">{item.sales_count.toLocaleString()} comps</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Right: Volume & Momentum/Comps */}
-      <div className="w-28 shrink-0 text-right font-mono">
-        <div className="truncate text-xs font-bold text-slate-950 sm:text-sm">
-          {item.volume_formatted}
-        </div>
-        <div className="mt-0.5 flex items-center justify-end gap-1 text-[10px] font-medium truncate">
-          <span
-            className={
-              isUp ? "text-emerald-700 font-semibold" : isDown ? "text-rose-700 font-semibold" : "text-slate-400"
-            }
-          >
-            {isUp ? "▲" : isDown ? "▼" : "▬"}
-            {pct !== 0 ? ` ${pct > 0 ? "+" : ""}${pct.toFixed(0)}%` : ""}
-          </span>
-          <span className="text-slate-300">·</span>
-          <span className="text-slate-500 truncate">
-            {item.sales_count >= 1000
-              ? `${(item.sales_count / 1000).toFixed(1)}K`
-              : item.sales_count}{" "}
-            sales
-          </span>
-        </div>
-      </div>
-    </Link>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Main Dashboard
-// ---------------------------------------------------------------------------
 export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
-  const { formatPrice, convertPrice, symbol } = useCurrency();
+  const { formatPrice } = useCurrency();
   const [data, setData] = useState<TrendingDashboardResponse>(initialData);
   const [timeframe, setTimeframe] = useState<VolumeTimeframe>("7d");
   const [viewMode, setViewMode] = useState<ViewMode>("overview");
@@ -362,15 +266,7 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
     );
   }, [data.trending_pokemon, searchQuery]);
 
-  const filteredVolume = useMemo(() => {
-    if (!searchQuery.trim()) return data.volume_pokemon;
-    const q = searchQuery.toLowerCase().trim();
-    return data.volume_pokemon.filter(
-      (v) =>
-        v.pokemon_name.toLowerCase().includes(q) ||
-        String(v.dex_number).includes(q)
-    );
-  }, [data.volume_pokemon, searchQuery]);
+
 
   // Dual column split helper
   const splitColumns = <T,>(items: T[]): [T[], T[]] => {
@@ -380,12 +276,10 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
 
   const [cardsCol1, cardsCol2] = useMemo(() => splitColumns(filteredCards), [filteredCards]);
   const [pokeCol1, pokeCol2] = useMemo(() => splitColumns(filteredPokemon), [filteredPokemon]);
-  const [volCol1, volCol2] = useMemo(() => splitColumns(filteredVolume), [filteredVolume]);
 
   // Top summary stats
   const topCard = data.trending_cards[0] || null;
   const topPokemon = data.trending_pokemon[0] || null;
-  const topVolume = data.volume_pokemon[0] || null;
 
   return (
     <div className="mx-auto max-w-[1600px] px-4 py-8 sm:px-6 lg:px-8">
@@ -405,7 +299,7 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
               Trending &amp; Top 50
             </h1>
             <p className="mt-1.5 max-w-2xl text-xs sm:text-sm font-mono text-slate-500 leading-relaxed">
-              Track search velocity, click popularity, and market sales volume across cards and Pokémon species.
+              Track search velocity, click popularity, and provider-reported sales activity across cards and Pokémon species.
             </p>
           </div>
 
@@ -425,30 +319,7 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
                 <div className="text-[11px] text-slate-500">#{topPokemon.dex_number}</div>
               </div>
             )}
-            {topVolume && (
-              <div className="rounded-xl border border-slate-200/80 bg-white p-3 shadow-2xs">
-                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Volume #1</div>
-                <div className="mt-0.5 truncate font-bold text-slate-950">{topVolume.pokemon_name}</div>
-                <div className="text-[11px] text-slate-500">{topVolume.volume_formatted}</div>
-              </div>
-            )}
-            <div className="rounded-xl border border-slate-200/80 bg-white p-3 shadow-2xs">
-              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Tracked ({timeframe})</div>
-              <div className="mt-0.5 font-bold text-slate-950">
-                <AnimatedNumber
-                  value={convertPrice(data.total_volume_usd) ?? 0}
-                  format={(val) => {
-                    if (val >= 1_000_000_000) return `${symbol}${(val / 1_000_000_000).toFixed(2)}B`;
-                    if (val >= 1_000_000) return `${symbol}${(val / 1_000_000).toFixed(2)}M`;
-                    if (val >= 1_000) return `${symbol}${(val / 1_000).toFixed(1)}K`;
-                    return `${symbol}${val.toFixed(2)}`;
-                  }}
-                />
-              </div>
-              <div className="text-[11px] text-slate-500">
-                <AnimatedNumber value={data.total_sales_count || 0} /> comps
-              </div>
-            </div>
+
           </div>
         </div>
       </section>
@@ -501,7 +372,7 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
                     : "text-slate-600 hover:text-slate-950 hover:bg-slate-200/60"
                 }`}
               >
-                Volume Leaders
+                Sales Activity
               </button>
             </div>
 
@@ -642,35 +513,7 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
             </div>
           </div>
 
-          {/* Column 3: Volume Leaders */}
-          <div className="flex flex-col rounded-2xl border border-slate-200/90 bg-slate-50/50 p-3.5 sm:p-4 shadow-2xs">
-            <div className="flex h-[42px] items-center justify-between border-b border-slate-200 pb-2.5 mb-3">
-              <div>
-                <h2 className="font-mono text-xs font-bold uppercase tracking-wider text-slate-900 leading-tight">
-                  Volume Leaders
-                </h2>
-                <p className="font-mono text-[11px] text-slate-500 leading-tight">Sales volume ({timeframe.toUpperCase()})</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setViewMode("volume")}
-                className="shrink-0 font-mono text-[11px] font-semibold text-slate-600 hover:text-slate-950 hover:underline"
-              >
-                View 50 →
-              </button>
-            </div>
-
-            <div className="space-y-2 flex-1">
-              {filteredVolume.slice(0, 15).map((item) => (
-                <VolumeRow key={item.pokemon_name} item={item} />
-              ))}
-              {filteredVolume.length === 0 && (
-                <div className="p-8 text-center font-mono text-xs text-slate-400">
-                  No volume records found matching “{searchQuery}”
-                </div>
-              )}
-            </div>
-          </div>
+          <SalesActivityPanel compact query={searchQuery} />
         </div>
       ) : viewMode === "cards" ? (
         /* ------------------------------------------------------------- */
@@ -727,32 +570,7 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
           </div>
         </div>
       ) : (
-        /* ------------------------------------------------------------- */
-        /* MODE 4: Volume Leaders (Dual Column: Rank 1-25 & 26-50)       */
-        /* ------------------------------------------------------------- */
-        <div className="space-y-4">
-          <div className="flex items-center justify-between px-1">
-            <span className="font-mono text-xs font-bold uppercase tracking-wider text-slate-600">
-              Top 50 Volume Leaders ({timeframe.toUpperCase()})
-            </span>
-            <span className="font-mono text-[11px] text-slate-400">
-              Ranked by verified market sales volume
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              {volCol1.map((item) => (
-                <VolumeRow key={item.pokemon_name} item={item} />
-              ))}
-            </div>
-            <div className="space-y-2">
-              {volCol2.map((item) => (
-                <VolumeRow key={item.pokemon_name} item={item} />
-              ))}
-            </div>
-          </div>
-        </div>
+        <SalesActivityPanel query={searchQuery} />
       )}
     </div>
   );

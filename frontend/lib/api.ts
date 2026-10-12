@@ -1,3 +1,5 @@
+import type { HomeOverview } from "@/types/home";
+import type { MarketHistory, SalesActivity } from "@/types/market-data";
 import type {
   CardDetail,
   CardPricing,
@@ -372,6 +374,9 @@ export function getGradingProfit(options: {
 }
 
 export function getSealedSignals(options: {
+  game?: GameLanguage;
+  era?: "newer" | "older";
+  period?: 30 | 90;
   signal?: SealedSignalType;
   productType?: SealedProductType;
   sortBy?: SealedSortOption;
@@ -381,6 +386,9 @@ export function getSealedSignals(options: {
   perPage?: number;
 } = {}): Promise<SealedSignalsResponse> {
   const qs = buildQueryString({
+    era: options.era,
+    game: options.game && options.game !== "all" ? options.game : undefined,
+    period: options.period ?? 30,
     signal: options.signal ?? "all",
     product_type: options.productType ?? "all",
     sort_by: options.sortBy ?? "score_desc",
@@ -414,6 +422,7 @@ export function getTrendingDashboard(options: {
   query?: string;
 } = {}): Promise<TrendingDashboardResponse> {
   const qs = buildQueryString({
+    include_observation_volume: false,
     timeframe: options.timeframe,
     q: options.query,
   });
@@ -496,4 +505,15 @@ export function cardImageUrl(path: string): string {
   }
   const baseUrl = resolveApiUrl();
   return `${baseUrl}${path.startsWith("/") ? "" : "/"}${path}`;
+}
+
+export function getMarketHistory(cardId: string, days: 30 | 90 | 365 = 30, signal?: AbortSignal): Promise<MarketHistory> {
+  return request(`/cards/${encodeURIComponent(cardId)}/market-history?days=${days}`, { signal, cache: "no-store" });
+}
+export function getSalesActivity(days: 7 | 30 | 90 = 30, query = "", signal?: AbortSignal): Promise<SalesActivity> {
+  return request(`/market/sales-activity${buildQueryString({ days, q: query })}`, { signal, cache: "no-store" });
+}
+
+export function getHomeOverview(signal?: AbortSignal): Promise<HomeOverview> {
+  return request("/home/overview", { signal, cache: "no-store" });
 }

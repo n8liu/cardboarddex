@@ -58,3 +58,10 @@ def stats(request: Request, start: date | None = None, end: date | None = None,
         return report(db, first, last)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/catalog-health")
+def catalog_health(response: Response, _: AdminSession = Depends(require_admin), db: Session = Depends(get_db)) -> dict:
+    from app.services.market_data_service import catalog_coverage
+    response.headers["Cache-Control"] = "no-store"
+    return catalog_coverage(db)

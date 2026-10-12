@@ -238,6 +238,26 @@ class TCGAPIClient:
             params["type"] = type
         return self._get("/prices/top-movers", params=params)
 
+    def get_history(self, card_id: str) -> dict[str, Any]:
+        # The provider limits this window to the caller's subscription.
+        return self._get(f"/cards/{quote(card_id, safe='')}/history", {"range": "year"})
+
+    def get_game(self, game: str) -> dict[str, Any]:
+        return self._get(f"/games/{quote(game, safe='')}")
+
+    def iter_game_sets(self, game: str) -> Iterator[dict[str, Any]]:
+        for page in range(1, 101):
+            payload = self._get(f"/games/{quote(game, safe='')}/sets", {"page": page, "per_page": 100})
+            rows = payload.get("data")
+            if not isinstance(rows, list) or any(not isinstance(row, dict) or "id" not in row for row in rows):
+                logger.error("TCG API malformed game sets game=%s page=%s", game, page)
+                raise ValueError("Malformed game sets response")
+            yield from rows
+            if not payload.get("meta", {}).get("has_more", len(rows) == 100):
+                return
+        logger.error("TCG API game sets exceeded pagination bound game=%s", game)
+        raise ValueError("Game sets pagination exceeded 100 pages")
+
     def get_bulk_prices(self, card_ids: Iterable[str | int]) -> dict[str, Any]:
         ids_str = ",".join(str(card_id) for card_id in card_ids)
         return self._get("/bulk/prices", params={"ids": ids_str})

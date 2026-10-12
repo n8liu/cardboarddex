@@ -9,7 +9,7 @@ celery_app = Celery(
     "cardboarddex",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["jobs.sync_catalog", "jobs.collect_prices", "jobs.collect_ebay_prices", "jobs.cycle_prices"],
+    include=["jobs.sync_catalog", "jobs.collect_prices", "jobs.collect_ebay_prices", "jobs.cycle_prices", "jobs.sync_market_data"],
 )
 
 celery_app.conf.update(
@@ -54,3 +54,18 @@ celery_app.conf.beat_schedule = {
         "options": {"expires": 3540, "time_limit": 3480},
     },
 }
+
+# Opt-in only: keep history collection off while production ingestion is paused.
+if settings.market_history_enabled:
+    celery_app.conf.beat_schedule["sync-market-history"] = {
+        "task": "jobs.sync_market_data.sync_market_data",
+        "schedule": crontab(minute=10),
+        "kwargs": {"limit": 5},
+        "options": {"expires": 1800, "time_limit": 600},
+    }
+    celery_app.conf.beat_schedule["discover-market-catalog"] = {
+        "task": "jobs.sync_market_data.sync_market_data",
+        "schedule": crontab(minute=40, hour=4),
+        "kwargs": {"limit": 1, "discover": True},
+        "options": {"expires": 1800, "time_limit": 600},
+    }

@@ -5,6 +5,8 @@ import Image from "@/components/card-image";
 import Link from "next/link";
 
 import { BackButton } from "@/components/back-button";
+import { RememberViewedCard } from "@/components/recently-viewed";
+import { MarketHistoryPanel } from "@/components/market-history-panel";
 import { PriceDashboard } from "@/components/price-dashboard";
 import { ShopOnEbayButton } from "@/components/shop-ebay-button";
 import { AddToBinderButton } from "@/components/binder/add-to-binder-button";
@@ -255,6 +257,8 @@ export function CardDetailClientFallback({ cardId, refParam }: Props) {
           </dl>
         </section>
       </div>
+      <RememberViewedCard card={card} />
+      <MarketHistoryPanel cardId={card.id} />
       {pricing ? <PriceDashboard pricing={pricing} cardMeta={card} /> : null}
     </main>
   );

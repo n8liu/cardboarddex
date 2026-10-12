@@ -128,6 +128,8 @@ export function CommandPalette() {
       { name: "Grading Profit", path: "/grading-profit", desc: "PSA 10 vs Raw grading arbitrage" },
       { name: "Trending Top 50", path: "/top-volume", desc: "Highest volume cards and search radar" },
       { name: "Live Comps", path: "/live-updates", desc: "Real-time stream of verified sold comps" },
+      { name: "Release Calendar", path: "/faq#calendar", desc: "Set release dates, retailer drops, and print status" },
+      { name: "FAQ & Guides", path: "/faq", desc: "Collecting help, website questions, and Pokémon TCG history" },
     ];
 
     pages.forEach((page) => {

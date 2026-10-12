@@ -4,6 +4,8 @@ import { notFound } from "next/navigation";
 
 import { BackButton } from "@/components/back-button";
 import { CardDetailClientFallback } from "@/components/card-detail-client-fallback";
+import { RememberViewedCard } from "@/components/recently-viewed";
+import { MarketHistoryPanel } from "@/components/market-history-panel";
 import { PriceDashboard } from "@/components/price-dashboard";
 import { ShopOnEbayButton } from "@/components/shop-ebay-button";
 import { AddToBinderButton } from "@/components/binder/add-to-binder-button";
@@ -172,6 +174,8 @@ export default async function CardPage({ params, searchParams }: CardPageProps) 
           </dl>
         </section>
       </div>
+      <RememberViewedCard card={card} />
+      <MarketHistoryPanel cardId={card.id} />
       {pricing ? <PriceDashboard pricing={pricing} cardMeta={card} /> : null}
     </main>
   );

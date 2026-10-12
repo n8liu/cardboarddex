@@ -65,7 +65,7 @@ def _state(session: Session, card_id: str, provider: str, status: str,
     existing.provider_card_id = provider_card_id
     existing.match_status = status
     existing.match_method = method
-    existing.payload = payload
+    existing.payload = {**(existing.payload or {}), **payload} if provider == "tcgapi" and status == "matched" else payload
     existing.last_synced_at = datetime.now(UTC)
 
 

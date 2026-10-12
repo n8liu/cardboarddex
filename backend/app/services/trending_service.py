@@ -431,10 +431,11 @@ def get_trending_dashboard(
     *,
     timeframe: Literal["24h", "7d", "30d", "all_time", "2026_ytd"] = "7d",
     q: str | None = None,
+    include_observation_volume: bool = True,
 ) -> TrendingDashboardResponse:
     """Calculate all three trending columns in a single unified payload with caching."""
     clean_q = (q or "").strip().lower()
-    cache_key = f"{timeframe}:{clean_q}"
+    cache_key = f"{timeframe}:{clean_q}:observations={include_observation_volume}"
     cache_key = f"{image_generation()}:{cache_key}"
     redis_key = f"cardboarddex:trending:{cache_key}"
     now = datetime.now(UTC)
@@ -462,15 +463,15 @@ def get_trending_dashboard(
     trending_pokemon = calculate_trending_pokemon(db, limit=50, q=q)
 
     # 5. Compute Column 3: Volume Leaders
-    volume_res = calculate_top_pokemon_volume(db, timeframe=timeframe, sort_by="volume_desc", q=q)
+    volume_res = calculate_top_pokemon_volume(db, timeframe=timeframe, sort_by="volume_desc", q=q) if include_observation_volume else None
 
     response = TrendingDashboardResponse(
         timeframe=timeframe,
         trending_cards=trending_cards,
         trending_pokemon=trending_pokemon,
-        volume_pokemon=volume_res.items,
-        total_volume_usd=volume_res.total_volume_usd,
-        total_sales_count=volume_res.total_sales_count,
+        volume_pokemon=volume_res.items if volume_res else [],
+        total_volume_usd=volume_res.total_volume_usd if volume_res else 0,
+        total_sales_count=volume_res.total_sales_count if volume_res else 0,
         updated_at=now,
     )
 

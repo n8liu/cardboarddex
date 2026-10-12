@@ -4,3 +4,4 @@ from app.models.pricing import PriceObservation, ProviderCardState, RawEbayListi
 __all__ = ["Card", "Set", "PriceObservation", "ProviderCardState", "RawEbayListing"]
 
 from app.models.analytics import AdminSession, AnalyticsDay, AnalyticsEvent, AnalyticsVisitor  # noqa: F401
+from app.models.market_data import MarketHistory, CatalogSnapshot  # noqa: F401

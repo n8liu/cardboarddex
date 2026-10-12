@@ -547,6 +547,9 @@ def get_grading_profit(
 @router.get("/sealed-signals", response_model=SealedSignalsResponse)
 def get_sealed_signals(
     response: Response,
+    game: Literal["all", "pokemon", "pokemon-japan"] = Query(default="all"),
+    period: Literal["30", "90"] = Query(default="30"),
+    era: Literal["all", "newer", "older"] = Query(default="all"),
     signal: Literal["all", "strong_buy", "buy", "hold", "underperform"] = Query(default="all"),
     product_type: Literal[
         "all",
@@ -575,6 +578,9 @@ def get_sealed_signals(
     response.headers["Cache-Control"] = "public, max-age=60, s-maxage=300, stale-while-revalidate=600"
     return calculate_sealed_signals(
         db,
+        game=game,
+        era=era,
+        period=int(period),
         signal=signal,
         product_type=product_type,
         sort_by=sort_by,

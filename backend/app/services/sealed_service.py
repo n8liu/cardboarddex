@@ -5,16 +5,17 @@ import json
 import logging
 import math
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from redis.exceptions import RedisError
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select, tuple_
 from sqlalchemy.orm import Session
 
 from app.common.formatters import escape_like, extract_float
 from app.common.redis import get_redis
-from app.models import Card, PriceObservation, Set
+from app.models import Card, PriceObservation, ProviderCardState, MarketHistory, Set
+from app.services.market_data_service import freshness, historical_returns, summarize_history
 from app.schemas.cards import SealedSignalItem, SealedSignalsResponse
 
 logger = logging.getLogger(__name__)
@@ -70,12 +71,15 @@ def calculate_sealed_signals(
     ] = "score_desc",
     set_id: str | None = None,
     q: str = "",
+    era: Literal["all", "newer", "older"] = "all",
+    game: Literal["all", "pokemon", "pokemon-japan"] = "all",
+    period: Literal[30, 90] = 30,
     page: int = 1,
     per_page: int = 24,
 ) -> SealedSignalsResponse:
     """Calculate multi-factor sealed market investment signals and scores."""
     now = time.time()
-    cache_key_raw = f"{signal}:{product_type}:{sort_by}:{set_id}:{q.strip().lower()}:{page}:{per_page}"
+    cache_key_raw = f"v4:{game}:{period}:{era}:{signal}:{product_type}:{sort_by}:{set_id}:{q.strip().lower()}:{page}:{per_page}"
     cache_hash = hashlib.md5(cache_key_raw.encode()).hexdigest()
     redis_key = f"cardboarddex:sealed_signals:{cache_hash}"
     redis_key = f"{image_generation()}:{redis_key}"
@@ -95,15 +99,34 @@ def calculate_sealed_signals(
     if local_cached and (now - local_cached[0]) < _SEALED_CACHE_TTL:
         return local_cached[1]
 
-    # 1. Query all sealed merchandise rows (rarity is null or empty)
+    # Explicit provider metadata takes precedence over the legacy rarity fallback.
+    explicit_type = func.coalesce(
+        ProviderCardState.payload["card"]["product_type"].as_string(),
+        ProviderCardState.payload["card"]["data"]["product_type"].as_string(),
+    )
     query = (
         select(Card, Set)
         .join(Set, Card.set_id == Set.id)
+        .outerjoin(ProviderCardState, and_(ProviderCardState.card_id == Card.id, ProviderCardState.provider == "tcgapi"))
         .where(
-            or_(Card.rarity.is_(None), Card.rarity == ""),
+            or_(explicit_type == "Sealed Products", and_(explicit_type.is_(None), or_(Card.rarity.is_(None), Card.rarity == ""))),
             Card.name.not_ilike("%code card%"),
         )
     )
+
+    # Match the catalog's language marker, including legacy English sets without a series.
+    if game == "pokemon-japan":
+        query = query.where(Set.series == "Pokemon Japan")
+    elif game == "pokemon":
+        query = query.where(or_(Set.series.is_(None), Set.series != "Pokemon Japan"))
+
+    today = datetime.now(UTC).date()
+    # Calendar years, with Feb 29 clamped to Feb 28 in the cutoff year.
+    cutoff = today.replace(year=today.year - 3, day=28 if today.month == 2 and today.day == 29 else today.day)
+    if era == "newer":
+        query = query.where(Set.release_date > cutoff, Set.release_date <= today)
+    elif era == "older":
+        query = query.where(Set.release_date <= cutoff)
 
     if set_id:
         query = query.where(Card.set_id == set_id)
@@ -152,6 +175,7 @@ def calculate_sealed_signals(
     ).all()
     obs_map: dict[str, PriceObservation] = {o.card_id: o for o in obs_list}
 
+    returns = historical_returns(db, card_ids, period)
     today = datetime.now(UTC).date()
     all_scored_items: list[tuple[SealedSignalItem, str]] = []
     strong_buy_count = 0
@@ -287,6 +311,11 @@ def calculate_sealed_signals(
             image_url=card_image_url(card.id),
             product_type=disp_type,
             market_price=round(market_price, 2),
+            **freshness(p),
+            checked_at=obs.provider_updated_at if obs else None,
+            return_days=period,
+            return_percent=returns.get((card.id, "Normal" if obs.printing in (None, "Standard") else obs.printing)) if obs else None,
+
             low_price=round(low_price, 2) if low_price is not None else None,
             median_price=round(median_price, 2) if median_price is not None else None,
             lowest_with_shipping=round(lowest_with_shipping, 2) if lowest_with_shipping is not None else None,
@@ -294,9 +323,9 @@ def calculate_sealed_signals(
             total_listings=total_listings,
             supply_rating=supply_rating,
             set_age_months=set_age_months,
-            price_change_24h=p24 if p24 != 0 else None,
-            price_change_7d=p7 if p7 != 0 else None,
-            price_change_30d=p30 if p30 != 0 else None,
+            price_change_24h=extract_float(p, "price_change_24h"),
+            price_change_7d=extract_float(p, "price_change_7d"),
+            price_change_30d=extract_float(p, "price_change_30d"),
             supply_score=supply_score,
             demand_score=demand_score,
             momentum_score=momentum_score,
@@ -305,6 +334,8 @@ def calculate_sealed_signals(
             signal_label=signal_label,
             last_updated_at=obs.observed_at if obs else card.updated_at,
         )
+        if item.return_percent is None and period == 30:
+            item.return_percent = item.price_change_30d
         all_scored_items.append((item, cat_slug))
 
     # Filter items
@@ -330,7 +361,12 @@ def calculate_sealed_signals(
     if sort_by == "supply_asc":
         filtered_items.sort(key=lambda x: (x.total_listings == 0, x.total_listings, -x.signal_score))
     elif sort_by == "momentum_desc":
-        filtered_items.sort(key=lambda x: (x.price_change_30d or x.price_change_7d or 0.0), reverse=True)
+        # Unknown returns follow negative returns; zero is a valid observation.
+        filtered_items.sort(key=lambda x: (
+            x.return_percent is None,
+            -(x.return_percent if x.return_percent is not None else 0),
+            x.card_id,
+        ))
     elif sort_by == "price_desc":
         filtered_items.sort(key=lambda x: x.market_price, reverse=True)
     elif sort_by == "price_asc":
@@ -345,6 +381,20 @@ def calculate_sealed_signals(
     start_idx = (page - 1) * per_page
     end_idx = start_idx + per_page
     paged_items = filtered_items[start_idx:end_idx]
+
+    selected_printings = {item.card_id: (obs_map[item.card_id].printing or "Normal") for item in paged_items if item.card_id in obs_map}
+    selected_printings = {cid: "Normal" if printing == "Standard" else printing for cid, printing in selected_printings.items()}
+    history_by_card = {}
+    if selected_printings:
+        history_rows = db.scalars(select(MarketHistory).where(
+            tuple_(MarketHistory.card_id, MarketHistory.printing).in_(list(selected_printings.items())),
+            MarketHistory.day >= today - timedelta(days=period + 7), MarketHistory.day <= today,
+        ).order_by(MarketHistory.day))
+        for row in history_rows:
+            history_by_card.setdefault(row.card_id, []).append(row)
+    for item in paged_items:
+        item.history = summarize_history(history_by_card.get(item.card_id, []), item.card_id, period,
+                                         selected_printings.get(item.card_id, "Normal"), today=today)
 
     response = SealedSignalsResponse(
         page=page,

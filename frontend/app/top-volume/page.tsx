@@ -5,7 +5,7 @@ import type { TrendingDashboardResponse } from "@/types/card";
 
 export const metadata: Metadata = {
   title: "Top 50 Trending Cards & Pokémon | CardboardDex",
-  description: "Live rankings across three core market pillars: trending & most clicked cards, most searched Pokémon characters, and market leaders by sales dollar volume.",
+  description: "Live rankings across three core market pillars: trending & most clicked cards, most searched Pokémon characters, and provider-reported sales activity across synced products.",
 };
 
 export const dynamic = "force-dynamic";

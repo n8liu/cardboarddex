@@ -1,3 +1,4 @@
+import type { MarketHistory, PriceFreshness } from "@/types/market-data";
 export type CardSummary = {
   id: string;
   name: string;
@@ -148,7 +149,10 @@ export type GradingProfitResponse = {
   updated_at: string;
 };
 
-export type SealedSignalItem = {
+export type SealedSignalItem = PriceFreshness & {
+  return_days?: number;
+  return_percent?: number | null;
+  history?: MarketHistory;
   card_id: string;
   name: string;
   clean_name?: string | null;

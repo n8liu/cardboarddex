@@ -11,24 +11,19 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { SearchInput } from "@/components/ui/search-input";
 import { HoloCard } from "@/components/ui/holo-card";
 import { useCurrency } from "@/context/currency-context";
+import { isSealedProduct, summarizeDisplayedCards } from "@/lib/pokemon-card-summary";
 import { shimmerBlurDataUrl } from "@/lib/shimmer";
 
 type Props = {
   pokemonName: string;
   initialCards: CardSummary[];
   availableSets: PokemonSetCount[];
-  totalCards: number;
-  highestPrice: number | null;
-  lowestPrice: number | null;
 };
 
 export function PokemonCardsView({
   pokemonName,
   initialCards,
   availableSets,
-  totalCards,
-  highestPrice,
-  lowestPrice,
 }: Props) {
   const searchParams = useSearchParams();
   const { formatPrice } = useCurrency();
@@ -39,22 +34,26 @@ export function PokemonCardsView({
       : searchParams;
     const s = params.get("set")?.trim() ?? "";
     const sortRaw = params.get("sort") as CardSort;
-    const validSorts: CardSort[] = ["price_desc", "price_asc", "number_asc", "number_desc"];
+    const validSorts: CardSort[] = ["price_desc", "price_asc", "number_asc", "number_desc", "name", "set"];
     const sort = validSorts.includes(sortRaw) ? sortRaw : "price_desc";
     const g = (params.get("game") as GameLanguage) || "all";
     const game: GameLanguage = ["all", "pokemon", "pokemon-japan"].includes(g) ? g : "all";
     const q = params.get("q")?.trim() ?? "";
-    return { s, sort, game, q };
+    return { s, sort, game, q, hideSealed: params.get("hide_sealed") !== "false" };
   }, [searchParams]);
 
   const initialParams = getUrlParams();
   const [cards, setCards] = useState<CardSummary[]>(initialCards);
+  const [sets, setSets] = useState(availableSets);
+  const [hideSealed, setHideSealed] = useState(initialParams.hideSealed);
   const [selectedSet, setSelectedSet] = useState<string>(initialParams.s);
   const [sortBy, setSortBy] = useState<CardSort>(initialParams.sort);
   const [game, setGame] = useState<GameLanguage>(initialParams.game);
   const [searchFilter, setSearchFilter] = useState(initialParams.q);
   const [isLoading, setIsLoading] = useState(false);
-  const isFirstMount = useRef(true);
+  const firstFetch = useRef(true);
+  const [error, setError] = useState("");
+  const [retry, setRetry] = useState(0);
 
   // Sync browser back/forward buttons
   useEffect(() => {
@@ -64,76 +63,68 @@ export function PokemonCardsView({
       setSortBy(params.sort);
       setGame(params.game);
       setSearchFilter(params.q);
-      void handleFilterChange(params.s, params.sort, params.game);
+      setHideSealed(params.hideSealed);
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, [getUrlParams]);
 
-  // Keep URL in sync with active filters
+  // Keep local-only search and sealed visibility shareable, including browser navigation.
   useEffect(() => {
-    if (isFirstMount.current) {
-      isFirstMount.current = false;
-      if (initialParams.s !== "" || initialParams.sort !== "price_desc" || initialParams.game !== "all" || initialCards.length === 0) {
-        void handleFilterChange(initialParams.s, initialParams.sort, initialParams.game);
-      }
-      return;
-    }
-
     const timer = window.setTimeout(() => {
       const url = new URL(window.location.href);
       selectedSet ? url.searchParams.set("set", selectedSet) : url.searchParams.delete("set");
       sortBy !== "price_desc" ? url.searchParams.set("sort", sortBy) : url.searchParams.delete("sort");
       game !== "all" ? url.searchParams.set("game", game) : url.searchParams.delete("game");
       searchFilter.trim() ? url.searchParams.set("q", searchFilter.trim()) : url.searchParams.delete("q");
+      hideSealed ? url.searchParams.delete("hide_sealed") : url.searchParams.set("hide_sealed", "false");
       window.history.replaceState(null, "", `${url.pathname}${url.search}`);
     }, 150);
-
     return () => window.clearTimeout(timer);
-  }, [selectedSet, sortBy, game, searchFilter]);
+  }, [selectedSet, sortBy, game, searchFilter, hideSealed]);
 
-  // Fetch updated cards when set, sort, or game changes
-  const handleFilterChange = async (newSet: string, newSort: CardSort, newGame: GameLanguage) => {
-    setIsLoading(true);
-    try {
-      const res = await getPokemonCards(pokemonName, {
-        setId: newSet || undefined,
-        sortBy: newSort,
-        game: newGame,
-        limit: 100,
-      });
-      setCards(res.cards);
-    } catch (err) {
-      console.error("[PokemonCardsView] Error loading cards:", err);
-    } finally {
-      setIsLoading(false);
+  // Fetch only for server-backed filters; summary/search/sealed changes stay local.
+  useEffect(() => {
+    if (firstFetch.current) {
+      firstFetch.current = false;
+      if (!selectedSet && sortBy === "price_desc" && game === "all" && initialCards.length > 0) return;
     }
-  };
+    let cancelled = false;
+    setIsLoading(true);
+    setError("");
+    getPokemonCards(pokemonName, {
+      setId: selectedSet || undefined, sortBy, game, limit: 100,
+    }).then((result) => {
+      if (!cancelled) { setCards(result.cards); setSets(result.available_sets); }
+    }).catch((err) => {
+      console.error("[PokemonCardsView] Error loading cards:", err);
+      if (!cancelled) setError("Could not update cards. Showing the previous results.");
+    }).finally(() => { if (!cancelled) setIsLoading(false); });
+    return () => { cancelled = true; };
+  }, [pokemonName, selectedSet, sortBy, game, retry, initialCards.length]);
 
   const filteredCards = useMemo(() => {
-    if (!searchFilter.trim()) return cards;
-    const q = searchFilter.trim().toLowerCase();
-    return cards.filter(
-      (c) =>
-        c.name.toLowerCase().includes(q) ||
-        c.set_name.toLowerCase().includes(q) ||
-        c.number.toLowerCase().includes(q) ||
-        (c.rarity && c.rarity.toLowerCase().includes(q))
-    );
-  }, [cards, searchFilter]);
+    const query = searchFilter.trim().toLowerCase();
+    return cards.filter((card) => (!hideSealed || !isSealedProduct(card)) && (
+      !query || card.name.toLowerCase().includes(query) || card.set_name.toLowerCase().includes(query)
+      || card.number.toLowerCase().includes(query) || card.rarity?.toLowerCase().includes(query)
+    ));
+  }, [cards, searchFilter, hideSealed]);
+  const summary = useMemo(() => summarizeDisplayedCards(filteredCards), [filteredCards]);
+  const sealedCount = cards.filter(isSealedProduct).length;
 
   return (
     <div>
       {/* Market Intelligence Bar */}
-      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:gap-4">
+      <div role="region" aria-label="Displayed card summary" aria-live="polite" aria-busy={isLoading} className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:gap-4">
         <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm">
           <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-            Total Cards Found
+            {hideSealed ? "Cards shown" : "Products shown"}
           </div>
           <div className="mt-1 font-mono text-2xl font-black text-slate-900">
-            {totalCards}
+            {isLoading ? "…" : summary.count}
           </div>
-          <div className="mt-1 text-xs text-slate-500">Indexed in database</div>
+          <div className="mt-1 text-xs text-slate-500">{isLoading ? "Updating results…" : "In the list below"}</div>
         </div>
 
         <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm">
@@ -141,19 +132,19 @@ export function PokemonCardsView({
             Highest Value Card
           </div>
           <div className="mt-1 font-mono text-2xl font-black text-emerald-600">
-            {formatPrice(highestPrice, { showPending: true })}
+            {isLoading ? "…" : summary.highestCard ? formatPrice(summary.highestCard.market_price) : "Unavailable"}
           </div>
-          <div className="mt-1 text-xs text-slate-500">Top market price</div>
+          <div className="mt-1 text-xs text-slate-500">{isLoading ? "Updating results…" : summary.highestCard ? <Link href={`/cards/${encodeURIComponent(summary.highestCard.id)}`} className="hover:text-emerald-700 hover:underline">{summary.highestCard.name}</Link> : "No priced individual cards shown"}</div>
         </div>
 
         <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm">
           <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-            Lowest Entry Price
+            Total displayed price
           </div>
           <div className="mt-1 font-mono text-2xl font-black text-slate-700">
-            {formatPrice(lowestPrice, { showPending: true })}
+            {isLoading ? "…" : summary.totalPrice == null ? "Unavailable" : formatPrice(summary.totalPrice)}
           </div>
-          <div className="mt-1 text-xs text-slate-500">Accessible copy</div>
+          <div className="mt-1 text-xs text-slate-500">{isLoading ? "Updating results…" : `${summary.pricedCount} of ${summary.count} displayed products priced${summary.missingCount ? ` · ${summary.missingCount} price${summary.missingCount === 1 ? "" : "s"} unavailable` : ""}`}</div>
         </div>
 
         <div className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-teal-50/50 p-4 shadow-sm flex flex-col justify-between">
@@ -185,32 +176,36 @@ export function PokemonCardsView({
             placeholder={`Filter ${cards.length} ${pokemonName} cards (e.g. VMAX, Promo, Shadowless)...`}
           />
 
+          <button type="button" aria-pressed={!hideSealed} onClick={() => setHideSealed((hidden) => !hidden)} className="shrink-0 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-100 aria-pressed:border-slate-900 aria-pressed:bg-slate-900 aria-pressed:text-white">
+            {hideSealed ? "Show sealed products" : "Hide sealed products"}{sealedCount > 0 ? ` (${sealedCount})` : ""}
+          </button>
+
           {/* Set Filter Dropdown */}
           <div className="flex flex-wrap items-center gap-2.5">
             <select
+              aria-label="Set"
               value={selectedSet}
               onChange={(e) => {
                 const val = e.target.value;
                 setSelectedSet(val);
-                handleFilterChange(val, sortBy, game);
               }}
               className="max-w-[220px] truncate rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-800 transition hover:bg-white focus:border-emerald-500 focus:outline-none"
             >
-              <option value="">All Sets ({totalCards} cards)</option>
-              {availableSets.map((s) => (
+              <option value="">All Sets</option>
+              {sets.map((s) => (
                 <option key={s.id} value={s.id}>
-                  {s.name} ({s.count})
+                  {s.name}
                 </option>
               ))}
             </select>
 
             {/* Sort Dropdown */}
             <select
+              aria-label="Sort cards"
               value={sortBy}
               onChange={(e) => {
                 const val = e.target.value as CardSort;
                 setSortBy(val);
-                handleFilterChange(selectedSet, val, game);
               }}
               className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-800 transition hover:bg-white focus:border-emerald-500 focus:outline-none"
             >
@@ -223,14 +218,14 @@ export function PokemonCardsView({
             </select>
 
             {/* Language Pill Selector */}
-            <div className="inline-flex rounded-xl bg-slate-100 p-0.5 text-xs font-bold">
+            <div role="group" aria-label="Card language" className="inline-flex rounded-xl bg-slate-100 p-0.5 text-xs font-bold">
               {(["all", "pokemon", "pokemon-japan"] as GameLanguage[]).map((g) => (
                 <button
                   key={g}
                   type="button"
+                  aria-pressed={game === g}
                   onClick={() => {
                     setGame(g);
-                    handleFilterChange(selectedSet, sortBy, g);
                   }}
                   className={`rounded-lg px-2.5 py-1 transition ${
                     game === g
@@ -245,6 +240,8 @@ export function PokemonCardsView({
           </div>
         </div>
       </div>
+
+      {error && <p role="alert" className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-xs text-rose-700">{error} <button type="button" onClick={() => setRetry((n) => n + 1)} className="font-bold underline">Retry</button></p>}
 
       {/* Cards Grid with Staggered Cascading Skeletons */}
       {isLoading ? (
@@ -276,7 +273,8 @@ export function PokemonCardsView({
             setSelectedSet("");
             setSearchFilter("");
             setGame("all");
-            handleFilterChange("", "price_desc", "all");
+            setSortBy("price_desc");
+            setHideSealed(true);
           }}
         />
       ) : (

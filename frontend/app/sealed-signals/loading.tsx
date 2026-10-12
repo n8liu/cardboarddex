@@ -1,112 +1,41 @@
-import { SectionLoadingBar } from "@/components/section-loading-bar";
-
 export default function SealedSignalsLoading() {
   return (
-    <main className="min-h-[calc(100vh-65px)] bg-[#f7f8f6] text-slate-950 font-mono">
-      <div className="mx-auto min-w-0 max-w-[1600px] px-4 pb-20 pt-8 sm:px-6 lg:px-8">
-        {/* Header - Static Instant Load */}
-        <div className="border-b border-slate-200/80 pb-6">
-          <div className="flex items-center gap-2 mb-3">
-            <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3.5 py-1.5 text-[11px] font-semibold text-slate-700 shadow-2xs">
-              <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
-              <span>INVESTMENT SIGNALS</span>
-              <span className="text-slate-300">|</span>
-              <span className="text-slate-500">4-FACTOR QUANTITATIVE MODEL</span>
-            </span>
+    <div className="min-h-[calc(100vh-65px)] bg-white text-slate-950">
+      <div role="status" aria-label="Loading sealed return rankings" className="mx-auto min-w-0 max-w-[1600px] px-4 pb-20 pt-8 font-mono sm:px-6 lg:px-8">
+        <header className="mb-6">
+          <div className="mb-3 inline-flex flex-wrap items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3.5 py-1.5 text-[11px] font-semibold text-slate-700 shadow-2xs">
+            <span aria-hidden="true" className="h-2 w-2 rounded-full bg-emerald-500" />
+            <span>SEALED MARKET</span>
+            <span aria-hidden="true" className="text-slate-300">|</span>
+            <span className="text-slate-500">TCG MARKET PRICES</span>
           </div>
-          <h1 className="text-2xl sm:text-4xl font-black tracking-tight text-slate-950 uppercase">
-            Sealed Investment Signals
-          </h1>
-          <p className="mt-2 max-w-2xl text-xs sm:text-sm text-slate-600 leading-relaxed">
-            Quantitative 0–100 buy ratings evaluating supply float, liquidity, velocity, and vintage age.
-          </p>
-        </div>
-
-        {/* Telemetry Stats Grid Shell */}
-        <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div className="rounded-xl border border-slate-200/80 bg-white p-4 shadow-2xs">
-            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-              Strong Buys
-            </div>
-            <div className="mt-2 h-7 w-12 animate-pulse rounded bg-slate-200" />
-            <div className="mt-1 text-[11px] text-slate-500">
-              Top conviction rating
-            </div>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">Sealed Signals</h1>
+          <p className="mt-2 max-w-2xl text-xs leading-relaxed text-slate-600 sm:text-sm">Compare price growth across newer releases and older sealed products, ranked independently in each era.</p>
+        </header>
+        <div aria-hidden="true" className="mb-4 border-y border-slate-200 py-4">
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <div className="h-11 flex-1 animate-pulse rounded-xl bg-slate-100" />
+            <div className="h-11 animate-pulse rounded-xl bg-slate-100 sm:w-48" />
+            <div className="h-11 animate-pulse rounded-xl bg-slate-100 sm:w-40" />
           </div>
-          <div className="rounded-xl border border-slate-200/80 bg-white p-4 shadow-2xs">
-            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-              Low Supply Float
-            </div>
-            <div className="mt-2 h-7 w-12 animate-pulse rounded bg-slate-200" />
-            <div className="mt-1 text-[11px] text-slate-500">
-              &lt; 15 active listings
-            </div>
-          </div>
-          <div className="rounded-xl border border-slate-200/80 bg-white p-4 shadow-2xs">
-            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-              Avg Signal Score
-            </div>
-            <div className="mt-2 h-7 w-16 animate-pulse rounded bg-slate-200" />
-            <div className="mt-1 text-[11px] text-slate-500">
-              Across items
-            </div>
-          </div>
-          <div className="rounded-xl border border-slate-200/80 bg-white p-4 shadow-2xs">
-            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-              Top 30d Momentum
-            </div>
-            <div className="mt-2 h-7 w-16 animate-pulse rounded bg-slate-200" />
-            <div className="mt-1 text-[11px] text-slate-500">
-              30-day price gain
-            </div>
+          <div className="mt-3 flex flex-wrap justify-between gap-3 border-t border-slate-100 pt-3">
+            <div className="h-11 w-80 max-w-full animate-pulse rounded-xl bg-slate-100" />
+            <div className="h-11 w-64 max-w-full animate-pulse rounded-xl bg-slate-100" />
           </div>
         </div>
-
-        {/* Filter Bar Skeleton */}
-        <div className="mt-6 h-24 w-full animate-pulse rounded-2xl bg-slate-200/80" />
-
-        {/* Section Loading Bar */}
-        <div className="mt-8 mb-6">
-          <SectionLoadingBar
-            label="Evaluating Sealed Product Telemetry..."
-            detail="Running 4-factor quantitative scoring model: supply float, buylist liquidity, price momentum, and vintage scarcity"
-          />
-        </div>
-
-        {/* Cards Grid Skeleton */}
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <div
-              key={i}
-              className="flex h-96 flex-col justify-between rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"
-            >
-              <div>
-                <div className="flex items-center justify-between">
-                  <div className="h-6 w-24 animate-pulse rounded-full bg-slate-200" />
-                  <div className="h-4 w-12 animate-pulse rounded bg-slate-200" />
-                </div>
-                <div className="mt-4 flex gap-3">
-                  <div className="h-20 w-20 animate-pulse rounded-xl bg-slate-200" />
-                  <div className="flex-1 space-y-2">
-                    <div className="h-4 w-full animate-pulse rounded bg-slate-200" />
-                    <div className="h-4 w-2/3 animate-pulse rounded bg-slate-200" />
-                  </div>
-                </div>
+        <p className="mb-6 text-[11px] leading-relaxed text-slate-500">Loading sealed product rankings…</p>
+        <div className="grid items-start gap-5 lg:grid-cols-2">
+          {["Newer releases", "Older & vintage"].map((title) => (
+            <div key={title} className="rounded-2xl border border-slate-200/90 bg-slate-50/50 p-3.5 shadow-2xs sm:p-4">
+              <div className="mb-3 border-b border-slate-200 pb-3">
+                <h2 className="text-xs font-bold uppercase tracking-wider text-slate-900">{title}</h2>
+                <div aria-hidden="true" className="mt-3 h-3 w-48 animate-pulse rounded bg-slate-200" />
               </div>
-              <div className="space-y-2 border-t border-slate-100 pt-4">
-                <div className="flex justify-between">
-                  <div className="h-3 w-16 animate-pulse rounded bg-slate-100" />
-                  <div className="h-3 w-12 animate-pulse rounded bg-slate-200" />
-                </div>
-                <div className="flex justify-between">
-                  <div className="h-3 w-16 animate-pulse rounded bg-slate-100" />
-                  <div className="h-3 w-12 animate-pulse rounded bg-slate-200" />
-                </div>
-              </div>
+              <div aria-hidden="true" className="space-y-2">{[0, 1, 2].map((n) => <div key={n} className="h-24 animate-pulse rounded-xl border border-slate-200/80 bg-white" />)}</div>
             </div>
           ))}
         </div>
       </div>
-    </main>
+    </div>
   );
 }

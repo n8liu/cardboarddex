@@ -33,6 +33,7 @@ export function NavHeader() {
   const isGrading = pathname.startsWith("/grading-profit");
   const isSealed = pathname.startsWith("/sealed-signals");
   const isBinder = pathname.startsWith("/binder");
+  const isFaq = pathname.startsWith("/faq") || pathname.startsWith("/calendar");
 
   const navLinks = useMemo(
     () => [
@@ -43,8 +44,9 @@ export function NavHeader() {
       { href: "/grading-profit", label: "Grading", active: isGrading },
       { href: "/top-volume", label: "Trending", active: isTopVolume },
       { href: "/live-updates", label: "Live Comps", active: isLiveUpdates },
+      { href: "/faq", label: "FAQ", active: isFaq },
     ],
-    [isPokedex, isCatalog, isMovers, isSealed, isGrading, isTopVolume, isLiveUpdates]
+    [isPokedex, isCatalog, isMovers, isSealed, isGrading, isTopVolume, isLiveUpdates, isFaq]
   );
 
   const activeLink = navLinks.find((l) => l.active) || null;
@@ -180,26 +182,26 @@ export function NavHeader() {
           : "border-slate-200/80 bg-white"
       }`}
     >
-      <div className="mx-auto flex h-16 max-w-[1600px] items-center justify-between px-4 sm:px-6 lg:px-8">
+      <div className="mx-auto flex h-16 max-w-[1600px] items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
         {/* Left: Logo */}
-        <div className="flex shrink-0 items-center">
+        <div className="flex min-w-0 items-center">
           <Link
-            className="flex items-center gap-2.5 text-sm font-bold tracking-tight text-slate-950 transition hover:opacity-90"
+            className="flex min-w-0 items-center gap-2.5 text-sm font-bold tracking-tight text-slate-950 transition hover:opacity-90"
             href="/"
             prefetch={false}
             onClick={() => handleNavClick("/")}
           >
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-900 font-mono text-[11px] font-black text-white shadow-xs tracking-tighter">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-900 font-mono text-[11px] font-black text-white shadow-xs tracking-tighter">
               CD
             </span>
-            <span className="font-mono tracking-tight font-bold">CardboardDex</span>
+            <span className="truncate font-mono tracking-tight font-bold">CardboardDex</span>
           </Link>
         </div>
 
         {/* Center: Navigation Bar with Animated Sliding Pill */}
         <nav
           ref={desktopNavRef}
-          className="relative hidden md:flex items-center gap-1 rounded-xl bg-slate-100/90 p-1 text-xs font-mono"
+          className="relative hidden 2xl:flex items-center gap-1 rounded-xl bg-slate-100/90 p-1 text-xs font-mono"
           aria-label="Main Navigation"
         >
           {/* Animated Sliding Pill Background */}
@@ -303,7 +305,7 @@ export function NavHeader() {
               <path d="M10 12h7" />
               <path d="M10 17h7" />
             </svg>
-            <span>Binder</span>
+            <span className="hidden sm:inline">Binder</span>
             <span
               className={`inline-flex items-center justify-center rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
                 isBinder
@@ -319,8 +321,8 @@ export function NavHeader() {
         </div>
       </div>
 
-      {/* Mobile Navigation Row (Centered on small screens) with Animated Sliding Pill */}
-      <div className="flex md:hidden overflow-x-auto border-t border-slate-200/60 bg-slate-50/90 backdrop-blur-md p-2 scrollbar-none justify-start sm:justify-center">
+      {/* Scrollable Navigation Row with Animated Sliding Pill */}
+      <div className="flex 2xl:hidden overflow-x-auto border-t border-slate-200/60 bg-slate-50/90 backdrop-blur-md p-2 scrollbar-none justify-start">
         <nav
           ref={mobileNavRef}
           className="relative flex items-center gap-1 text-xs font-mono p-1 rounded-xl bg-slate-100/70"

@@ -1,475 +1,145 @@
 "use client";
 
-import Image from "@/components/card-image";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { FEATURED_POKEMON } from "@/lib/featured-pokemon";
-import { TYPE_THEMES, formatDexNumber } from "@/lib/pokeapi";
+import Image from "@/components/card-image";
 import { SearchAutocomplete } from "@/components/search-autocomplete";
-import { AnimatedNumber } from "@/components/ui/animated-number";
+import { HistorySparkline } from "@/components/market-history-panel";
+import { RecentlyViewed } from "@/components/recently-viewed";
 import { openCommandPalette } from "@/components/command-palette";
-import type { PokemonType } from "@/types/pokemon";
+import { FEATURED_POKEMON } from "@/lib/featured-pokemon";
+import { cardImageUrl, getHomeOverview } from "@/lib/api";
+import { useCurrency } from "@/context/currency-context";
+import type { GameLanguage } from "@/types/card";
+import type { HomeHighlight, HomeOverview } from "@/types/home";
 
-const POPULAR_SEARCH_CHIPS = [
-  "Charizard",
-  "Pikachu",
-  "Gengar",
-  "Umbreon",
-  "Mewtwo",
-  "151",
-  "Evolving Skies",
-  "Crown Zenith",
-];
+const POPULAR = ["Charizard", "Pikachu", "Umbreon", "151", "Evolving Skies"];
+const LANGUAGES: [GameLanguage, string][] = [["all", "All"], ["pokemon", "English"], ["pokemon-japan", "Japanese"]];
+const TOOLS = [
+  { id: "movers", title: "Follow the market", label: "Market Movers", href: "/market-movers", description: "See which cards are gaining ground and which are cooling off." },
+  { id: "sealed", title: "Compare sealed products", label: "Sealed Signals", href: "/sealed-signals", description: "Explore newer and vintage products side by side." },
+  { id: "binder", title: "Build your collection", label: "Your Binder", href: "/binder", description: "Organize your cards in a personal, visual collector’s binder." },
+  { id: "catalog", title: "Find your next card", label: "Card Catalog", href: "/catalog", description: "Browse English and Japanese sets, artwork, and market prices." },
+  { id: "grading", title: "Explore grading spreads", label: "Grading Profitability", href: "/grading-profit", description: "Compare raw and graded prices with your grading costs." },
+  { id: "pokedex", title: "Rediscover a favorite", label: "National Pokédex", href: "/pokedex", description: "Meet the Pokémon behind the cards. Explore species and evolutions." },
+] as const;
+const panel = "rounded-2xl border border-slate-200 bg-white shadow-2xs";
+const hover = "transition-colors hover:border-emerald-300 hover:shadow-sm motion-safe:transition motion-safe:duration-200 motion-safe:hover:-translate-y-0.5 focus-visible:outline-emerald-600";
+const pill = "min-h-9 rounded-lg px-3 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-200 aria-pressed:bg-slate-900 aria-pressed:text-white focus-visible:outline-emerald-600";
 
-interface PlatformStatItem {
-  numericValue?: number;
-  displaySuffix?: string;
-  isText?: boolean;
-  textValue?: string;
-  label: string;
-  detail: string;
+function dateLabel(value: string | null): string {
+  if (!value) return "Unavailable";
+  const date = new Date(value.length === 10 ? `${value}T00:00:00Z` : value);
+  return Number.isNaN(date.getTime()) ? "Unavailable" : new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(date);
 }
 
-const PLATFORM_STATS: PlatformStatItem[] = [
-  {
-    numericValue: 54682,
-    displaySuffix: "+",
-    label: "Cards Cataloged",
-    detail: "English & Japanese expansions",
-  },
-  {
-    numericValue: 484,
-    displaySuffix: "",
-    label: "Sets Synchronized",
-    detail: "234 English · 250 Japanese",
-  },
-  {
-    numericValue: 1025,
-    displaySuffix: "",
-    label: "Pokédex Species",
-    detail: "Generations I through IX",
-  },
-  {
-    numericValue: 280000,
-    displaySuffix: "+",
-    label: "Active Market Prices",
-    detail: "Per-printing observations & comps",
-  },
-  {
-    isText: true,
-    textValue: "15-Min",
-    label: "Refresh Cadence",
-    detail: "Alternating TCG API & eBay cycles",
-  },
-];
+function MarketCard({ title, item, href, loading }: { title: string; item: HomeHighlight | null; href: string; loading: boolean }) {
+  const { formatPrice } = useCurrency();
+  if (!item) return <div className={`${panel} p-5`}>
+    <h3 className="text-xs font-semibold text-slate-500">{title}</h3>
+    {loading ? <div role="status" className="mt-5 space-y-3"><span className="sr-only">Loading {title}</span><div className="h-16 rounded-lg bg-slate-100 motion-safe:animate-pulse" /><div className="h-5 w-32 rounded bg-slate-100 motion-safe:animate-pulse" /></div> : <><p className="mt-6 text-sm font-semibold text-slate-700">No qualifying price change available.</p><Link href={href} className="mt-6 inline-block text-xs font-bold text-emerald-700 hover:underline">Explore market data →</Link></>}
+  </div>;
+  const down = item.change_percent < 0;
+  return <Link href={`/cards/${encodeURIComponent(item.card_id)}`} prefetch={false} className={`${panel} ${hover} flex flex-col p-5`}>
+    <div className="flex items-center justify-between gap-2"><h3 className="text-xs font-semibold text-slate-500">{title}</h3><span className={`rounded-md border px-2 py-1 text-xs font-bold ${down ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{item.change_percent > 0 ? "+" : ""}{item.change_percent.toFixed(1)}%</span></div>
+    <div className="my-5 flex items-center gap-4">
+      <div className="flex h-24 w-20 shrink-0 items-center justify-center rounded-xl bg-slate-50"><Image src={cardImageUrl(item.image_url)} alt="" width={64} height={88} className="h-22 w-16 object-contain" /></div>
+      <div className="min-w-0"><p className="line-clamp-2 text-sm font-bold leading-relaxed text-slate-950">{item.name}</p><p className="mt-1 text-[11px] text-slate-500">{item.set_name}{item.printing ? ` · ${item.printing}` : ""}</p><p className="mt-2 text-xl font-bold tracking-tight">{formatPrice(item.market_price)}</p></div>
+    </div>
+    <div className="mt-auto border-t border-slate-100 pt-3 text-[10px] leading-relaxed text-slate-500">
+      <p className={item.price_freshness === "stale" ? "text-amber-800" : ""}>{item.market_price_as_of ? `Price dated ${dateLabel(item.market_price_as_of)}${item.price_freshness === "stale" ? " · Stale" : ""}` : "Price date unavailable"}</p>
+      <p>Observed {dateLabel(item.observed_at)} · 30-day change</p>
+    </div>
+  </Link>;
+}
 
-const CORE_MODULES = [
-  {
-    badge: "POKÉDEX BROWSER",
-    title: "National Pokédex",
-    href: "/pokedex",
-    description:
-      "Official canonical reference for all 1,025 Pokémon across 9 generations. Includes high-res official artwork, BST base stat meters, authentic audio cries, and direct trading card market comps.",
-    metrics: ["1,025 Species", "Gen I–IX", "Interactive Cries"],
-    cta: "Explore Pokédex",
-  },
-  {
-    badge: "EXPANSION CATALOG",
-    title: "Card Catalog",
-    href: "/catalog",
-    description:
-      "Comprehensive database of 54,680+ Pokémon cards across 484 expansions. Filter by English or Japanese printings, chronological release, price sorting, and view live buylist & shipping benchmarks.",
-    metrics: ["484 Sets", "English & Japanese", "Live Set Totals"],
-    cta: "Browse Catalog",
-  },
-  {
-    badge: "MOMENTUM RADAR",
-    title: "Market Movers",
-    href: "/market-movers",
-    description:
-      "Identify the top gaining and losing cards across 24-hour, 7-day, and 30-day velocity windows. Powered by automated stale-while-revalidate caching and multi-pass database delta fallbacks.",
-    metrics: ["24h / 7d / 30d", "Gainers & Losers", "Trader Table View"],
-    cta: "Track Movers",
-  },
-  {
-    badge: "ARBITRAGE CALCULATOR",
-    title: "Grading Profitability",
-    href: "/grading-profit",
-    description:
-      "Analyze spreads and expected net profits between raw cards and PSA 10 / PSA 9 slabs across 165+ verified pairs. Includes live custom grading fee slider and PSA Value tier presets.",
-    metrics: ["PSA 10 & 9 Spreads", "Custom Fee Slider", "Spread Multipliers"],
-    cta: "Calculate Arbitrage",
-  },
-  {
-    badge: "INVESTMENT SIGNALS",
-    title: "Sealed Signals",
-    href: "/sealed-signals",
-    description:
-      "Invest with data, not opinions. Deterministic 4-factor scoring model assessing supply scarcity, buylist liquidity, price velocity, and out-of-print vintage age across booster boxes and packs.",
-    metrics: ["4-Factor Algorithm", "Quantitative Signals", "Scarcity Scoring"],
-    cta: "Analyze Sealed",
-  },
-  {
-    badge: "VOLUME & TICKER",
-    title: "Top 50 & Live Comps",
-    href: "/top-volume",
-    description:
-      "Leaderboard ranking top Pokémon characters by aggregate observed market volume, paired with a real-time stream of verified eBay sales and PSA/BGS/CGC/SGC graded slab observations.",
-    metrics: ["Top 50 Characters", "Real-Time Comps", "Side-by-Side View"],
-    cta: "View Volume & Comps",
-  },
-];
-
-const METHODOLOGY_ITEMS = [
-  {
-    source: "PokéAPI Canonical Reference",
-    tag: "Species Intelligence",
-    description:
-      "Provides species identifiers, generational regions, canonical English and Japanese naming, BST combat distributions, and official Nintendo audio cries.",
-  },
-  {
-    source: "TCG API Pricing Engine",
-    tag: "Market Foundation",
-    description:
-      "Captures canonical sets, card numbers, and 10 real-time price attributes per printing (market, low, median, lowest w/ shipping, buylist, and momentum).",
-  },
-  {
-    source: "eBay Verified Comp Ingestion",
-    tag: "Secondary Market",
-    description:
-      "Applies conservative word-boundary matching in backend/parsers/title_matcher.py, strictly rejecting proxies, fakes, and lots to deliver authentic real-world sales.",
-  },
-];
+function ToolPreview({ id, data }: { id: typeof TOOLS[number]["id"]; data: HomeOverview | null }) {
+  if (id === "movers") return <div className="flex h-full flex-col justify-center px-4">
+    {data?.gainer && data.gainer.history.filter((p) => p.market_price != null).length >= 2 ? <><HistorySparkline points={data.gainer.history} /><p className="truncate text-[10px] text-slate-500">{data.gainer.name} · observed prices</p></> : <><svg aria-hidden="true" viewBox="0 0 240 64" className="h-16 w-full text-slate-200"><path d="M0 16H240 M0 32H240 M0 48H240 M40 0V64 M100 0V64 M160 0V64 M220 0V64" stroke="currentColor" fill="none" /></svg><p className="text-center text-[11px] text-slate-500">Price history · 24h / 7d / 30d</p></>}
+  </div>;
+  if (id === "sealed") return <div className="grid h-full grid-cols-2 gap-3 p-4" aria-hidden="true">{["Newer", "Vintage"].map((era) => <div key={era} className="rounded-xl border border-slate-200 bg-white p-3"><p className="text-[10px] font-bold uppercase text-slate-600">{era}</p><div className="mt-3 h-2 w-4/5 rounded bg-emerald-100" /><div className="mt-2 h-2 w-3/5 rounded bg-slate-100" /><p className="mt-3 text-[9px] text-slate-400">30D / 90D</p></div>)}</div>;
+  if (id === "binder") return <div aria-hidden="true" className="mx-auto grid h-full w-40 grid-cols-3 gap-1.5 p-3">{Array.from({ length: 9 }, (_, i) => <div key={i} className={`rounded border ${i < 4 ? "border-emerald-200 bg-emerald-50" : "border-dashed border-slate-300 bg-white/70"}`} />)}</div>;
+  if (id === "grading") return <div aria-hidden="true" className="flex h-full items-center justify-center gap-5"><div className="flex h-20 w-16 items-center justify-center rounded-lg border border-slate-200 bg-white text-[10px] font-bold text-slate-500">RAW</div><span className="text-xl text-slate-400">→</span><div className="rounded-lg border-4 border-slate-200 bg-white p-2"><div className="mb-1 h-2 rounded bg-rose-100" /><div className="flex h-16 w-12 items-center justify-center rounded border border-slate-100 text-[10px] font-bold text-slate-600">GRADED</div></div></div>;
+  if (id === "catalog") {
+    const artwork = data?.releases.filter((r) => r.image_url && !r.upcoming).slice(0, 3) ?? [];
+    return <div className="flex h-full items-center justify-center gap-3" aria-hidden="true">{artwork.length ? artwork.map((set) => <Image key={set.id} src={cardImageUrl(set.image_url!)} alt="" width={60} height={84} className="h-24 w-16 object-contain" />) : ["EN", "JP", "+"].map((text) => <div key={text} className="flex h-20 w-14 items-center justify-center rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-400">{text}</div>)}</div>;
+  }
+  return <div className="flex h-full items-center justify-center gap-3" aria-hidden="true">{FEATURED_POKEMON.slice(0, 3).map((p) => <Image key={p.id} src={p.artwork} alt="" width={76} height={76} unoptimized className="h-20 w-20 object-contain" />)}</div>;
+}
 
 export function LandingPage() {
-  const featuredPokemon = FEATURED_POKEMON;
+  const [data, setData] = useState<HomeOverview | null>(null);
+  const [error, setError] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const [language, setLanguage] = useState<GameLanguage>("all");
+  const [upcoming, setUpcoming] = useState(false);
+  useEffect(() => {
+    const controller = new AbortController();
+    setError(false);
+    getHomeOverview(controller.signal).then((result) => { if (!controller.signal.aborted) setData(result); }).catch((err) => {
+      if (!controller.signal.aborted) { console.error("Homepage overview failed:", err); setError(true); }
+    });
+    return () => controller.abort();
+  }, [attempt]);
+  const loading = !data && !error;
+  const releases = (data?.releases ?? []).filter((r) => (language === "all" || r.game === language) && r.upcoming === upcoming)
+    .sort((a, b) => (upcoming ? a.release_date.localeCompare(b.release_date) : b.release_date.localeCompare(a.release_date)) || a.id.localeCompare(b.id));
 
-  return (
-    <div className="min-h-screen bg-[#f7f8f6] text-slate-950 font-mono">
-      {/* 1. HERO SECTION */}
-      <section className="relative overflow-hidden border-b border-slate-200/80 bg-white px-4 pt-12 pb-16 sm:px-6 lg:px-8">
-        {/* Subtle Ambient Radial Mesh Glow */}
-        <div
-          className="pointer-events-none absolute -right-24 -top-24 h-[550px] w-[550px] rounded-full opacity-20 blur-3xl animate-pulse-slow"
-          style={{
-            background:
-              "radial-gradient(circle, rgba(16, 185, 129, 0.45) 0%, rgba(56, 189, 248, 0.25) 50%, transparent 80%)",
-          }}
-          aria-hidden="true"
-        />
+  return <div className="min-h-screen bg-[#f7f8f6] font-mono text-slate-950">
+    <section className="relative z-10 overflow-visible border-b border-slate-200/80 bg-white px-4 py-14 sm:px-6 sm:py-20 lg:px-8">
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden"><div className="absolute -right-20 -top-40 h-[550px] w-[700px] rounded-full bg-[radial-gradient(ellipse,_#d1fae5_0%,_transparent_65%)] opacity-60" /></div>
+      <div className="relative mx-auto max-w-[1400px]">
+        <p className="mb-5 inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/80 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-600"><span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-emerald-500" />For the love of collecting</p>
+        <h1 className="max-w-4xl text-4xl font-bold leading-[1.08] tracking-tight sm:text-5xl lg:text-7xl">Your next card<br /><span className="text-emerald-700">starts here.</span></h1>
+        <p className="mt-5 max-w-2xl text-sm leading-relaxed text-slate-600 sm:text-base">Discover Pokémon cards, compare market prices, and build a collection that’s yours.</p>
+        <div className="mt-8 max-w-2xl"><SearchAutocomplete /></div>
+        <div className="mt-3 flex max-w-2xl flex-wrap items-center gap-2 text-[11px]"><span className="text-slate-400">Try:</span>{POPULAR.map((q) => <Link key={q} href={`/catalog?q=${encodeURIComponent(q)}`} className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-slate-600 transition-colors hover:border-emerald-300 hover:text-emerald-800">{q}</Link>)}</div>
+        <div className="mt-7 flex flex-wrap items-center gap-3"><Link href="/catalog" className="rounded-xl bg-slate-900 px-5 py-3 text-xs font-bold text-white transition-colors hover:bg-slate-700">Explore the catalog →</Link><Link href="/binder" className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50">Open your binder</Link><button type="button" onClick={openCommandPalette} className="rounded-lg px-2 py-3 text-xs text-slate-500 hover:text-slate-900">Quick jump <kbd className="ml-1 rounded border border-slate-200 px-1.5 py-0.5 text-[10px]">⌘K / Ctrl K</kbd></button></div>
+      </div>
+    </section>
 
-        <div className="relative mx-auto max-w-[1400px]">
-          {/* Status Badge */}
-          <div className="flex items-center gap-2 mb-6">
-            <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs">
-              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span>LIVE DATA ENGINE ACTIVE</span>
-              <span className="text-slate-300">|</span>
-              <span className="text-slate-500">TCG API + EBAY COMPS</span>
-            </span>
-          </div>
-
-          {/* Headline */}
-          <h1 className="text-3xl font-black tracking-tight text-slate-950 sm:text-5xl lg:text-6xl leading-[1.1]">
-            CARD MARKET INTELLIGENCE &amp; NATIONAL POKÉDEX
-          </h1>
-
-          {/* Subtitle */}
-          <p className="mt-4 max-w-3xl text-sm leading-relaxed text-slate-600 sm:text-base">
-            The high-precision Pokémon trading card price tracker. Tracking{" "}
-            <span className="font-semibold text-slate-900">54,680+ cards</span> across{" "}
-            <span className="font-semibold text-slate-900">484 English &amp; Japanese expansions</span>
-            , real-time TCG market pricing, PSA 10/9 grading spreads, and verified eBay comps.
-          </p>
-
-          {/* Search Bar with Live Autocomplete Dropdown */}
-          <div className="mt-8 max-w-2xl">
-            <SearchAutocomplete />
-
-            {/* Popular Search Chips */}
-            <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
-              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                Popular:
-              </span>
-              {POPULAR_SEARCH_CHIPS.map((chip) => (
-                <Link
-                  key={chip}
-                  href={`/catalog?q=${encodeURIComponent(chip)}`}
-                  className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-700 transition hover:border-slate-400 hover:bg-white hover:text-slate-950"
-                >
-                  {chip}
-                </Link>
-              ))}
-            </div>
-          </div>
-
-          {/* Hero Quick Action Buttons */}
-          <div className="mt-8 flex flex-wrap items-center gap-3">
-            <Link
-              href="/pokedex"
-              className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-5 py-3 text-xs font-bold text-white shadow-xs transition hover:bg-slate-800 hover:shadow-md active:scale-95"
-            >
-              <span>EXPLORE POKÉDEX</span>
-              <span>→</span>
-            </Link>
-            <Link
-              href="/catalog"
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-3 text-xs font-bold text-slate-700 shadow-2xs transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950 active:scale-95"
-            >
-              <span>BROWSE CARD CATALOG</span>
-              <span>→</span>
-            </Link>
-            <button
-              type="button"
-              onClick={() => openCommandPalette()}
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold text-slate-600 shadow-2xs transition hover:border-slate-300 hover:bg-white hover:text-slate-900 active:scale-95"
-            >
-              <svg className="h-3.5 w-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-              <span>COMMAND PALETTE</span>
-              <kbd className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[10px] font-bold text-slate-500 shadow-xs">
-                ⌘K
-              </kbd>
-            </button>
-          </div>
-        </div>
+    <div className="mx-auto max-w-[1400px] px-4 sm:px-6 lg:px-8">
+      <section aria-labelledby="market-heading" className="pt-10 pb-4 sm:pt-12">
+        <div className="mb-5 flex flex-wrap items-end justify-between gap-3"><div><p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">A quick market check</p><h2 id="market-heading" className="mt-1 text-2xl font-bold tracking-tight">Market today</h2><p className="mt-2 text-xs leading-relaxed text-slate-500">Latest available 30-day changes across tracked products. Check price dates below.</p></div><Link href="/market-movers?period=30d" className="text-xs font-bold text-emerald-700 hover:underline">Explore movers →</Link></div>
+        {error && <div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900"><span>Market and catalog data are temporarily unavailable.</span><button type="button" onClick={() => setAttempt((n) => n + 1)} className="min-h-9 rounded-lg border border-amber-300 px-3 font-bold hover:bg-amber-100">Retry data</button></div>}
+        <div className="grid gap-4 md:grid-cols-3"><MarketCard title="Biggest card gainer" item={data?.gainer ?? null} href="/market-movers?period=30d" loading={loading} /><MarketCard title="Biggest card drop" item={data?.loser ?? null} href="/market-movers?period=30d" loading={loading} /><MarketCard title="Strongest sealed growth" item={data?.sealed ?? null} href="/sealed-signals" loading={loading} /></div>
+        <p className="mt-3 text-[10px] leading-relaxed text-slate-400">TCG API market prices · Historical changes before fees · No forecast of future returns</p>
       </section>
 
-      {/* 2. TELEMETRY & SYSTEM METRICS BAR WITH ROLLING NUMBERS */}
-      <section className="border-b border-slate-200/80 bg-slate-50/70 px-4 py-8 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-[1400px]">
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-            {PLATFORM_STATS.map((stat) => (
-              <div
-                key={stat.label}
-                className="rounded-xl border border-slate-200/80 bg-white p-4 shadow-2xs transition hover:border-slate-300"
-              >
-                <div className="text-xl sm:text-2xl font-black tracking-tight text-slate-950 font-mono">
-                  {stat.numericValue !== undefined ? (
-                    <>
-                      <AnimatedNumber
-                        value={stat.numericValue}
-                        duration={600}
-                        format={(v) => Math.round(v).toLocaleString()}
-                      />
-                      {stat.displaySuffix}
-                    </>
-                  ) : (
-                    stat.textValue
-                  )}
-                </div>
-                <div className="mt-1 text-xs font-bold text-slate-800 uppercase tracking-wider">
-                  {stat.label}
-                </div>
-                <div className="mt-0.5 text-[11px] text-slate-500">
-                  {stat.detail}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+      <RecentlyViewed />
+
+      <section aria-labelledby="releases-heading" className="py-10 sm:py-12">
+        <div className="mb-5 flex flex-wrap items-end justify-between gap-4"><div><p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Explore the expansions</p><h2 id="releases-heading" className="mt-1 text-2xl font-bold tracking-tight">{upcoming ? "Coming to the catalog" : "Latest releases"}</h2></div><div role="group" aria-label="Release language" className="inline-flex rounded-xl border border-slate-200 bg-slate-100 p-1">{LANGUAGES.map(([value, label]) => <button key={value} type="button" aria-pressed={language === value} onClick={() => setLanguage(value)} className={pill}>{label}</button>)}</div></div>
+        <div role="group" aria-label="Release timing" className="mb-4 flex gap-4 border-b border-slate-200"><button type="button" aria-pressed={!upcoming} onClick={() => setUpcoming(false)} className="border-b-2 border-transparent pb-3 text-xs font-semibold text-slate-500 aria-pressed:border-emerald-600 aria-pressed:text-emerald-800">Released</button><button type="button" aria-pressed={upcoming} onClick={() => setUpcoming(true)} className="border-b-2 border-transparent pb-3 text-xs font-semibold text-slate-500 aria-pressed:border-emerald-600 aria-pressed:text-emerald-800">Upcoming</button></div>
+        {loading ? <div role="status" className="flex gap-4 overflow-hidden"><span className="sr-only">Loading releases</span>{[0, 1, 2, 3].map((i) => <div key={i} className="h-64 w-56 shrink-0 rounded-2xl bg-slate-200/60 motion-safe:animate-pulse" />)}</div> : !releases.length ? <p className={`${panel} p-8 text-sm text-slate-500`}>{error ? "Release data could not be loaded." : upcoming ? "No upcoming sets listed for this language yet." : "No dated releases available for this language yet."}</p> : <div className="flex snap-x snap-mandatory gap-4 overflow-x-auto pb-4" aria-label="Set releases">
+          {releases.map((set) => <Link key={set.id} href={`/catalog?set=${encodeURIComponent(set.id)}&game=${set.game}`} prefetch={false} className={`${panel} ${hover} w-56 shrink-0 snap-start overflow-hidden`}>
+            <div className="relative flex h-36 items-center justify-center border-b border-slate-100 bg-slate-50 p-4">{set.image_url ? <Image src={cardImageUrl(set.image_url)} alt={`Product artwork from ${set.name}`} width={108} height={116} className="h-28 w-28 object-contain" /> : <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Artwork pending</span>}<span className="absolute left-3 top-3 rounded border border-slate-200 bg-white/95 px-1.5 py-0.5 text-[9px] font-bold text-slate-500">{set.game === "pokemon" ? "EN" : "JP"}</span></div>
+            <div className="p-4"><p className={`text-[10px] font-semibold ${set.upcoming ? "text-amber-700" : "text-emerald-700"}`}>{set.upcoming ? "Upcoming" : "Released"} · {dateLabel(set.release_date)}</p><h3 className="mt-2 line-clamp-2 min-h-10 text-sm font-bold leading-5">{set.name}</h3><p className="mt-3 text-[10px] text-slate-500">{set.card_count.toLocaleString("en-US")} catalog products <span aria-hidden="true">→</span></p></div>
+          </Link>)}
+        </div>}
+        <p className="mt-2 text-[10px] leading-relaxed text-slate-400">Catalog release dates · Product artwork from each set · Upcoming dates may change</p>
       </section>
 
-      {/* 3. CORE INTELLIGENCE SUITE (FEATURE MODULES) */}
-      <section className="px-4 py-16 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-[1400px]">
-          <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between mb-8 pb-4 border-b border-slate-200">
-            <div>
-              <p className="text-xs font-bold uppercase tracking-widest text-slate-400">
-                PLATFORM MODULES
-              </p>
-              <h2 className="mt-1 text-2xl font-black tracking-tight text-slate-950 sm:text-3xl">
-                Comprehensive Market Intelligence
-              </h2>
-            </div>
-            <p className="mt-2 sm:mt-0 text-xs text-slate-500 max-w-md">
-              Six specialized analytics tools designed for collectors, investors, and Pokédex explorers.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {CORE_MODULES.map((module) => (
-              <Link
-                key={module.title}
-                href={module.href}
-                className="group flex flex-col justify-between rounded-2xl border border-slate-200/90 bg-white p-6 shadow-2xs transition-all duration-300 hover:-translate-y-1 hover:border-slate-300 hover:shadow-lg"
-              >
-                <div>
-                  <div className="flex items-center justify-between">
-                    <span className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-bold tracking-wider text-slate-700">
-                      {module.badge}
-                    </span>
-                    <span className="text-slate-400 transition-transform duration-200 group-hover:translate-x-1 group-hover:text-slate-900">
-                      →
-                    </span>
-                  </div>
-
-                  <h3 className="mt-4 text-lg font-black tracking-tight text-slate-950 group-hover:text-slate-900">
-                    {module.title}
-                  </h3>
-
-                  <p className="mt-2 text-xs leading-relaxed text-slate-600">
-                    {module.description}
-                  </p>
-                </div>
-
-                <div className="mt-6 pt-4 border-t border-slate-100">
-                  <div className="flex flex-wrap gap-1.5 mb-4">
-                    {module.metrics.map((m) => (
-                      <span
-                        key={m}
-                        className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600"
-                      >
-                        {m}
-                      </span>
-                    ))}
-                  </div>
-
-                  <span className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-900 group-hover:underline">
-                    <span>{module.cta}</span>
-                    <span>→</span>
-                  </span>
-                </div>
-              </Link>
-            ))}
-          </div>
-        </div>
+      <section aria-labelledby="tools-heading" className="border-t border-slate-200 py-10 sm:py-12">
+        <div className="mb-6"><p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Made for your collection</p><h2 id="tools-heading" className="mt-1 text-2xl font-bold tracking-tight">A little curiosity. A lot to discover.</h2></div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{TOOLS.map((tool) => <Link key={tool.id} href={tool.href} prefetch={false} className={`${panel} ${hover} group overflow-hidden`}>
+          <div className="h-36 border-b border-slate-100 bg-slate-50/80"><ToolPreview id={tool.id} data={data} /></div>
+          <div className="p-5"><div className="flex items-center justify-between gap-3"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{tool.label}</p><span aria-hidden="true" className="text-slate-400 group-hover:text-emerald-600">↗</span></div><h3 className="mt-2 text-base font-bold">{tool.title}</h3><p className="mt-2 text-xs leading-relaxed text-slate-500">{tool.description}</p></div>
+        </Link>)}</div>
+        <div className="mt-5 flex flex-wrap gap-5 text-xs font-semibold text-slate-600"><Link href="/top-volume" className="hover:text-emerald-700 hover:underline">Trending & reported sales →</Link><Link href="/live-updates" className="hover:text-emerald-700 hover:underline">Latest price observations →</Link></div>
       </section>
 
-      {/* 4. CANONICAL POKÉDEX SHOWCASE WITH AMBIENT GLOW PODIUMS */}
-      <section className="border-t border-slate-200/80 bg-white px-4 py-16 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-[1400px]">
-          <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between mb-8 pb-4 border-b border-slate-200">
-            <div>
-              <p className="text-xs font-bold uppercase tracking-widest text-slate-400">
-                POKÉDEX EXPLORATION
-              </p>
-              <h2 className="mt-1 text-2xl font-black tracking-tight text-slate-950 sm:text-3xl">
-                Featured Species Profiles
-              </h2>
-            </div>
-            <Link
-              href="/pokedex"
-              className="mt-3 sm:mt-0 inline-flex items-center gap-1.5 text-xs font-bold text-slate-700 hover:text-slate-950"
-            >
-              <span>View All 1,025 Pokémon</span>
-              <span>→</span>
-            </Link>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
-            {featuredPokemon.map((pokemon) => {
-              if (!pokemon) return null;
-              const primaryType = pokemon.types[0] as PokemonType;
-              const typeTheme = TYPE_THEMES[primaryType] ?? TYPE_THEMES.normal;
-
-              return (
-                <Link
-                  key={pokemon.id}
-                  href={`/pokemon/${pokemon.id}`}
-                  prefetch={false}
-                  className="group flex flex-col items-center rounded-2xl border border-slate-200/90 bg-white p-3.5 text-center shadow-xs transition-all duration-300 hover:-translate-y-1 hover:border-slate-300 hover:shadow-md"
-                >
-                  <div
-                    className="relative flex h-20 w-20 items-center justify-center rounded-xl p-1.5 transition-transform duration-300 group-hover:scale-110"
-                    style={{
-                      background: `radial-gradient(circle, ${typeTheme.glow} 0%, rgba(255,255,255,0) 70%)`,
-                    }}
-                  >
-                    <Image
-                      src={pokemon.artwork}
-                      alt={pokemon.name}
-                      width={76}
-                      height={76}
-                      className="object-contain drop-shadow-sm"
-                      unoptimized
-                    />
-                  </div>
-                  <span className="mt-2 text-[10px] font-mono font-bold text-slate-400">
-                    {formatDexNumber(pokemon.id)}
-                  </span>
-                  <span className="text-xs font-black text-slate-950 truncate max-w-full group-hover:text-emerald-700 transition">
-                    {pokemon.name}
-                  </span>
-                  <div className="mt-1 flex gap-1">
-                    <span
-                      className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${typeTheme.badge}`}
-                    >
-                      {primaryType}
-                    </span>
-                  </div>
-                </Link>
-              );
-            })}
-          </div>
-        </div>
+      <section aria-labelledby="species-heading" className="border-t border-slate-200 py-10 sm:py-12">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3"><h2 id="species-heading" className="text-xl font-bold tracking-tight">Who’s your favorite?</h2><Link href="/pokedex" className="text-xs font-bold text-emerald-700 hover:underline">Explore the Pokédex →</Link></div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">{FEATURED_POKEMON.map((pokemon) => <Link key={pokemon.id} href={`/pokemon/${pokemon.id}`} prefetch={false} className={`${panel} ${hover} flex flex-col items-center p-4`}><Image src={pokemon.artwork} alt="" width={76} height={76} className="h-20 w-20 object-contain" unoptimized /><span className="mt-3 text-[10px] text-slate-400">#{String(pokemon.id).padStart(4, "0")}</span><h3 className="mt-1 text-xs font-bold">{pokemon.name}</h3></Link>)}</div>
       </section>
 
-      {/* 5. METHODOLOGY & DATA INTEGRITY */}
-      <section className="border-t border-slate-200/80 bg-[#f7f8f6] px-4 py-16 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-[1400px]">
-          <div className="mb-8 pb-4 border-b border-slate-200">
-            <p className="text-xs font-bold uppercase tracking-widest text-slate-400">
-              DATA ARCHITECTURE
-            </p>
-            <h2 className="mt-1 text-2xl font-black tracking-tight text-slate-950 sm:text-3xl">
-              Engineered for Accuracy
-            </h2>
-            <p className="mt-1 text-xs text-slate-500">
-              How CardboardDex integrates canonical species data with real-time market trading benchmarks.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
-            {METHODOLOGY_ITEMS.map((item) => (
-              <div
-                key={item.source}
-                className="rounded-xl border border-slate-200 bg-white p-5 shadow-2xs transition hover:border-slate-300"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-black text-slate-950">
-                    {item.source}
-                  </span>
-                  <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
-                    {item.tag}
-                  </span>
-                </div>
-                <p className="mt-3 text-xs leading-relaxed text-slate-600">
-                  {item.description}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* 6. CALL TO ACTION STRIP */}
-      <section className="border-t border-slate-200/80 bg-slate-900 px-4 py-12 sm:px-6 lg:px-8 text-white">
-        <div className="mx-auto max-w-[1400px] flex flex-col md:flex-row items-center justify-between gap-6">
-          <div>
-            <h3 className="text-xl font-black tracking-tight">
-              Ready to explore CardboardDex?
-            </h3>
-            <p className="mt-1 text-xs text-slate-300">
-              Start browsing 1,025 species or jump straight into 54,680+ trading card market comps.
-            </p>
-          </div>
-          <div className="flex items-center gap-3 shrink-0">
-            <Link
-              href="/pokedex"
-              className="rounded-xl bg-white px-5 py-3 text-xs font-bold text-slate-900 shadow-xs transition hover:bg-slate-100 active:scale-95"
-            >
-              OPEN POKÉDEX
-            </Link>
-            <Link
-              href="/catalog"
-              className="rounded-xl border border-slate-700 bg-slate-800 px-5 py-3 text-xs font-bold text-white shadow-xs transition hover:bg-slate-700 active:scale-95"
-            >
-              SEARCH CATALOG
-            </Link>
-          </div>
-        </div>
+      <section aria-labelledby="coverage-heading" className="border-t border-slate-200 py-10 sm:py-12">
+        <div className="mb-5"><h2 id="coverage-heading" className="text-lg font-bold">Behind the collection</h2><p className="mt-2 text-xs leading-relaxed text-slate-500">Counts from our catalog and recorded price observations. Observations are price records, not completed sales.</p></div>
+        <dl className="grid gap-4 sm:grid-cols-3">{[["Catalog products", data?.products], ["Sets", data?.sets], ["Price observations", data?.price_observations]].map(([label, value]) => <div key={String(label)} className="rounded-xl border border-slate-200 bg-white/60 p-4"><dt className="text-[10px] uppercase tracking-wider text-slate-500">{label}</dt><dd className="mt-2 text-2xl font-bold tabular-nums">{typeof value === "number" ? value.toLocaleString("en-US") : loading ? "…" : "Unavailable"}</dd></div>)}</dl>
+        {data && <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 text-[10px] text-slate-500"><p>Catalog updated {dateLabel(data.catalog_updated_at)}</p><p>Latest price observation {dateLabel(data.latest_observation_at)}</p><p>Snapshot calculated {dateLabel(data.calculated_at)} (UTC)</p></div>}
+        <div className="mt-8 grid gap-5 text-xs leading-relaxed text-slate-500 sm:grid-cols-3"><p><strong className="block text-slate-700">TCG API</strong>Catalog details and per-printing market prices. Availability and price dates vary by product.</p><p><strong className="block text-slate-700">eBay</strong>Matched active listings for price comparisons. Asking prices do not establish completed sales.</p><p><strong className="block text-slate-700">PokéAPI</strong>Species artwork and reference data for exploring the Pokémon behind your cards.</p></div>
       </section>
     </div>
-  );
+  </div>;
 }

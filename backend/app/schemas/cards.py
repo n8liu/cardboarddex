@@ -164,6 +164,13 @@ class SealedSignalItem(BaseModel):
     release_date: date | None = None
     image_url: str
     product_type: str
+    market_price_as_of: date | None = None
+    price_age_days: int | None = None
+    price_freshness: str = "unknown"
+    checked_at: datetime | None = None
+    return_days: int = 30
+    return_percent: float | None = None
+    history: dict = Field(default_factory=dict)
     market_price: float
     low_price: float | None = None
     median_price: float | None = None

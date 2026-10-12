@@ -244,7 +244,7 @@ def _upsert_cards(
                     st.provider_card_id = s_id
                     st.match_status = "matched"
                     st.match_method = "canonical_tcgapi_id"
-                    st.payload = {"card": c_item}
+                    st.payload = {**(st.payload or {}), "card": c_item}
                     st.last_synced_at = datetime.now(UTC)
 
         session.commit()

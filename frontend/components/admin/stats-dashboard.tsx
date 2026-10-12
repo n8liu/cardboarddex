@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { CatalogHealth } from "@/components/admin/catalog-health";
 import { AdminLogin } from "@/components/admin/admin-login";
 import { AdminApiError, adminRequest, getStats } from "@/lib/admin-api";
 import type { StatsReport, TrafficCounts } from "@/types/analytics";
@@ -72,6 +73,7 @@ export function StatsDashboard() {
     {busy && <p role="status">Loading private statistics…</p>}
     {error && <p role="alert" className="rounded-lg bg-red-50 p-4 text-red-800">{error}</p>}
     {data && <>
+      <CatalogHealth />
       {!data.tracking_enabled && <p className="rounded-lg bg-amber-50 p-4 text-amber-900">Tracking is currently disabled. Previously collected statistics remain available.</p>}
       {!data.tracking_started_at && <p className="rounded-lg bg-slate-100 p-4">No visits recorded yet. Statistics begin when browser tracking is enabled and visitors arrive.</p>}
       <p className="text-sm text-slate-500">{data.start} — {data.end} · UTC · Updated {new Date(data.updated_at).toLocaleTimeString()}{data.tracking_started_at && ` · Tracking since ${isoDay(new Date(data.tracking_started_at))}`}</p>

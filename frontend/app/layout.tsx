@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
+import Link from "next/link";
 import { AnalyticsTracker, AnalyticsPreference } from "@/components/analytics-tracker";
 
 import { CommandPalette } from "@/components/command-palette-lazy";
@@ -11,7 +12,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "CardboardDex - Pokémon Card Price Tracker & Market Analytics",
-  description: "Pokémon card catalog and market analytics powered by TCG API and verified eBay listings.",
+  description: "Pokémon card catalog and market analytics powered by TCG API and matched eBay listings.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
@@ -41,7 +42,12 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             {children}
             <footer className="border-t border-slate-200 bg-white">
               <div className="mx-auto max-w-[1600px] px-5 py-8 text-xs text-slate-500 sm:px-8">
-                Pokémon catalog and market pricing via TCG API. Sold-market analytics via verified eBay listings.
+                <nav aria-label="Resources" className="mb-4 flex flex-wrap gap-5 font-semibold text-slate-700">
+                  <Link href="/faq" className="hover:underline">FAQ & Guides</Link>
+                  <Link href="/faq#calendar" className="hover:underline">Release calendar</Link>
+                  <Link href="/faq/guides/pokemon-tcg-history" className="hover:underline">Pokémon TCG history</Link>
+                </nav>
+                Pokémon catalog and market pricing via TCG API. eBay comparisons use active listing prices, not completed sales.
                 <AnalyticsPreference />
               </div>
             </footer>

@@ -302,3 +302,51 @@ def test_dashboard_aggregation_preserves_counts_without_loading_history(memory_d
     assert trending[0].cards_count == 2
     assert trending[0].top_card_price == 90
     assert max(row_counts) <= 2  # Bound by catalog size, independent of history length.
+
+
+def test_sealed_era_rankings_and_missing_returns(memory_db, monkeypatch):
+    from app.services import sealed_service as service
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 10, 11, tzinfo=UTC)
+
+    monkeypatch.setattr(service, "datetime", Clock)
+    monkeypatch.setattr(service, "get_redis", lambda: None)
+    service._SEALED_SIGNALS_LOCAL_FALLBACK.clear()
+    rows = [
+        ("new-high", date(2026, 1, 1), 20, 0),
+        ("new-zero", date(2023, 10, 12), 0, 100),
+        ("new-loss", date(2025, 1, 1), -5, 200),
+        ("new-unknown", date(2025, 1, 1), None, 999),
+        ("old-boundary", date(2023, 10, 11), 30, 0),
+        ("old-vintage", date(1999, 1, 1), 10, 0),
+        ("undated", None, 1000, 0),
+        ("future", date(2027, 1, 1), 2000, 0),
+    ]
+    for card_id, release, growth, weekly in rows:
+        memory_db.add(Set(id=card_id, name=card_id, release_date=release))
+        memory_db.add(Card(id=card_id, set_id=card_id, name=f"{card_id} Booster Box", number="BB"))
+        memory_db.add(PriceObservation(
+            fingerprint=card_id, card_id=card_id, provider="tcgapi", provider_card_id=card_id,
+            variant_id="default", price=Decimal("100"), observed_at=Clock.now(),
+            payload={"market_price": 100, "price_change_30d": growth, "price_change_7d": weekly},
+        ))
+    memory_db.commit()
+    newer = service.calculate_sealed_signals(memory_db, era="newer", sort_by="momentum_desc", per_page=2)
+    assert newer.total_items == 4
+    assert newer.total_pages == 2
+    assert [i.card_id for i in newer.items] == ["new-high", "new-zero"]
+    assert newer.items[1].price_change_30d == 0
+    page2 = service.calculate_sealed_signals(memory_db, era="newer", sort_by="momentum_desc", per_page=2, page=2)
+    assert [i.card_id for i in page2.items] == ["new-loss", "new-unknown"]
+    assert page2.items[1].price_change_30d is None
+    older = service.calculate_sealed_signals(memory_db, era="older", sort_by="momentum_desc", per_page=2)
+    assert [i.card_id for i in older.items] == ["old-boundary", "old-vintage"]
+    assert older.total_items == 2
+    assert service.calculate_sealed_signals(memory_db, era="older", q="vintage").total_items == 1
+    assert service.calculate_sealed_signals(memory_db, era="older", product_type="etb").total_items == 0
+    # The legacy all-products endpoint still includes products without usable dates.
+    assert service.calculate_sealed_signals(memory_db).total_items == 8
+    service._SEALED_SIGNALS_LOCAL_FALLBACK.clear()

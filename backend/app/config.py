@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     ebay_relay_key: str | None = None
     ebay_marketplace_id: str = "EBAY_US"
     ebay_daily_request_limit: int = 500
+    market_history_enabled: bool = False
     price_collection_card_limit: int = 5
     backend_cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"
     psa_value_fee: float = 24.99
