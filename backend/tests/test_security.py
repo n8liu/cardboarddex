@@ -243,8 +243,8 @@ def test_error_response_sanitization(client: TestClient) -> None:
 
     with patch("app.routers.cards.get_set_statistics", side_effect=ValueError("Secret DB column failure")):
         res = client.get("/cards/sets/1/stats")
-        assert res.status_code == 500
+        assert res.status_code == 503
         # Detail must be sanitized
-        assert res.json()["detail"] == "An internal server error occurred. Please try again later."
+        assert res.json()["detail"] == "Results temporarily unavailable"
         assert "ValueError" not in res.json()["detail"]
         assert "Secret DB" not in res.json()["detail"]

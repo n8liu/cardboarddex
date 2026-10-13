@@ -1,3 +1,5 @@
+from app.common.response_cache import cached_read
+from app.services.movers_service import stored_movers
 from app.services.image_delivery import card_image_url
 from app.common.cache import TTLCache
 
@@ -153,196 +155,6 @@ _MOVERS_LOCAL_FALLBACK = TTLCache(max_entries=64, ttl=900)
 _MOVERS_CACHE_TTL = 900  # seconds
 
 
-def _compute_db_market_movers(
-    db: Session,
-    period: str = "24h",
-    game: str = "pokemon",
-    limit: int = 50,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Compute market movers from locally cached provider card states or price observations when upstream API is unavailable."""
-    try:
-        candidates: list[dict[str, Any]] = []
-
-        # 1. First pass: check ProviderCardState payload for explicit price changes
-        stmt = (
-            select(ProviderCardState.card_id, ProviderCardState.payload, Card.name, Set.name.label("set_name"))
-            .join(Card, ProviderCardState.card_id == Card.id)
-            .join(Set, Card.set_id == Set.id)
-            .where(ProviderCardState.payload.is_not(None))
-        )
-        if game == "pokemon-japan":
-            stmt = stmt.where(Set.series == "Pokemon Japan")
-        elif game == "pokemon":
-            stmt = stmt.where(or_(Set.series.is_(None), Set.series != "Pokemon Japan"))
-
-        rows = db.execute(stmt.limit(500)).all()
-        for r in rows:
-            pl = r.payload if isinstance(r.payload, dict) else {}
-            price_val = pl.get("market_price") if pl.get("market_price") is not None else pl.get("price")
-            if price_val is None:
-                continue
-            try:
-                price = float(price_val)
-            except (ValueError, TypeError):
-                continue
-            if price <= 0:
-                continue
-
-            pct_val = (
-                pl.get(f"price_change_{period}")
-                if pl.get(f"price_change_{period}") is not None
-                else pl.get("price_change")
-                if pl.get("price_change") is not None
-                else pl.get("price_change_percentage")
-                if pl.get("price_change_percentage") is not None
-                else pl.get("price_change_7d")
-            )
-            try:
-                pct = float(pct_val) if pct_val is not None else 0.0
-            except (ValueError, TypeError):
-                pct = 0.0
-
-            candidates.append({
-                "card_id": r.card_id,
-                "name": r.name,
-                "set_name": r.set_name,
-                "market_price": price,
-                "price_change": pct,
-                "last_updated_at": pl.get("last_updated_at") or pl.get("updated_at"),
-            })
-
-        gainers = sorted([c for c in candidates if c["price_change"] > 0], key=lambda x: x["price_change"], reverse=True)[:limit]
-        losers = sorted([c for c in candidates if c["price_change"] < 0], key=lambda x: x["price_change"])[:limit]
-
-        # 2. Second pass: if either gainers or losers are missing/empty, calculate real deltas from PriceObservation
-        if not gainers or not losers:
-            days_back = 3 if period == "24h" else (10 if period == "7d" else 35)
-            since_date = datetime.now(UTC) - timedelta(days=days_back)
-            try:
-                db.execute(text("SET LOCAL statement_timeout = '2500ms'"))
-            except Exception:
-                pass
-
-            subq = (
-                select(
-                    PriceObservation.card_id,
-                    PriceObservation.price,
-                    PriceObservation.observed_at,
-                    func.row_number().over(
-                        partition_by=PriceObservation.card_id,
-                        order_by=PriceObservation.observed_at.desc(),
-                    ).label("rn"),
-                )
-                .where(
-                    PriceObservation.price > 0,
-                    PriceObservation.observed_at >= since_date,
-                )
-                .subquery()
-            )
-            p1 = aliased(subq, name="p1")
-            p2 = aliased(subq, name="p2")
-            delta_stmt = (
-                select(
-                    Card.id,
-                    Card.name,
-                    Set.name.label("set_name"),
-                    p1.c.price.label("latest_price"),
-                    p1.c.observed_at,
-                    ((p1.c.price - p2.c.price) / p2.c.price * 100.0).label("pct_change"),
-                )
-                .join(Card, Card.id == p1.c.card_id)
-                .join(Set, Card.set_id == Set.id)
-                .join(p2, (p2.c.card_id == p1.c.card_id) & (p2.c.rn == 2))
-                .where(p1.c.rn == 1)
-            )
-            if game == "pokemon-japan":
-                delta_stmt = delta_stmt.where(Set.series == "Pokemon Japan")
-            elif game == "pokemon":
-                delta_stmt = delta_stmt.where(or_(Set.series.is_(None), Set.series != "Pokemon Japan"))
-
-            try:
-                obs_rows = db.execute(delta_stmt.limit(500)).all()
-                obs_gainers: list[dict[str, Any]] = []
-                obs_losers: list[dict[str, Any]] = []
-                for obr in obs_rows:
-                    try:
-                        pct = round(float(obr.pct_change), 2)
-                        price = float(obr.latest_price)
-                    except (ValueError, TypeError):
-                        continue
-                    item = {
-                        "card_id": obr.id,
-                        "name": obr.name,
-                        "set_name": obr.set_name,
-                        "market_price": price,
-                        "price_change": pct,
-                        "last_updated_at": obr.observed_at.isoformat() if obr.observed_at else None,
-                    }
-                    if pct > 0:
-                        obs_gainers.append(item)
-                    elif pct < 0:
-                        obs_losers.append(item)
-
-                if not gainers and obs_gainers:
-                    gainers = sorted(obs_gainers, key=lambda x: x["price_change"], reverse=True)[:limit]
-                if not losers and obs_losers:
-                    losers = sorted(obs_losers, key=lambda x: x["price_change"])[:limit]
-            except Exception as exc:
-                logger.warning("Pass 2 delta calculation skipped or timed out: %s", exc)
-
-        # 3. Third pass: If still empty (e.g. database only has single static observations),
-        # query recent priced cards by indexed lookup and ensure neither gainers nor losers is empty
-        if not gainers or not losers:
-            if not candidates:
-                stmt_recent = (
-                    select(
-                        PriceObservation.card_id,
-                        PriceObservation.price,
-                        PriceObservation.observed_at,
-                        Card.name,
-                        Set.name.label("set_name"),
-                    )
-                    .join(Card, PriceObservation.card_id == Card.id)
-                    .join(Set, Card.set_id == Set.id)
-                    .where(PriceObservation.price > 0)
-                )
-                if game == "pokemon-japan":
-                    stmt_recent = stmt_recent.where(Set.series == "Pokemon Japan")
-                elif game == "pokemon":
-                    stmt_recent = stmt_recent.where(or_(Set.series.is_(None), Set.series != "Pokemon Japan"))
-
-                try:
-                    recent_rows = db.execute(stmt_recent.order_by(PriceObservation.id.desc()).limit(limit * 2)).all()
-                    for cr in recent_rows:
-                        if cr.price:
-                            candidates.append({
-                                "card_id": cr.card_id,
-                                "name": cr.name,
-                                "set_name": cr.set_name,
-                                "market_price": float(cr.price),
-                                "price_change": 0.0,
-                                "last_updated_at": cr.observed_at.isoformat() if cr.observed_at else None,
-                            })
-                except Exception as exc:
-                    logger.warning("Pass 3 recent lookup skipped or timed out: %s", exc)
-
-            if not gainers and candidates:
-                half = max(1, len(candidates) // 2)
-                gainers = candidates[:half]
-            if not losers and candidates:
-                half = max(1, len(candidates) // 2)
-                losers_source = candidates[half:] if len(candidates) > half else candidates
-                losers = [
-                    {**c, "price_change": c.get("price_change", 0.0)}
-                    for c in losers_source[:limit]
-                ]
-
-        return gainers, losers
-    except Exception as exc:
-        logger.error("Failed to compute database market movers error=%s: %s", type(exc).__name__, exc)
-        return [], []
-
-
 @router.get("/market-movers", response_model=MarketMoversResponse)
 def get_market_movers(
     response: Response,
@@ -352,157 +164,23 @@ def get_market_movers(
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=24, ge=1, le=100),
     db: Session = Depends(get_db),
-    client: TCGAPIClient = Depends(get_tcgapi_client),
 ) -> MarketMoversResponse:
-    response.headers["Cache-Control"] = "public, max-age=60, s-maxage=300, stale-while-revalidate=600"
-    now = time.time()
-    redis_cache_key = f"cardboarddex:movers:{game}:{period}"
-
-    gainers_raw: list[dict[str, Any]] = []
-    losers_raw: list[dict[str, Any]] = []
-    _served_from_cache = False
-    _mover_redis = _get_redis()
-    if _mover_redis is not None:
-        try:
-            _cached_raw = _mover_redis.get(redis_cache_key)
-            if _cached_raw:
-                _cached_payload = json.loads(_cached_raw)
-                gainers_raw = _cached_payload.get("gainers") or []
-                losers_raw = _cached_payload.get("losers") or []
-                _served_from_cache = True
-                logger.debug("Serving market movers from Redis cache key=%s", redis_cache_key)
-        except (RedisError, json.JSONDecodeError, Exception) as exc:
-            logger.warning(
-                "Redis market movers cache read failed key=%s error=%s: %s; fetching live",
-                redis_cache_key,
-                type(exc).__name__,
-                exc,
-            )
-
-    if not _served_from_cache:
-        _local = _MOVERS_LOCAL_FALLBACK.get(redis_cache_key)
-        if _local and (now - _local[0]) < _MOVERS_CACHE_TTL:
-            _, gainers_raw, losers_raw = _local
-            _served_from_cache = True
-
-    if not _served_from_cache:
-        gainers_raw = []
-        losers_raw = []
-        try:
-            up_payload = client.get_top_movers(game=game, direction="up", period=period, limit=50)
-            gainers_raw = up_payload.get("data") or []
-        except Exception as exc:
-            logger.error(
-                "Failed fetching top gainers game=%s period=%s error=%s: %s",
-                game,
-                period,
-                type(exc).__name__,
-                exc,
-            )
-
-        try:
-            down_payload = client.get_top_movers(game=game, direction="down", period=period, limit=50)
-            losers_raw = down_payload.get("data") or []
-        except Exception as exc:
-            logger.error(
-                "Failed fetching top losers game=%s period=%s error=%s: %s",
-                game,
-                period,
-                type(exc).__name__,
-                exc,
-            )
-
-        if not gainers_raw or not losers_raw:
-            logger.info(
-                "Upstream missing movers (gainers=%d, losers=%d), computing DB fallback for game=%s period=%s",
-                len(gainers_raw),
-                len(losers_raw),
-                game,
-                period,
-            )
-            db_gainers, db_losers = _compute_db_market_movers(db, period=period, game=game, limit=50)
-            if not gainers_raw:
-                gainers_raw = db_gainers
-            if not losers_raw:
-                losers_raw = db_losers
-
-        if gainers_raw or losers_raw:
-            if _mover_redis is not None:
-                try:
-                    _mover_redis.setex(
-                        redis_cache_key,
-                        _MOVERS_CACHE_TTL,
-                        json.dumps({"gainers": gainers_raw, "losers": losers_raw}),
-                    )
-                except (RedisError, Exception) as exc:
-                    logger.warning(
-                        "Redis market movers cache write failed key=%s error=%s: %s",
-                        redis_cache_key,
-                        type(exc).__name__,
-                        exc,
-                    )
-            _MOVERS_LOCAL_FALLBACK[redis_cache_key] = (now, gainers_raw, losers_raw)
-        elif _MOVERS_LOCAL_FALLBACK.get(redis_cache_key):
-            logger.warning(
-                "Serving stale market movers (provider error) cache_key=%s",
-                redis_cache_key,
-            )
-            _, gainers_raw, losers_raw = _MOVERS_LOCAL_FALLBACK[redis_cache_key]
-
-    all_card_ids = {
-        str(item.get("card_id") or item.get("id"))
-        for item in (gainers_raw + losers_raw)
-        if (item.get("card_id") or item.get("id"))
-    }
-    card_map: dict[str, tuple[Card, Set]] = {}
-    if all_card_ids:
-        rows = db.execute(
-            select(Card, Set).join(Set, Card.set_id == Set.id).where(Card.id.in_(all_card_ids))
-        ).all()
-        for card, card_set in rows:
-            card_map[card.id] = (card, card_set)
-
-    all_gainers = [
-        item for item in (_build_mover_item(raw, "up", period, card_map) for raw in gainers_raw)
-        if item is not None
-    ]
-    all_losers = [
-        item for item in (_build_mover_item(raw, "down", period, card_map) for raw in losers_raw)
-        if item is not None
-    ]
-
-    total_gainers = len(all_gainers)
-    total_losers = len(all_losers)
-
-    if direction == "up":
-        total_items = total_gainers
-    elif direction == "down":
-        total_items = total_losers
-    else:
-        total_items = max(total_gainers, total_losers)
-
-    total_pages = max(1, math.ceil(total_items / per_page))
-    start_idx = (page - 1) * per_page
-    end_idx = start_idx + per_page
-
-    paged_gainers = all_gainers[start_idx:end_idx] if direction in ("up", "all") else []
-    paged_losers = all_losers[start_idx:end_idx] if direction in ("down", "all") else []
-
+    rankings = stored_movers(response=response, db=db, game=game, period=period)
+    gainers, losers = rankings['gainers'], rankings['losers']
+    start = (page - 1) * per_page
+    count = max(len(gainers) if direction != 'down' else 0, len(losers) if direction != 'up' else 0)
     return MarketMoversResponse(
-        period=period,
-        direction=direction,
-        page=page,
-        per_page=per_page,
-        total_gainers=total_gainers,
-        total_losers=total_losers,
-        total_pages=total_pages,
-        gainers=paged_gainers,
-        losers=paged_losers,
-        updated_at=datetime.now(UTC),
+        period=period, direction=direction, page=page, per_page=per_page,
+        total_gainers=len(gainers), total_losers=len(losers),
+        total_pages=max(1, math.ceil(count / per_page)),
+        gainers=gainers[start:start + per_page] if direction != 'down' else [],
+        losers=losers[start:start + per_page] if direction != 'up' else [],
+        updated_at=datetime.fromisoformat(response.headers['X-Cache-Generated-At']),
     )
 
 
 @router.get("/grading-profit", response_model=GradingProfitResponse)
+@cached_read("get_grading_profit", fresh=300, maximum=1800)
 def get_grading_profit(
     response: Response,
     grading_fee: float | None = Query(default=None, ge=0.0, le=1000.0),
@@ -527,9 +205,9 @@ def get_grading_profit(
     per_page: int = Query(default=24, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> GradingProfitResponse:
-    response.headers["Cache-Control"] = "public, max-age=60, s-maxage=300, stale-while-revalidate=600"
     return calculate_grading_profit(
         db,
+        use_cache=False,
         grading_fee=grading_fee,
         sort_by=sort_by,
         target_grade=target_grade,
@@ -545,6 +223,7 @@ def get_grading_profit(
 
 
 @router.get("/sealed-signals", response_model=SealedSignalsResponse)
+@cached_read("get_sealed_signals", fresh=300, maximum=1800)
 def get_sealed_signals(
     response: Response,
     game: Literal["all", "pokemon", "pokemon-japan"] = Query(default="all"),
@@ -575,9 +254,9 @@ def get_sealed_signals(
     per_page: int = Query(default=24, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> SealedSignalsResponse:
-    response.headers["Cache-Control"] = "public, max-age=60, s-maxage=300, stale-while-revalidate=600"
     return calculate_sealed_signals(
         db,
+        use_cache=False,
         game=game,
         era=era,
         period=int(period),

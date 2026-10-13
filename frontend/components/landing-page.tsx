@@ -1,4 +1,5 @@
 "use client";
+import { CacheNotice, useCacheNotice } from "@/components/cache-notice";
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -37,7 +38,7 @@ function MarketCard({ title, item, href, loading }: { title: string; item: HomeH
   const { formatPrice } = useCurrency();
   if (!item) return <div className={`${panel} p-5`}>
     <h3 className="text-xs font-semibold text-slate-500">{title}</h3>
-    {loading ? <div role="status" className="mt-5 space-y-3"><span className="sr-only">Loading {title}</span><div className="h-16 rounded-lg bg-slate-100 motion-safe:animate-pulse" /><div className="h-5 w-32 rounded bg-slate-100 motion-safe:animate-pulse" /></div> : <><p className="mt-6 text-sm font-semibold text-slate-700">No qualifying price change available.</p><Link href={href} className="mt-6 inline-block text-xs font-bold text-emerald-700 hover:underline">Explore market data →</Link></>}
+    {loading ? <div role="status" className="mt-5 space-y-3"><span className="text-xs text-slate-500">Loading {title}…</span><div className="h-16 rounded-lg bg-slate-100 motion-safe:animate-pulse" /><div className="h-5 w-32 rounded bg-slate-100 motion-safe:animate-pulse" /></div> : <><p className="mt-6 text-sm font-semibold text-slate-700">No qualifying price change available.</p><Link href={href} className="mt-6 inline-block text-xs font-bold text-emerald-700 hover:underline">Explore market data →</Link></>}
   </div>;
   const down = item.change_percent < 0;
   return <Link href={`/cards/${encodeURIComponent(item.card_id)}`} prefetch={false} className={`${panel} ${hover} flex flex-col p-5`}>
@@ -68,6 +69,7 @@ function ToolPreview({ id, data }: { id: typeof TOOLS[number]["id"]; data: HomeO
 }
 
 export function LandingPage() {
+  const [cacheMetadata, setCacheMetadata] = useCacheNotice();
   const [data, setData] = useState<HomeOverview | null>(null);
   const [error, setError] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -76,7 +78,7 @@ export function LandingPage() {
   useEffect(() => {
     const controller = new AbortController();
     setError(false);
-    getHomeOverview(controller.signal).then((result) => { if (!controller.signal.aborted) setData(result); }).catch((err) => {
+    getHomeOverview(controller.signal, { bypassCache: attempt > 0, onCache: (metadata) => { if (!controller.signal.aborted) setCacheMetadata(metadata); } }).then((result) => { if (!controller.signal.aborted) setData(result); }).catch((err) => {
       if (!controller.signal.aborted) { console.error("Homepage overview failed:", err); setError(true); }
     });
     return () => controller.abort();
@@ -101,6 +103,7 @@ export function LandingPage() {
     <div className="mx-auto max-w-[1400px] px-4 sm:px-6 lg:px-8">
       <section aria-labelledby="market-heading" className="pt-10 pb-4 sm:pt-12">
         <div className="mb-5 flex flex-wrap items-end justify-between gap-3"><div><p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">A quick market check</p><h2 id="market-heading" className="mt-1 text-2xl font-bold tracking-tight">Market today</h2><p className="mt-2 text-xs leading-relaxed text-slate-500">Latest available 30-day changes across tracked products. Check price dates below.</p></div><Link href="/market-movers?period=30d" className="text-xs font-bold text-emerald-700 hover:underline">Explore movers →</Link></div>
+        <CacheNotice metadata={cacheMetadata} />
         {error && <div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900"><span>Market and catalog data are temporarily unavailable.</span><button type="button" onClick={() => setAttempt((n) => n + 1)} className="min-h-9 rounded-lg border border-amber-300 px-3 font-bold hover:bg-amber-100">Retry data</button></div>}
         <div className="grid gap-4 md:grid-cols-3"><MarketCard title="Biggest card gainer" item={data?.gainer ?? null} href="/market-movers?period=30d" loading={loading} /><MarketCard title="Biggest card drop" item={data?.loser ?? null} href="/market-movers?period=30d" loading={loading} /><MarketCard title="Strongest sealed growth" item={data?.sealed ?? null} href="/sealed-signals" loading={loading} /></div>
         <p className="mt-3 text-[10px] leading-relaxed text-slate-400">TCG API market prices · Historical changes before fees · No forecast of future returns</p>
@@ -111,7 +114,7 @@ export function LandingPage() {
       <section aria-labelledby="releases-heading" className="py-10 sm:py-12">
         <div className="mb-5 flex flex-wrap items-end justify-between gap-4"><div><p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Explore the expansions</p><h2 id="releases-heading" className="mt-1 text-2xl font-bold tracking-tight">{upcoming ? "Coming to the catalog" : "Latest releases"}</h2></div><div role="group" aria-label="Release language" className="inline-flex rounded-xl border border-slate-200 bg-slate-100 p-1">{LANGUAGES.map(([value, label]) => <button key={value} type="button" aria-pressed={language === value} onClick={() => setLanguage(value)} className={pill}>{label}</button>)}</div></div>
         <div role="group" aria-label="Release timing" className="mb-4 flex gap-4 border-b border-slate-200"><button type="button" aria-pressed={!upcoming} onClick={() => setUpcoming(false)} className="border-b-2 border-transparent pb-3 text-xs font-semibold text-slate-500 aria-pressed:border-emerald-600 aria-pressed:text-emerald-800">Released</button><button type="button" aria-pressed={upcoming} onClick={() => setUpcoming(true)} className="border-b-2 border-transparent pb-3 text-xs font-semibold text-slate-500 aria-pressed:border-emerald-600 aria-pressed:text-emerald-800">Upcoming</button></div>
-        {loading ? <div role="status" className="flex gap-4 overflow-hidden"><span className="sr-only">Loading releases</span>{[0, 1, 2, 3].map((i) => <div key={i} className="h-64 w-56 shrink-0 rounded-2xl bg-slate-200/60 motion-safe:animate-pulse" />)}</div> : !releases.length ? <p className={`${panel} p-8 text-sm text-slate-500`}>{error ? "Release data could not be loaded." : upcoming ? "No upcoming sets listed for this language yet." : "No dated releases available for this language yet."}</p> : <div className="flex snap-x snap-mandatory gap-4 overflow-x-auto pb-4" aria-label="Set releases">
+        {loading ? <div role="status" className="flex gap-4 overflow-hidden"><span className="text-xs text-slate-500">Loading releases…</span>{[0, 1, 2, 3].map((i) => <div key={i} className="h-64 w-56 shrink-0 rounded-2xl bg-slate-200/60 motion-safe:animate-pulse" />)}</div> : !releases.length ? <p className={`${panel} p-8 text-sm text-slate-500`}>{error ? "Release data could not be loaded." : upcoming ? "No upcoming sets listed for this language yet." : "No dated releases available for this language yet."}</p> : <div className="flex snap-x snap-mandatory gap-4 overflow-x-auto pb-4" aria-label="Set releases">
           {releases.map((set) => <Link key={set.id} href={`/catalog?set=${encodeURIComponent(set.id)}&game=${set.game}`} prefetch={false} className={`${panel} ${hover} w-56 shrink-0 snap-start overflow-hidden`}>
             <div className="relative flex h-36 items-center justify-center border-b border-slate-100 bg-slate-50 p-4">{set.image_url ? <Image src={cardImageUrl(set.image_url)} alt={`Product artwork from ${set.name}`} width={108} height={116} className="h-28 w-28 object-contain" /> : <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Artwork pending</span>}<span className="absolute left-3 top-3 rounded border border-slate-200 bg-white/95 px-1.5 py-0.5 text-[9px] font-bold text-slate-500">{set.game === "pokemon" ? "EN" : "JP"}</span></div>
             <div className="p-4"><p className={`text-[10px] font-semibold ${set.upcoming ? "text-amber-700" : "text-emerald-700"}`}>{set.upcoming ? "Upcoming" : "Released"} · {dateLabel(set.release_date)}</p><h3 className="mt-2 line-clamp-2 min-h-10 text-sm font-bold leading-5">{set.name}</h3><p className="mt-3 text-[10px] text-slate-500">{set.card_count.toLocaleString("en-US")} catalog products <span aria-hidden="true">→</span></p></div>

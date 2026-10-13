@@ -1,9 +1,10 @@
+import { Suspense } from "react";
+import { SectionLoadingBar } from "@/components/section-loading-bar";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Image from "@/components/card-image";
 import { getPokemonByIdOrSlug } from "@/lib/pokedex-data";
 import { getPokemonDetail, TYPE_THEMES, formatDexNumber } from "@/lib/pokeapi";
-import { getPokemonCards } from "@/lib/api";
 import { PokemonAudioPlayer } from "@/components/pokemon-audio-player";
 import { PokemonCardsView } from "@/components/pokemon-cards-view";
 import {
@@ -46,22 +47,52 @@ export default async function PokemonDetailPage({ params, searchParams }: PagePr
   const prevPokemon = getPokemonByIdOrSlug(prevId) ?? basePokemon;
   const nextPokemon = getPokemonByIdOrSlug(nextId) ?? basePokemon;
 
-  // Fetch live PokeAPI detail & CardboardDex cards in parallel
-  const [detail, cardsData] = await Promise.all([
-    getPokemonDetail(basePokemon.id),
-    getPokemonCards(basePokemon.name, { limit: 100, ref: sp?.ref }).catch((err) => {
-      console.error(`[PokemonPage] Error fetching cards for ${basePokemon.name}:`, err);
-      return {
-        pokemon_name: basePokemon.name,
-        total_cards: 0,
-        highest_price: null,
-        lowest_price: null,
-        available_sets: [],
-        cards: [],
-      };
-    }),
-  ]);
+  return (
+    <main className="min-h-[calc(100vh-65px)] bg-[#f7f8f6] py-8 text-slate-950">
+      <div className="mx-auto max-w-[1600px] px-4 sm:px-6 lg:px-8">
+        {/* Navigation Breadcrumb & Pokédex Quick Cycling Header */}
+        <PokemonCycleHeader
+          currentPokemon={{
+            id: basePokemon.id,
+            name: basePokemon.name,
+            region: basePokemon.region,
+          }}
+          prevPokemon={prevPokemon}
+          nextPokemon={nextPokemon}
+        />
+        <PokemonKeyboardCycle prevId={prevPokemon.id} nextId={nextPokemon.id} />
 
+        <Suspense fallback={<SectionLoadingBar label="Loading Pokémon details…" />}>
+          <PokemonHero basePokemon={basePokemon} />
+        </Suspense>
+
+        {/* Section Header: Trading Cards */}
+        <div className="mb-4 flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-black tracking-tight text-slate-900 sm:text-2xl">
+              {basePokemon.name} Trading Cards
+            </h2>
+            <p className="text-xs text-slate-500">
+              Verified cards, real-time market prices, and historical comps from CardboardDex.
+            </p>
+          </div>
+        </div>
+
+        {/* Interactive Cards Component */}
+        <PokemonCardsView
+          key={basePokemon.id}
+          pokemonName={basePokemon.name}
+          initialCards={[]}
+          availableSets={[]}
+          refParam={sp?.ref}
+        />
+      </div>
+    </main>
+  );
+}
+
+async function PokemonHero({ basePokemon }: { basePokemon: NonNullable<ReturnType<typeof getPokemonByIdOrSlug>> }) {
+  const detail = await getPokemonDetail(basePokemon.id);
   const pokemon = detail ?? {
     id: basePokemon.id,
     name: basePokemon.name,
@@ -84,20 +115,7 @@ export default async function PokemonDetailPage({ params, searchParams }: PagePr
   const secondaryTheme = secondaryType ? TYPE_THEMES[secondaryType] : undefined;
 
   return (
-    <main className="min-h-[calc(100vh-65px)] bg-[#f7f8f6] py-8 text-slate-950">
-      <div className="mx-auto max-w-[1600px] px-4 sm:px-6 lg:px-8">
-        {/* Navigation Breadcrumb & Pokédex Quick Cycling Header */}
-        <PokemonCycleHeader
-          currentPokemon={{
-            id: pokemon.id,
-            name: pokemon.name,
-            region: basePokemon.region,
-          }}
-          prevPokemon={prevPokemon}
-          nextPokemon={nextPokemon}
-        />
-        <PokemonKeyboardCycle prevId={prevPokemon.id} nextId={nextPokemon.id} />
-
+    <>
         {/* Hero Showcase Card with Atmospheric Type Ambient Lighting */}
         <section className="relative mb-8 overflow-hidden rounded-3xl border border-slate-200/90 bg-white p-6 shadow-sm sm:p-8 lg:p-10">
           {/* Top colored accent line matching elemental type */}
@@ -277,28 +295,7 @@ export default async function PokemonDetailPage({ params, searchParams }: PagePr
           </div>
           
         </section>
-
-        {/* Section Header: Trading Cards */}
-        <div className="mb-4 flex items-center justify-between">
-          <div>
-            <h2 className="text-xl font-black tracking-tight text-slate-900 sm:text-2xl">
-              {pokemon.name} Trading Cards
-            </h2>
-            <p className="text-xs text-slate-500">
-              Verified cards, real-time market prices, and historical comps from CardboardDex.
-            </p>
-          </div>
-        </div>
-
-        {/* Interactive Cards Component */}
-        <PokemonCardsView
-          key={basePokemon.id}
-          pokemonName={pokemon.name}
-          initialCards={cardsData.cards}
-          availableSets={cardsData.available_sets}
-        />
-      </div>
-    </main>
+    </>
   );
 }
 

@@ -1,3 +1,4 @@
+from unittest.mock import AsyncMock
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import Mock
@@ -130,7 +131,7 @@ def test_catalog_snapshot_counts_missing_and_failed_refresh(db):
 
 def test_public_history_and_sales_api(db, monkeypatch):
     app.dependency_overrides[get_db] = lambda: db
-    monkeypatch.setattr("app.main.check_rate_limit", lambda **kwargs: (True, 0))
+    monkeypatch.setattr("app.main.check_rate_limit", AsyncMock(return_value=(True, 0)))
     try:
         with TestClient(app) as client:
             response = client.get("/cards/box/market-history?days=90")
@@ -158,7 +159,7 @@ def test_sealed_language_filters_before_pagination_and_isolates_cache(db, monkey
             payload={"market_price": 100, "price_change_30d": growth}))
     db.commit()
     app.dependency_overrides[get_db] = lambda: db
-    monkeypatch.setattr("app.main.check_rate_limit", lambda **kwargs: (True, 0))
+    monkeypatch.setattr("app.main.check_rate_limit", AsyncMock(return_value=(True, 0)))
     try:
         with TestClient(app) as client:
             path = f"/cards/sealed-signals?era={era}&sort_by=momentum_desc&per_page=1"

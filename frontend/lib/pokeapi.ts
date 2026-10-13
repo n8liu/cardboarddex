@@ -188,9 +188,11 @@ export async function getPokemonDetail(idOrSlug: string | number): Promise<Pokem
     const [pokeRes, speciesRes] = await Promise.all([
       fetch(`https://pokeapi.co/api/v2/pokemon/${identifier}`, {
         next: { revalidate: 86400 },
+        signal: AbortSignal.timeout(3000),
       }),
       fetch(`https://pokeapi.co/api/v2/pokemon-species/${identifier}`, {
         next: { revalidate: 86400 },
+        signal: AbortSignal.timeout(3000),
       }),
     ]);
 

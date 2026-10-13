@@ -1,4 +1,5 @@
 "use client";
+import { CacheNotice, useCacheNotice } from "@/components/cache-notice";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "@/components/card-image";
@@ -7,6 +8,7 @@ import { useSearchParams } from "next/navigation";
 import type { CardSort, CardSummary, GameLanguage } from "@/types/card";
 import type { PokemonSetCount } from "@/types/pokemon";
 import { cardImageUrl, getPokemonCards } from "@/lib/api";
+import { SectionLoadingBar } from "@/components/section-loading-bar";
 import { EmptyState } from "@/components/ui/empty-state";
 import { SearchInput } from "@/components/ui/search-input";
 import { HoloCard } from "@/components/ui/holo-card";
@@ -16,12 +18,14 @@ import { shimmerBlurDataUrl } from "@/lib/shimmer";
 
 type Props = {
   pokemonName: string;
+  refParam?: string;
   initialCards: CardSummary[];
   availableSets: PokemonSetCount[];
 };
 
 export function PokemonCardsView({
   pokemonName,
+  refParam,
   initialCards,
   availableSets,
 }: Props) {
@@ -50,9 +54,11 @@ export function PokemonCardsView({
   const [sortBy, setSortBy] = useState<CardSort>(initialParams.sort);
   const [game, setGame] = useState<GameLanguage>(initialParams.game);
   const [searchFilter, setSearchFilter] = useState(initialParams.q);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(initialCards.length === 0);
   const firstFetch = useRef(true);
   const [error, setError] = useState("");
+  const [cacheMetadata, setCacheMetadata] = useCacheNotice();
+  const previousFilters = useRef<string | null>(null);
   const [retry, setRetry] = useState(0);
 
   // Sync browser back/forward buttons
@@ -89,19 +95,25 @@ export function PokemonCardsView({
       firstFetch.current = false;
       if (!selectedSet && sortBy === "price_desc" && game === "all" && initialCards.length > 0) return;
     }
+    const key = JSON.stringify([pokemonName, selectedSet, sortBy, game]);
+    if (previousFilters.current !== null && previousFilters.current !== key) setCards([]);
+    previousFilters.current = key;
+    setCacheMetadata(null);
     let cancelled = false;
+    const controller = new AbortController();
     setIsLoading(true);
     setError("");
     getPokemonCards(pokemonName, {
-      setId: selectedSet || undefined, sortBy, game, limit: 100,
+      setId: selectedSet || undefined, sortBy, game, limit: 100, ref: refParam,
+      abortSignal: controller.signal, bypassCache: retry > 0, onCache: (metadata) => { if (!cancelled) setCacheMetadata(metadata); },
     }).then((result) => {
       if (!cancelled) { setCards(result.cards); setSets(result.available_sets); }
     }).catch((err) => {
       console.error("[PokemonCardsView] Error loading cards:", err);
       if (!cancelled) setError("Could not update cards. Showing the previous results.");
     }).finally(() => { if (!cancelled) setIsLoading(false); });
-    return () => { cancelled = true; };
-  }, [pokemonName, selectedSet, sortBy, game, retry, initialCards.length]);
+    return () => { cancelled = true; controller.abort(); };
+  }, [pokemonName, selectedSet, sortBy, game, retry, initialCards.length, refParam]);
 
   const filteredCards = useMemo(() => {
     const query = searchFilter.trim().toLowerCase();
@@ -241,8 +253,10 @@ export function PokemonCardsView({
         </div>
       </div>
 
+      <CacheNotice metadata={cacheMetadata} />
       {error && <p role="alert" className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-xs text-rose-700">{error} <button type="button" onClick={() => setRetry((n) => n + 1)} className="font-bold underline">Retry</button></p>}
 
+      {isLoading && <SectionLoadingBar label="Loading Pokémon cards…" />}
       {/* Cards Grid with Staggered Cascading Skeletons */}
       {isLoading ? (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">

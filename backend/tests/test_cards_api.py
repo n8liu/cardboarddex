@@ -436,6 +436,10 @@ def test_get_market_movers_endpoint() -> None:
         session.add(Set(id="1", name="Base Set", series="Original", printed_total=102, release_date=date(1999, 1, 9)))
         session.add(Card(id="pikachu-1", name="Pikachu", set_id="1", number="58", printed_total=102, rarity="Common", image_url="https://tcgplayer-cdn.test/pikachu.jpg"))
         session.add(Card(id="venusaur-1", name="Venusaur", set_id="1", number="15", printed_total=102, rarity="Rare Holo", image_url="https://tcgplayer-cdn.test/venusaur.jpg"))
+        for cid, price, change in [('pikachu-1', 25, 102.6), ('venusaur-1', 100, -50)]:
+            session.add(PriceObservation(fingerprint=cid, card_id=cid, provider='tcgapi',
+                provider_card_id=cid, variant_id='normal', currency='USD', price=price,
+                payload={'price_change_24h': change}))
         session.commit()
 
     def override_db() -> Generator[Session, None, None]:
@@ -443,7 +447,7 @@ def test_get_market_movers_endpoint() -> None:
             yield session
 
     app.dependency_overrides[get_db] = override_db
-    app.dependency_overrides[get_tcgapi_client] = lambda: FakeMoverClient()
+    app.dependency_overrides[get_tcgapi_client] = lambda: (_ for _ in ()).throw(AssertionError('Provider dependency must not run'))
     try:
         with TestClient(app) as test_client:
             res = test_client.get("/cards/market-movers?direction=all&period=24h&page=1&per_page=12")
@@ -461,7 +465,7 @@ def test_get_market_movers_endpoint() -> None:
             assert data["gainers"][0]["set_name"] == "Base Set"
             assert data["gainers"][0]["market_price"] == 25.0
             assert data["gainers"][0]["price_change_percentage"] == 102.6
-            assert data["gainers"][0]["price_change_amount"] is not None
+            assert data["gainers"][0]["price_change_amount"] is None
             assert data["gainers"][0]["direction"] == "up"
 
             assert len(data["losers"]) == 1
@@ -473,7 +477,7 @@ def test_get_market_movers_endpoint() -> None:
         app.dependency_overrides.clear()
 
 
-def test_get_market_movers_database_fallback() -> None:
+def test_get_market_movers_stored_percentages() -> None:
     from app.routers.cards import _MOVERS_LOCAL_FALLBACK, _get_redis
     _MOVERS_LOCAL_FALLBACK.clear()
     _r = _get_redis()
@@ -498,18 +502,16 @@ def test_get_market_movers_database_fallback() -> None:
         session.add(Card(id="charizard-1", name="Charizard", set_id="1", number="4", printed_total=102, rarity="Rare Holo", image_url="https://tcgplayer-cdn.test/charizard.jpg"))
         session.add(Card(id="blastoise-1", name="Blastoise", set_id="1", number="2", printed_total=102, rarity="Rare Holo", image_url="https://tcgplayer-cdn.test/blastoise.jpg"))
         session.add(
-            ProviderCardState(
-                card_id="charizard-1",
-                provider="tcgapi",
-                match_status="matched",
+            PriceObservation(
+                fingerprint="charizard", card_id="charizard-1", provider="tcgapi",
+                provider_card_id="charizard", variant_id="normal", currency="USD", price=350,
                 payload={"market_price": 350.0, "price_change_24h": 15.5},
             )
         )
         session.add(
-            ProviderCardState(
-                card_id="blastoise-1",
-                provider="tcgapi",
-                match_status="matched",
+            PriceObservation(
+                fingerprint="blastoise", card_id="blastoise-1", provider="tcgapi",
+                provider_card_id="blastoise", variant_id="normal", currency="USD", price=120,
                 payload={"market_price": 120.0, "price_change_24h": -8.0},
             )
         )
@@ -539,7 +541,7 @@ def test_get_market_movers_database_fallback() -> None:
         app.dependency_overrides.clear()
 
 
-def test_get_market_movers_historical_observations_fallback() -> None:
+def test_get_market_movers_does_not_invent_period_changes() -> None:
     from datetime import datetime, UTC, timedelta
     from app.routers.cards import _MOVERS_LOCAL_FALLBACK, _get_redis
     _MOVERS_LOCAL_FALLBACK.clear()
@@ -584,10 +586,8 @@ def test_get_market_movers_historical_observations_fallback() -> None:
             res = test_client.get("/cards/market-movers?direction=all&period=24h&page=1&per_page=12")
             assert res.status_code == 200
             data = res.json()
-            assert data["total_gainers"] >= 1
-            assert data["total_losers"] >= 1
-            assert any(g["card_id"] == "gengar-1" and g["price_change_percentage"] == 60.0 for g in data["gainers"])
-            assert any(l["card_id"] == "venusaur-1" and l["price_change_percentage"] == -25.0 for l in data["losers"])
+            assert data['gainers'] == [] and data['losers'] == []
+            assert data['total_gainers'] == 0 and data['total_losers'] == 0
     finally:
         _MOVERS_LOCAL_FALLBACK.clear()
         app.dependency_overrides.clear()

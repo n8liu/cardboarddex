@@ -1,3 +1,4 @@
+from unittest.mock import AsyncMock
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -91,14 +92,14 @@ def test_endpoint_is_cached_and_queries_do_not_grow_per_release(db, monkeypatch)
     def record(conn, cursor, statement, parameters, context, executemany):
         queries.append(statement)
     event.listen(db.bind, 'before_cursor_execute', record)
-    monkeypatch.setattr('app.main.check_rate_limit', lambda **kwargs: (True, 0))
+    monkeypatch.setattr('app.main.check_rate_limit', AsyncMock(return_value=(True, 0)))
     app.dependency_overrides[get_db] = lambda: db
     try:
         with TestClient(app) as client:
             response = client.get('/home/overview')
             assert response.status_code == 200, response.text
             assert response.json()['sealed']['change_percent'] == 5
-            assert response.headers['cache-control'] == 'public, max-age=60, s-maxage=300'
+            assert response.headers['cache-control'] == 'public, no-cache, max-age=0, must-revalidate'
             count = len(queries)
             assert count <= 12
             assert client.get('/home/overview').json() == response.json()

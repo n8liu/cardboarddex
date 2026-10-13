@@ -1,9 +1,10 @@
 These scripts operate on production only when explicitly invoked with production configuration.
 
-- `provision.py`: preview AWS resources; `--apply` provisions the $5/month IPv6-only 1 GB replacement and private backup bucket. It does not cut over production or delete the source. Secrets are written under ignored `.system_generated/lightsail/`, mode 0600, never printed. See `docs/lightsail-migration.md` for unresolved migration prerequisites.
+- For the capacity upgrade, use `provision.py --instance-only --apply` to reuse existing backup infrastructure. The October 13 attempt was rejected by the AWS one-instance restriction; production `cardboarddex-recovered` is protected.
+- `provision.py`: preview AWS resources; `--apply` provisions the $7/month dual-stack 1 GB replacement `cardboarddex-1gb` and private backup bucket. It does not cut over production or delete the source. Secrets are written under ignored `.system_generated/lightsail/`, mode 0600, never printed. See `docs/lightsail-migration.md` for unresolved migration prerequisites.
 - `bootstrap.sh`: root-only setup on a clean Ubuntu 24.04 AMD64 instance.
 - `wait_for_ssm.sh`: fail deployment before SSH if the managed node stays offline; AWS API errors remain visible.
-- `provision.py` waits up to 60 readiness polls (10 seconds apart) after accepted creation, verifies operation success and actual IPv6-only 1 GB/40 GB hardware before reporting readiness or configuring backup resources. A timeout leaves the destination intact for inspection; never delete the source to retry.
+- `provision.py` waits up to 60 readiness polls (10 seconds apart) after accepted creation, verifies operation success and actual dual-stack 1 GB/40 GB hardware before reporting readiness or configuring backup resources. A timeout leaves the destination intact for inspection; never delete the source to retry.
 - `ipv6_preflight.py --relay-url https://<relay-origin> [--url https://<image-origin/path>]`: run on the replacement host and inside its backend container. Forces IPv6, bypasses proxies, verifies TLS across HTTPS redirects, and reports transport separately from application success. Pass public URLs only. It sends no credentials and does not replace authenticated provider, registry-pull, S3 upload/restore, or Tunnel checks.
 - `install_zram.sh` / `zram.sh`: install persistent compressed swap on the 512 MB host without replacing its disk swap.
 - `release.sh`: server-side deployment, used by `../deploy_to_lightsail.sh`; never migrates schemas.

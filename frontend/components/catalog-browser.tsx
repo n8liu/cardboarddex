@@ -1,8 +1,10 @@
 "use client";
+import { CacheNotice, useCacheNotice } from "@/components/cache-notice";
 
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { SectionLoadingBar } from "@/components/section-loading-bar";
 import { CardGrid } from "@/components/card-grid";
 import { CardTableView } from "@/components/card-table-view";
 import { SearchForm } from "@/components/search-form";
@@ -52,19 +54,19 @@ export function CatalogBrowser({
     const params = typeof window !== "undefined"
       ? new URLSearchParams(window.location.search)
       : searchParams;
-    const q = params.get("q")?.trim() ?? initialQuery;
-    const s = params.get("set")?.trim() ?? initialSetId;
+    const q = params.get("q")?.trim() ?? "";
+    const s = params.get("set")?.trim() ?? "";
     const validSorts: CardSort[] = ["price_desc", "price_asc", "number_asc", "number_desc", "name", "set"];
     const rawSort = params.get("sort") as CardSort;
-    const sort = validSorts.includes(rawSort) ? rawSort : initialSortBy;
+    const sort = validSorts.includes(rawSort) ? rawSort : "price_desc";
     const hs = params.get("hide_sealed") === "false" || params.get("sealed") === "true" ? false : true;
     const g = (params.get("game") as GameLanguage) || "all";
     const rawMin = params.get("min_price");
     const parsedMin = rawMin ? parseFloat(rawMin) : undefined;
-    const minP = parsedMin !== undefined && !isNaN(parsedMin) ? parsedMin : (initialMinPrice ?? null);
+    const minP = parsedMin !== undefined && !isNaN(parsedMin) ? parsedMin : null;
     const rawMax = params.get("max_price");
     const parsedMax = rawMax ? parseFloat(rawMax) : undefined;
-    const maxP = parsedMax !== undefined && !isNaN(parsedMax) ? parsedMax : (initialMaxPrice ?? null);
+    const maxP = parsedMax !== undefined && !isNaN(parsedMax) ? parsedMax : null;
     return { q, s, sort, hs, g, minP, maxP };
   }, [initialHideSealed, initialMinPrice, initialMaxPrice, initialQuery, initialSetId, initialSortBy, searchParams]);
 
@@ -77,14 +79,14 @@ export function CatalogBrowser({
       if (saved === "grid" || saved === "table") {
         setViewMode(saved);
       }
-    } catch {}
+    } catch (err) { console.error("Could not access catalog view preference:", err); }
   }, []);
 
   const handleViewModeChange = (mode: "grid" | "table") => {
     setViewMode(mode);
     try {
       localStorage.setItem("cardboarddex_catalog_view", mode);
-    } catch {}
+    } catch (err) { console.error("Could not access catalog view preference:", err); }
   };
 
   const [query, setQuery] = useState(initialQuery);
@@ -154,17 +156,22 @@ export function CatalogBrowser({
     }
   }, []);
 
+  const [cacheMetadata, setCacheMetadata] = useCacheNotice();
+  const [retry, setRetry] = useState(0);
+  const [setsLoading, setSetsLoading] = useState(sets.length === 0);
+  const [setsError, setSetsError] = useState(false);
   const [setsList, setSetsList] = useState<CardSetOption[]>(sets);
   const [setStats, setSetStats] = useState<SetStats | null>(initialSetStats);
   const [isLoadingStats, setIsLoadingStats] = useState(false);
   const [hasMore, setHasMore] = useState(initialCards.length === CARD_PAGE_SIZE);
-  const [isSearching, setIsSearching] = useState(false);
+  const [isSearching, setIsSearching] = useState(initialCards.length === 0);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const isInitialized = useRef(false);
   const requestVersion = useRef(0);
   const loadingMoreRef = useRef(false);
+  const previousRequest = useRef<{ query: string; minPrice: number | null; maxPrice: number | null; discrete: string; retry: number } | null>(null);
 
   useEffect(() => {
     const { q, s, sort, hs, g, minP, maxP } = getUrlParams();
@@ -176,86 +183,8 @@ export function CatalogBrowser({
     setMinPrice(minP);
     setMaxPrice(maxP);
 
-    if (!isInitialized.current) {
-      isInitialized.current = true;
-      if (
-        q !== initialQuery ||
-        s !== initialSetId ||
-        sort !== initialSortBy ||
-        hs !== initialHideSealed ||
-        minP !== initialMinPrice ||
-        maxP !== initialMaxPrice
-      ) {
-        void (async () => {
-          setIsSearching(true);
-          if (s) setIsLoadingStats(true);
-          try {
-            const [nextCards, nextStats] = await Promise.all([
-              searchCards(q.trim(), {
-                setId: s,
-                sortBy: sort,
-                hideSealed: hs,
-                game: g,
-                minPrice: minP,
-                maxPrice: maxP,
-              }),
-              s
-                ? getSetStats(s, {
-                    q: q.trim(),
-                    hideSealed: hs,
-                    game: g,
-                    minPrice: minP,
-                    maxPrice: maxP,
-                  }).catch(() => null)
-                : Promise.resolve(null),
-            ]);
-            setCards(nextCards);
-            setHasMore(nextCards.length === CARD_PAGE_SIZE);
-            if (s) setSetStats(nextStats);
-            else setSetStats(null);
-          } catch (err) {
-            setError(err instanceof Error ? err.message : "Could not load cards.");
-          } finally {
-            setIsSearching(false);
-            setIsLoadingStats(false);
-          }
-        })();
-      } else if (initialCards.length === 0) {
-        void (async () => {
-          setIsSearching(true);
-          if (s && !initialSetStats) setIsLoadingStats(true);
-          try {
-            const [nextCards, nextStats] = await Promise.all([
-              searchCards(q.trim(), {
-                setId: s,
-                sortBy: sort,
-                hideSealed: hs,
-                game: g,
-                minPrice: minP,
-                maxPrice: maxP,
-              }),
-              s && !initialSetStats
-                ? getSetStats(s, {
-                    q: q.trim(),
-                    hideSealed: hs,
-                    game: g,
-                    minPrice: minP,
-                    maxPrice: maxP,
-                  }).catch(() => null)
-                : Promise.resolve(initialSetStats),
-            ]);
-            setCards(nextCards);
-            setHasMore(nextCards.length === CARD_PAGE_SIZE);
-            if (s) setSetStats(nextStats);
-          } catch (err) {
-            console.error("Failed fetching initial catalog cards on client:", err);
-          } finally {
-            setIsSearching(false);
-            setIsLoadingStats(false);
-          }
-        })();
-      }
-    }
+    isInitialized.current = true;
+
   }, [
     getUrlParams,
     initialCards.length,
@@ -272,50 +201,55 @@ export function CatalogBrowser({
   }, [sets]);
 
   useEffect(() => {
-    if (!sets || sets.length === 0) {
-      void getCardSets().then((latestSets) => {
-        if (latestSets && latestSets.length > 0) {
-          setSetsList(latestSets);
-        }
-      }).catch(() => {});
-    }
-  }, [sets]);
+    if (sets.length) return;
+    let cancelled = false;
+    setSetsLoading(true);
+    setSetsError(false);
+    void getCardSets(undefined, { bypassCache: retry > 0 }).then((latestSets) => {
+      if (!cancelled) setSetsList(latestSets);
+    }).catch((err) => {
+      console.error("Failed loading catalog sets:", err);
+      if (!cancelled) setSetsError(true);
+    }).finally(() => { if (!cancelled) setSetsLoading(false); });
+    return () => { cancelled = true; };
+  }, [sets, retry]);
 
   useEffect(() => {
     if (!isInitialized.current) return;
 
     const version = ++requestVersion.current;
+    const controller = new AbortController();
+    const previous = previousRequest.current;
+    const discrete = JSON.stringify([setId, sortBy, hideSealed, game]);
+    const delay = previous && previous.discrete === discrete && previous.retry === retry &&
+      (previous.query !== query || previous.minPrice !== minPrice || previous.maxPrice !== maxPrice) ? 250 : 0;
+    const bypassCache = previous !== null && previous.retry !== retry;
+    previousRequest.current = { query, minPrice, maxPrice, discrete, retry };
+    if (previous && (previous.discrete !== discrete || previous.query !== query || previous.minPrice !== minPrice || previous.maxPrice !== maxPrice)) setCards([]);
+    setCacheMetadata(null);
+    setIsSearching(true);
+    setSetStats(null);
     const timer = window.setTimeout(async () => {
       setIsSearching(true);
       if (setId) setIsLoadingStats(true);
       setError(null);
       try {
-        const [nextCards, nextStats] = await Promise.all([
-          searchCards(query.trim(), {
-            setId,
-            sortBy,
-            hideSealed,
-            game,
-            minPrice,
-            maxPrice,
-          }),
-          setId
-            ? getSetStats(setId, {
-                q: query.trim(),
-                hideSealed,
-                game,
-                minPrice,
-                maxPrice,
-              }).catch((err) => {
-                console.error("Failed fetching set stats:", err);
-                return null;
-              })
-            : Promise.resolve(null),
-        ]);
+        if (setId) {
+          void getSetStats(setId, { abortSignal: controller.signal, bypassCache, q: query.trim(), hideSealed, game, minPrice, maxPrice })
+            .then((stats) => { if (requestVersion.current === version) setSetStats(stats); })
+            .catch((err) => console.error("Failed fetching set stats:", err))
+            .finally(() => { if (requestVersion.current === version) setIsLoadingStats(false); });
+        } else {
+          setIsLoadingStats(false);
+          setSetStats(null);
+        }
+        const nextCards = await searchCards(query.trim(), {
+          setId, sortBy, hideSealed, game, minPrice, maxPrice, abortSignal: controller.signal, bypassCache,
+          onCache: (metadata) => { if (requestVersion.current === version) setCacheMetadata(metadata); },
+        });
         if (requestVersion.current !== version) return;
         setCards(nextCards);
         setHasMore(nextCards.length === CARD_PAGE_SIZE);
-        setSetStats(nextStats);
 
         const url = new URL(window.location.href);
         query.trim() ? url.searchParams.set("q", query.trim()) : url.searchParams.delete("q");
@@ -328,19 +262,18 @@ export function CatalogBrowser({
         window.history.replaceState(null, "", `${url.pathname}${url.search}`);
       } catch (requestError) {
         if (requestVersion.current !== version) return;
+        console.error("Failed loading catalog cards:", requestError);
         setError(requestError instanceof Error ? requestError.message : "Could not load cards.");
-        setCards([]);
         setHasMore(false);
       } finally {
         if (requestVersion.current === version) {
           setIsSearching(false);
-          setIsLoadingStats(false);
         }
       }
-    }, 250);
+    }, delay);
 
-    return () => window.clearTimeout(timer);
-  }, [query, setId, sortBy, hideSealed, game, minPrice, maxPrice]);
+    return () => { window.clearTimeout(timer); requestVersion.current++; controller.abort(); };
+  }, [query, setId, sortBy, hideSealed, game, minPrice, maxPrice, retry]);
 
   const loadMore = useCallback(async () => {
     if (!hasMore || isSearching || loadingMoreRef.current) return;
@@ -508,9 +441,11 @@ export function CatalogBrowser({
               onChange={(event) => handleSetChange(event.target.value)}
               value={setId}
             >
-              <option value="">All sets ({filteredSets.length})</option>
+              <option value="">{setsLoading ? "Loading sets…" : "All sets (" + filteredSets.length + ")"}</option>
+              {setId && !setsList.some((set) => set.id === setId) && <option value={setId}>{setId}</option>}
               {filteredSets.map((cardSet) => <option key={cardSet.id} value={cardSet.id}>{cardSet.name}</option>)}
             </select>
+            {setsError && <span role="alert" className="mt-2 block text-xs text-rose-700">Sets could not be loaded. <button type="button" className="underline" onClick={() => setRetry((n) => n + 1)}>Retry</button></span>}
           </label>
 
           {/* Price Range Slider */}
@@ -669,12 +604,14 @@ export function CatalogBrowser({
 
           {error ? (
             <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700" role="alert">
-              {error}
+              {error} <button type="button" className="underline" onClick={() => setRetry((n) => n + 1)}>Retry</button>
             </div>
           ) : null}
 
-          <div className={isSearching ? "opacity-45 transition-opacity" : "transition-opacity"}>
-            {viewMode === "grid" ? (
+          <CacheNotice metadata={cacheMetadata} />
+          {isSearching && <SectionLoadingBar label="Loading cards…" />}
+          <div aria-busy={isSearching} className={isSearching ? "opacity-45 transition-opacity" : "transition-opacity"}>
+            {isSearching && !cards.length ? null : viewMode === "grid" ? (
               <CardGrid cards={displayedCards} query={query || selectedSet?.name || ""} />
             ) : (
               <CardTableView cards={displayedCards} query={query || selectedSet?.name || ""} />

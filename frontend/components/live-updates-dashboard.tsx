@@ -1,5 +1,6 @@
 "use client";
 
+import { SectionLoadingBar } from "@/components/section-loading-bar";
 import Image from "@/components/card-image";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -210,6 +211,8 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
   }, [searchParams]);
 
   const initialParams = getUrlParams();
+  const [error, setError] = useState<string | null>(null);
+  const requestVersion = useRef(0);
   const [data, setData] = useState<LiveUpdatesResponse>(initialData);
   const [items, setItems] = useState<LiveUpdateItem[]>(initialData.items);
   const [provider, setProvider] = useState<LiveUpdateProviderFilter>(initialParams.provider);
@@ -217,7 +220,7 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
   const [searchQuery, setSearchQuery] = useState(initialParams.q);
   const [page, setPage] = useState(1);
   const [autoRefreshInterval, setAutoRefreshInterval] = useState<number | null>(15);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(initialData.items.length === 0);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [secondsUntilRefresh, setSecondsUntilRefresh] = useState<number>(15);
   const [viewMode, setViewMode] = useState<"side-by-side" | "stacked">(initialParams.viewMode);
@@ -256,10 +259,16 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
   }, [provider, gradeFilter, viewMode, searchQuery]);
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const activeRequests = useRef(0);
+  const pollController = useRef<AbortController | null>(null);
 
   // Fetch fresh updates on filter change
   const fetchFresh = useCallback(
     async (prov: LiveUpdateProviderFilter, gf: LiveUpdateGradeFilter, q: string) => {
+      pollController.current?.abort();
+      activeRequests.current++;
+      const version = ++requestVersion.current;
+      setError(null);
       setIsLoading(true);
       setPage(1);
       try {
@@ -270,30 +279,36 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
           page: 1,
           perPage: 24,
         });
+        if (version !== requestVersion.current) return;
         setData(res);
         setItems(res.items);
       } catch (err) {
+        if (version !== requestVersion.current) return;
+        setError("Could not load results. Please try again.");
         console.error("Failed fetching live updates:", err);
       } finally {
-        setIsLoading(false);
+        activeRequests.current--;
+        if (version === requestVersion.current) setIsLoading(false);
       }
     },
     []
   );
 
-  // Fetch fresh items immediately on client mount if initial SSR items are empty
+  // One foreground request for the active filters; ignore obsolete responses.
   useEffect(() => {
-    if (!initialData.items || initialData.items.length === 0) {
-      void fetchFresh(initialParams.provider, initialParams.gradeFilter, initialParams.q);
-    }
-  }, [fetchFresh, initialData.items, initialParams.gradeFilter, initialParams.provider, initialParams.q]);
+    setIsLoading(true);
+    const timer = window.setTimeout(() => void fetchFresh(provider, gradeFilter, searchQuery), 250);
+    return () => { window.clearTimeout(timer); requestVersion.current++; };
+  }, [fetchFresh, provider, gradeFilter, searchQuery]);
 
   const hasMore = page < data.total_pages;
 
   const loadMore = useCallback(async () => {
     if (!hasMore || isLoading || isLoadingMore) return;
     const nextPage = page + 1;
+    const version = requestVersion.current;
     setIsLoadingMore(true);
+    activeRequests.current++;
     try {
       const res = await getLiveUpdates({
         provider,
@@ -302,6 +317,7 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
         page: nextPage,
         perPage: 24,
       });
+      if (version !== requestVersion.current) return;
       setItems((prev) => {
         const seen = new Set(prev.map((i) => i.id));
         const newItems = res.items.filter((i) => !seen.has(i.id));
@@ -312,63 +328,66 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
     } catch (err) {
       console.error("Failed loading more live updates:", err);
     } finally {
+      activeRequests.current--;
       setIsLoadingMore(false);
     }
   }, [hasMore, isLoading, isLoadingMore, page, provider, gradeFilter, searchQuery]);
 
-  // Auto-refresh countdown
+  // Background polling pauses in hidden tabs and never overlaps another read.
   useEffect(() => {
-    if (!autoRefreshInterval) {
-      if (timerRef.current) clearInterval(timerRef.current);
-      return;
-    }
-
-    setSecondsUntilRefresh(autoRefreshInterval);
+    if (!autoRefreshInterval) return;
+    let remaining = autoRefreshInterval;
+    let disposed = false;
+    setSecondsUntilRefresh(remaining);
+    const refresh = async () => {
+      if (disposed || document.hidden || activeRequests.current > 0) return;
+      const controller = new AbortController();
+      pollController.current = controller;
+      activeRequests.current++;
+      const version = requestVersion.current;
+      try {
+        const res = await getLiveUpdates({ provider, gradeFilter,
+          query: searchQuery.trim() || undefined, page: 1, perPage: 24,
+          abortSignal: controller.signal });
+        if (disposed || controller.signal.aborted || version !== requestVersion.current) return;
+        setItems((existing) => {
+          const ids = new Set(existing.map((item) => item.id));
+          return [...res.items.filter((item) => !ids.has(item.id)), ...existing];
+        });
+        setData((previous) => ({ ...res, total_items: Math.max(previous.total_items, res.total_items) }));
+      } catch (error) {
+        if (!controller.signal.aborted) console.error("Auto-refresh live updates error:", error);
+      } finally {
+        activeRequests.current--;
+        if (pollController.current === controller) pollController.current = null;
+      }
+    };
+    const visibility = () => {
+      if (document.hidden) pollController.current?.abort();
+      else { remaining = autoRefreshInterval; setSecondsUntilRefresh(remaining); void refresh(); }
+    };
     const interval = setInterval(() => {
-      setSecondsUntilRefresh((prev) => {
-        if (prev <= 1) {
-          // Refresh latest entries in background without wiping scroll history
-          void (async () => {
-            try {
-              const res = await getLiveUpdates({
-                provider,
-                gradeFilter,
-                query: searchQuery.trim() || undefined,
-                page: 1,
-                perPage: 24,
-              });
-              setItems((existing) => {
-                const existingIds = new Set(existing.map((i) => i.id));
-                const fresh = res.items.filter((i) => !existingIds.has(i.id));
-                if (fresh.length === 0) return existing;
-                return [...fresh, ...existing];
-              });
-              setData((prevData) => ({
-                ...res,
-                total_items: Math.max(prevData.total_items, res.total_items),
-              }));
-            } catch (err) {
-              console.error("Auto-refresh live updates error:", err);
-            }
-          })();
-          return autoRefreshInterval;
-        }
-        return prev - 1;
-      });
+      if (document.hidden) return;
+      remaining--;
+      if (remaining <= 0) { remaining = autoRefreshInterval; void refresh(); }
+      setSecondsUntilRefresh(remaining);
     }, 1000);
-
     timerRef.current = interval;
-    return () => clearInterval(interval);
+    document.addEventListener("visibilitychange", visibility);
+    return () => {
+      disposed = true;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", visibility);
+      pollController.current?.abort();
+    };
   }, [autoRefreshInterval, provider, gradeFilter, searchQuery]);
 
   const handleProviderChange = (newProv: LiveUpdateProviderFilter) => {
     setProvider(newProv);
-    fetchFresh(newProv, gradeFilter, searchQuery);
   };
 
   const handleGradeChange = (newGf: LiveUpdateGradeFilter) => {
     setGradeFilter(newGf);
-    fetchFresh(provider, newGf, searchQuery);
   };
 
   return (
@@ -522,7 +541,6 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
                 value={searchQuery}
                 onChange={(val) => {
                   setSearchQuery(val);
-                  if (val === "") fetchFresh(provider, gradeFilter, "");
                 }}
                 onSubmit={() => fetchFresh(provider, gradeFilter, searchQuery)}
                 placeholder="Search card, set, or comp..."
@@ -560,6 +578,8 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
       </div>
 
       {/* Live Stream List / Side-by-Side Grid */}
+      {error && <div role="alert" className="my-4 text-sm text-rose-700">{error} <button type="button" className="underline" onClick={() => void fetchFresh(provider, gradeFilter, searchQuery)}>Retry</button></div>}
+      {isLoading && <SectionLoadingBar label="Loading latest market updates…" />}
       <div
         className={
           viewMode === "side-by-side"
@@ -586,7 +606,6 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
                 setProvider("all");
                 setGradeFilter("all");
                 setSearchQuery("");
-                fetchFresh("all", "all", "");
               }}
             />
           </div>

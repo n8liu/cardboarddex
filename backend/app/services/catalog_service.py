@@ -670,13 +670,14 @@ def get_set_statistics(
     game: Literal["all", "pokemon", "pokemon-japan"] = "all",
     min_price: float | None = None,
     max_price: float | None = None,
+    use_cache: bool = True,
 ) -> SetStatsResponse:
     """Calculate aggregate total price and card counts for a set (or filtered set)."""
     clean_q = q.strip()
     cache_key = f"{set_id}:{game}:{hide_sealed}:{sealed_only}:{clean_q}:{min_price}:{max_price}"
     redis_key = f"cardboarddex:set_stats:{cache_key}"
 
-    r = get_redis()
+    r = get_redis() if use_cache else None
     if r is not None:
         try:
             cached_data = r.get(redis_key)

@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { getLiveUpdates } from "@/lib/api";
 import { LiveUpdatesDashboard } from "@/components/live-updates-dashboard";
 import type { LiveUpdatesResponse } from "@/types/card";
 
@@ -11,8 +10,8 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 export const runtime = "edge";
 
-export default async function LiveUpdatesPage() {
-  let initialData: LiveUpdatesResponse = {
+export default function LiveUpdatesPage() {
+  const initialData: LiveUpdatesResponse = {
     page: 1,
     per_page: 24,
     total_items: 0,
@@ -26,11 +25,6 @@ export default async function LiveUpdatesPage() {
     updated_at: new Date().toISOString(),
   };
 
-  try {
-    initialData = await getLiveUpdates({ page: 1, perPage: 24 });
-  } catch (err) {
-    console.error("Failed fetching initial live updates:", err);
-  }
 
   return (
     <main className="min-h-[calc(100vh-65px)] bg-[#f7f8f6] text-slate-950">

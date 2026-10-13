@@ -1,3 +1,4 @@
+import { BackButton } from "@/components/back-button";
 import { SectionLoadingBar } from "@/components/section-loading-bar";
 
 export default function CardDetailLoading() {
@@ -6,7 +7,7 @@ export default function CardDetailLoading() {
       <div className="mx-auto min-w-0 max-w-[1600px] px-4 pb-14 pt-8 sm:px-6 lg:px-8">
         {/* Back Link Shell */}
         <div className="mb-6 flex items-center gap-2">
-          <div className="h-8 w-24 animate-pulse rounded-lg bg-slate-200" />
+          <BackButton />
         </div>
 
         {/* Section Loading Bar */}

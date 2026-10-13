@@ -1,8 +1,9 @@
 "use client";
 
+import { SectionLoadingBar } from "@/components/section-loading-bar";
 import Image from "@/components/card-image";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useCurrency } from "@/context/currency-context";
 import { cardImageUrl, getTrendingDashboard } from "@/lib/api";
@@ -207,41 +208,37 @@ function PokemonRow({ item }: { item: TrendingPokemonItem }) {
 // ---------------------------------------------------------------------------
 export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
   const { formatPrice } = useCurrency();
+  const [error, setError] = useState<string | null>(null);
+  const requestVersion = useRef(0);
   const [data, setData] = useState<TrendingDashboardResponse>(initialData);
   const [timeframe, setTimeframe] = useState<VolumeTimeframe>("7d");
   const [viewMode, setViewMode] = useState<ViewMode>("overview");
   const [searchQuery, setSearchQuery] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const isInitialized = useRef(false);
+  const [isLoading, setIsLoading] = useState(initialData.trending_cards.length === 0);
 
-  useEffect(() => {
-    if (!isInitialized.current) {
-      isInitialized.current = true;
-      if (!initialData.trending_cards || initialData.trending_cards.length === 0) {
-        setIsLoading(true);
-        void getTrendingDashboard({ timeframe })
-          .then(setData)
-          .catch((err) => console.error("Failed fetching trending data on mount:", err))
-          .finally(() => setIsLoading(false));
-      }
-    }
-  }, [initialData.trending_cards, timeframe]);
-
-  // Timeframe switch
-  const handleTimeframeChange = async (newTf: VolumeTimeframe) => {
-    setTimeframe(newTf);
+  const loadData = useCallback(async (selectedTimeframe: VolumeTimeframe) => {
+    const version = ++requestVersion.current;
     setIsLoading(true);
+    setError(null);
     try {
-      const res = await getTrendingDashboard({
-        timeframe: newTf,
-        query: searchQuery.trim() || undefined,
-      });
-      setData(res);
+      const response = await getTrendingDashboard({ timeframe: selectedTimeframe });
+      if (version === requestVersion.current) setData(response);
     } catch (err) {
       console.error("Failed fetching trending data:", err);
+      if (version === requestVersion.current) setError("Could not load trending cards.");
     } finally {
-      setIsLoading(false);
+      if (version === requestVersion.current) setIsLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    void loadData(timeframe);
+    return () => { requestVersion.current++; };
+  }, [loadData, timeframe]);
+
+  const handleTimeframeChange = (newTf: VolumeTimeframe) => {
+    if (newTf === timeframe) void loadData(newTf);
+    else setTimeframe(newTf);
   };
 
   // Client search filtering
@@ -436,6 +433,8 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
         </div>
       </div>
 
+      {error && <div role="alert" className="my-4 text-sm text-rose-700">{error} <button type="button" className="underline" onClick={() => void handleTimeframeChange(timeframe)}>Retry</button></div>}
+      {isLoading && <SectionLoadingBar label="Loading trending cards…" />}
       {/* Main Content Area */}
       {isLoading ? (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">

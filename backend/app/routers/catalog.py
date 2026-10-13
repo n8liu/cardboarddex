@@ -1,12 +1,10 @@
-from app.services.image_delivery import card_image_url, image_generation
+from app.common.response_cache import cached_read, response_cache
+from app.services.image_delivery import card_image_url
 from app.common.cache import TTLCache
-import json
 import logging
-import time
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Query, Response
-from redis.exceptions import RedisError
 from sqlalchemy import and_, case, func, literal, not_, or_, select
 from sqlalchemy.orm import Session
 
@@ -53,11 +51,13 @@ def _evict_oldest_cache_entries(cache: dict[str, tuple[float, Any]], count: int 
 
 def clear_catalog_caches() -> None:
     """Reset in-process catalog search and sets caches (used by tests)."""
+    response_cache.clear()
     _SEARCH_LOCAL_CACHE.clear()
     _SETS_LOCAL_CACHE.clear()
 
 
 @router.get("/search", response_model=list[CardSummary])
+@cached_read("search_cards", fresh=60, maximum=300)
 def search_cards(
     response: Response,
     q: str = Query(default="", max_length=120),
@@ -77,33 +77,8 @@ def search_cards(
     max_price: float | None = Query(default=None, ge=0.0),
     db: Session = Depends(get_db),
 ) -> list[CardSummary]:
-    response.headers["Cache-Control"] = "public, max-age=30, s-maxage=60, stale-while-revalidate=120"
     clean_q = q.strip()
-    cache_key = f"{game}:{sort_by}:{limit}:{offset}:{hide_sealed}:{sealed_only}:{min_price}:{max_price}:{set_id}:{clean_q}"
-    cache_key = f"{image_generation()}:{cache_key}"
-    redis_key = f"cardboarddex:catalog:search:v2:{cache_key}"
-
-    now = time.time()
-    # 1. Fast in-process cache (<0.1ms)
-    local_hit = _SEARCH_LOCAL_CACHE.get(cache_key)
-    if local_hit and (now - local_hit[0]) < _SEARCH_LOCAL_CACHE_TTL:
-        return [CardSummary.model_validate(item) for item in local_hit[1]]
-
-    # 2. Shared Redis cache across workers (<5ms)
-    r = _get_redis()
-    if r is not None:
-        try:
-            cached_raw = r.get(redis_key)
-            if cached_raw:
-                data = json.loads(cached_raw)
-                _SEARCH_LOCAL_CACHE[cache_key] = (now, data)
-                if len(_SEARCH_LOCAL_CACHE) > _MAX_SEARCH_LOCAL_ENTRIES:
-                    _evict_oldest_cache_entries(_SEARCH_LOCAL_CACHE, 50)
-                return [CardSummary.model_validate(item) for item in data]
-        except (RedisError, Exception) as exc:
-            logger.warning("Redis search cache read failed error=%s: %s", type(exc).__name__, exc)
-
-    # 3. Database query on cache miss
+    # The response-cache decorator calls this only for a rebuild.
     # Aligned with ix_price_observations_search_lookup: (card_id, provider, grading_company, provider_updated_at, observed_at)
     latest_price = (
         select(PriceObservation.price)
@@ -244,21 +219,11 @@ def search_cards(
         for card, card_set, market_price, market_currency, latest_synced in rows
     ]
 
-    # Save to local cache & Redis
-    serialized = [item.model_dump(mode="json") for item in results]
-    _SEARCH_LOCAL_CACHE[cache_key] = (now, serialized)
-    if len(_SEARCH_LOCAL_CACHE) > _MAX_SEARCH_LOCAL_ENTRIES:
-        _evict_oldest_cache_entries(_SEARCH_LOCAL_CACHE, 50)
-    if r is not None:
-        try:
-            r.setex(redis_key, _SEARCH_CACHE_TTL, json.dumps(serialized))
-        except (RedisError, Exception) as exc:
-            logger.warning("Redis search cache write failed error=%s: %s", type(exc).__name__, exc)
-
     return results
 
 
 @router.get("/pokemon/{name}", response_model=PokemonCardsResponse)
+@cached_read("get_pokemon_cards", fresh=60, maximum=300)
 def get_pokemon_cards(
     name: str,
     response: Response,
@@ -276,7 +241,6 @@ def get_pokemon_cards(
     db: Session = Depends(get_db),
 ) -> PokemonCardsResponse:
     """Retrieve all trading cards matching a canonical Pokémon species name across sets."""
-    response.headers["Cache-Control"] = "public, max-age=60, s-maxage=300, stale-while-revalidate=600"
     return query_pokemon_cards(
         db,
         name=name,
@@ -289,6 +253,7 @@ def get_pokemon_cards(
 
 
 @router.get("/sets", response_model=list[CardSetOption])
+@cached_read("list_card_sets", fresh=3600, maximum=7200)
 def list_card_sets(
     response: Response,
     game: Literal["all", "pokemon", "pokemon-japan"] = Query(
@@ -297,29 +262,6 @@ def list_card_sets(
     ),
     db: Session = Depends(get_db),
 ) -> list[CardSetOption]:
-    response.headers["Cache-Control"] = "public, max-age=300, s-maxage=86400, stale-while-revalidate=3600"
-    cache_key = game
-    cache_key = f"{image_generation()}:{cache_key}"
-    redis_key = f"cardboarddex:catalog:sets:{cache_key}"
-
-    now = time.time()
-    # 1. Fast in-process cache (<0.1ms)
-    local_hit = _SETS_LOCAL_CACHE.get(cache_key)
-    if local_hit and (now - local_hit[0]) < _SETS_LOCAL_CACHE_TTL:
-        return [CardSetOption.model_validate(item) for item in local_hit[1]]
-
-    # 2. Shared Redis cache across workers (<5ms)
-    r = _get_redis()
-    if r is not None:
-        try:
-            cached_raw = r.get(redis_key)
-            if cached_raw:
-                data = json.loads(cached_raw)
-                _SETS_LOCAL_CACHE[cache_key] = (now, data)
-                return [CardSetOption.model_validate(item) for item in data]
-        except (RedisError, Exception) as exc:
-            logger.warning("Redis sets cache read failed error=%s: %s", type(exc).__name__, exc)
-
     stmt = select(Set).where(Set.id.in_(select(Card.set_id).distinct()))
     if game == "pokemon":
         stmt = stmt.where(or_(Set.series.is_(None), Set.series != "Pokemon Japan"))
@@ -362,19 +304,11 @@ def list_card_sets(
         for card_set in card_sets
     ]
 
-    # Save to local cache & Redis
-    serialized = [item.model_dump(mode="json") for item in results]
-    _SETS_LOCAL_CACHE[cache_key] = (now, serialized)
-    if r is not None:
-        try:
-            r.setex(redis_key, _SETS_CACHE_TTL, json.dumps(serialized))
-        except (RedisError, Exception) as exc:
-            logger.warning("Redis sets cache write failed error=%s: %s", type(exc).__name__, exc)
-
     return results
 
 
 @router.get("/sets/{set_id}/stats", response_model=SetStatsResponse)
+@cached_read("get_set_stats", fresh=60, maximum=300)
 def get_set_stats(
     set_id: str,
     response: Response,
@@ -387,9 +321,9 @@ def get_set_stats(
     db: Session = Depends(get_db),
 ) -> SetStatsResponse:
     """Retrieve aggregate market price statistics for a card set."""
-    response.headers["Cache-Control"] = "public, max-age=60, s-maxage=300, stale-while-revalidate=600"
     return _cards_router.get_set_statistics(
         db,
+        use_cache=False,
         set_id=set_id,
         q=q,
         hide_sealed=hide_sealed,

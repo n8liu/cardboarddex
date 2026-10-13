@@ -76,6 +76,7 @@ def calculate_sealed_signals(
     period: Literal[30, 90] = 30,
     page: int = 1,
     per_page: int = 24,
+    use_cache: bool = True,
 ) -> SealedSignalsResponse:
     """Calculate multi-factor sealed market investment signals and scores."""
     now = time.time()
@@ -85,7 +86,7 @@ def calculate_sealed_signals(
     redis_key = f"{image_generation()}:{redis_key}"
 
     # 1. Try Redis cache first
-    r = get_redis()
+    r = get_redis() if use_cache else None
     if r is not None:
         try:
             cached_data = r.get(redis_key)
@@ -96,7 +97,7 @@ def calculate_sealed_signals(
 
     # 2. Try in-process fallback
     local_cached = _SEALED_SIGNALS_LOCAL_FALLBACK.get(redis_key)
-    if local_cached and (now - local_cached[0]) < _SEALED_CACHE_TTL:
+    if use_cache and local_cached and (now - local_cached[0]) < _SEALED_CACHE_TTL:
         return local_cached[1]
 
     # Explicit provider metadata takes precedence over the legacy rarity fallback.
@@ -418,5 +419,6 @@ def calculate_sealed_signals(
         except (RedisError, Exception) as exc:
             logger.warning("Redis sealed signals cache write failed error=%s: %s", type(exc).__name__, exc)
 
-    _SEALED_SIGNALS_LOCAL_FALLBACK[redis_key] = (now, response)
+    if use_cache:
+        _SEALED_SIGNALS_LOCAL_FALLBACK[redis_key] = (now, response)
     return response

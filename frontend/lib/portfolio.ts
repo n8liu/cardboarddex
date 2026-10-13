@@ -44,15 +44,24 @@ export async function fetchPortfolioDataWithFallback(
   const cards: PortfolioCardItem[] = [];
   const cardHistories: { cardId: string; points: { date: string; price: number }[] }[] = [];
 
-  const cardResults = await Promise.allSettled(
-    uniqueIds.map(async (id) => {
-      const [detail, pricing] = await Promise.all([
-        getCard(id).catch(() => null),
-        getCardPricing(id).catch(() => null),
-      ]);
-      return { id, detail, pricing };
-    })
-  );
+  // Four workers, one HTTP read at a time each: never fan out with binder size.
+  const cardResults: PromiseSettledResult<{ id: string; detail: Awaited<ReturnType<typeof getCard>>; pricing: Awaited<ReturnType<typeof getCardPricing>> }>[] = [];
+  let cursor = 0;
+  await Promise.all(Array.from({ length: Math.min(4, uniqueIds.length) }, async () => {
+    while (cursor < uniqueIds.length) {
+      const index = cursor++;
+      const id = uniqueIds[index];
+      const detail = await getCard(id).catch((error) => {
+        console.error(`[portfolio] Card ${id} detail failed:`, error);
+        return null;
+      });
+      const pricing = await getCardPricing(id).catch((error) => {
+        console.error(`[portfolio] Card ${id} pricing failed:`, error);
+        return null;
+      });
+      cardResults[index] = { status: "fulfilled", value: { id, detail, pricing } };
+    }
+  }));
 
   for (const res of cardResults) {
     if (res.status !== "fulfilled" || !res.value.detail) continue;

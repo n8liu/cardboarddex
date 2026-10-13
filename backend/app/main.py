@@ -11,7 +11,9 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.common.rate_limiter import check_rate_limit, get_client_ip
+from app.common.rate_limiter import check_rate_limit_async as check_rate_limit, get_client_ip
+from app.common.redis import close_async_redis
+from app.common.response_cache import response_cache
 from app.common.redis import get_redis as _get_redis, get_durable_redis
 from app.config import get_settings
 from app.database import get_db
@@ -51,6 +53,8 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        await to_thread.run_sync(response_cache.shutdown)
+        await close_async_redis()
         limiter.total_tokens = previous_limit
 
 
@@ -73,7 +77,7 @@ async def security_and_rate_limit_middleware(request: Request, call_next: object
         is_image_request = clean_path.endswith("/image")
         bucket = "images" if is_image_request else "global"
         max_requests = 6000 if is_image_request else settings.rate_limit_per_minute
-        allowed, retry_after = check_rate_limit(
+        allowed, retry_after = await check_rate_limit(
             client_ip=client_ip,
             bucket=bucket,
             max_requests=max_requests,
@@ -128,6 +132,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS", "HEAD"],
     allow_headers=["*"],
+    expose_headers=["X-Cache-Status", "X-Cache-Generated-At", "X-Cache-Expires-At", "Server-Timing"],
 )
 
 app.include_router(admin.router)

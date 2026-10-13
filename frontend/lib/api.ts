@@ -107,98 +107,136 @@ export function buildQueryString(
   return str ? `?${str}` : "";
 }
 
+export type CacheMetadata = {
+  status: string;
+  generatedAt: number | null;
+  expiresAt: number | null;
+};
+export type CacheOptions = {
+  abortSignal?: AbortSignal;
+  bypassCache?: boolean;
+  onCache?: (metadata: CacheMetadata) => void;
+};
 interface CacheEntry<T> {
   data: T;
-  timestamp: number;
+  expiresAt: number;
+  metadata: CacheMetadata;
 }
-
 const clientCache = new Map<string, CacheEntry<unknown>>();
-const clientInflight = new Map<string, Promise<unknown>>();
-const CLIENT_CACHE_TTL_MS = 60_000; // 60s memory cache for browser GET requests
+type SharedRequest = {
+  promise: Promise<CacheEntry<unknown>>;
+  controller: AbortController;
+  subscribers: number;
+  settled: boolean;
+};
+const clientInflight = new Map<string, SharedRequest>();
 const CLIENT_CACHE_MAX_ENTRIES = 64;
+let cacheGeneration = 0;
 
-function cacheResponse(url: string, data: unknown): void {
-  const now = Date.now();
-  for (const [key, entry] of clientCache) {
-    if (now - entry.timestamp >= CLIENT_CACHE_TTL_MS) clientCache.delete(key);
-  }
-  clientCache.delete(url);
-  clientCache.set(url, { data, timestamp: now });
-  while (clientCache.size > CLIENT_CACHE_MAX_ENTRIES) {
-    clientCache.delete(clientCache.keys().next().value!);
-  }
+function browserTtl(path: string): number {
+  const route = path.split("?")[0];
+  if (route === "/cards/sets") return 300_000;
+  if (["/cards/search", "/cards/market-movers", "/cards/grading-profit",
+    "/cards/sealed-signals", "/home/overview"].includes(route) ||
+    route.startsWith("/cards/pokemon/") || /^\/cards\/sets\/[^/]+\/stats$/.test(route)) return 60_000;
+  return 0;
 }
 
 export function clearClientCache(): void {
+  cacheGeneration++;
   clientCache.clear();
+  // Existing subscribers still own their requests; old completions cannot refill the cache.
   clientInflight.clear();
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const baseUrl = resolveApiUrl();
-  const fullUrl = `${baseUrl}${path.startsWith("/") ? "" : "/"}${path}`;
+function subscribe<T>(shared: SharedRequest, options: CacheOptions): Promise<T> {
+  shared.subscribers++;
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const finish = () => {
+      if (done) return false;
+      done = true;
+      options.abortSignal?.removeEventListener("abort", abort);
+      shared.subscribers--;
+      if (!shared.settled && shared.subscribers === 0) shared.controller.abort();
+      return true;
+    };
+    const abort = () => {
+      if (finish()) reject(options.abortSignal?.reason ?? new DOMException("Aborted", "AbortError"));
+    };
+    shared.promise.then((entry) => {
+      if (!done) options.onCache?.(entry.metadata);
+      if (finish()) resolve(entry.data as T);
+    }, (error) => { if (finish()) reject(error); });
+    if (options.abortSignal?.aborted) abort();
+    else options.abortSignal?.addEventListener("abort", abort, { once: true });
+  });
+}
 
+async function request<T>(path: string, options: RequestInit = {}, policy: CacheOptions = {}): Promise<T> {
+  const fullUrl = `${resolveApiUrl()}${path.startsWith("/") ? "" : "/"}${path}`;
   const isClient = typeof window !== "undefined";
   const isGet = !options.method || options.method.toUpperCase() === "GET";
-  const canCache = isClient && isGet && options.cache !== "no-store";
-
-  if (canCache) {
+  const ttl = isClient && isGet && options.cache !== "no-store" ? browserTtl(path) : 0;
+  const subscriber = { ...policy, abortSignal: policy.abortSignal ?? options.signal ?? undefined };
+  if (subscriber.abortSignal?.aborted) throw subscriber.abortSignal.reason ?? new DOMException("Aborted", "AbortError");
+  if (ttl && !policy.bypassCache) {
     const cached = clientCache.get(fullUrl);
-    if (cached && Date.now() - cached.timestamp < CLIENT_CACHE_TTL_MS) {
+    if (cached && Date.now() < cached.expiresAt) {
+      subscriber.onCache?.(cached.metadata);
       return cached.data as T;
     }
     clientCache.delete(fullUrl);
-    const inflight = clientInflight.get(fullUrl);
-    if (inflight) {
-      return inflight as Promise<T>;
-    }
+    const pending = clientInflight.get(fullUrl);
+    if (pending && !pending.controller.signal.aborted) return subscribe<T>(pending, subscriber);
   }
-
-  const fetchPromise = (async () => {
-    const controller = new AbortController();
-    const timeoutMs = isClient ? 15_000 : 6_000;
-    const timeoutId = setTimeout(() => {
-      controller.abort(new Error(`CardboardDex API ${path} timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-
-    if (options.signal) {
-      if (options.signal.aborted) {
-        controller.abort(options.signal.reason);
-      } else {
-        options.signal.addEventListener("abort", () => controller.abort(options.signal?.reason), { once: true });
-      }
-    }
-
+  const generation = cacheGeneration;
+  const controller = new AbortController();
+  const timeoutMs = isClient ? 15_000 : 6_000;
+  const timeoutId = setTimeout(() => controller.abort(new Error(`CardboardDex API ${path} timed out after ${timeoutMs}ms`)), timeoutMs);
+  const shared: SharedRequest = { controller, subscribers: 0, settled: false, promise: Promise.resolve(null!) };
+  shared.promise = (async () => {
     try {
       const response = await fetch(fullUrl, {
         ...options,
+        ...(isClient && ttl ? { cache: "no-cache" as const } : {}),
+        // Backend timestamps own freshness; do not stack a Next data cache over them.
+        ...(!isClient && browserTtl(path) ? { cache: "no-store" as const, next: undefined } : {}),
         signal: controller.signal,
       });
-      if (!response.ok) {
-        throw new Error(`CardboardDex API ${path} returned ${response.status}`);
+      if (!response.ok) throw new Error(`CardboardDex API ${path} returned ${response.status}`);
+      const data = await response.json();
+      const parseDate = (name: string) => {
+        const value = response.headers.get(name);
+        const parsed = value ? Date.parse(value) : NaN;
+        return Number.isFinite(parsed) ? parsed : null;
+      };
+      const metadata: CacheMetadata = {
+        status: response.headers.get("X-Cache-Status") ?? "unknown",
+        generatedAt: parseDate("X-Cache-Generated-At"),
+        expiresAt: parseDate("X-Cache-Expires-At"),
+      };
+      const entry = { data, metadata, expiresAt: Math.min(Date.now() + ttl, metadata.expiresAt ?? Infinity) };
+      if (ttl && clientInflight.get(fullUrl) === shared && generation === cacheGeneration && !controller.signal.aborted &&
+          !metadata.status.startsWith("stale") && entry.expiresAt > Date.now()) {
+        for (const [key, value] of clientCache) if (value.expiresAt <= Date.now()) clientCache.delete(key);
+        clientCache.delete(fullUrl);
+        clientCache.set(fullUrl, entry);
+        while (clientCache.size > CLIENT_CACHE_MAX_ENTRIES) clientCache.delete(clientCache.keys().next().value!);
       }
-      const data = (await response.json()) as T;
-      if (canCache) {
-        cacheResponse(fullUrl, data);
-      }
-      return data;
+      return entry;
     } finally {
+      shared.settled = true;
       clearTimeout(timeoutId);
-      if (canCache) {
-        clientInflight.delete(fullUrl);
-      }
+      if (clientInflight.get(fullUrl) === shared) clientInflight.delete(fullUrl);
     }
   })();
-
-  if (canCache) {
-    clientInflight.set(fullUrl, fetchPromise);
-  }
-
-  return fetchPromise;
+  if (ttl) clientInflight.set(fullUrl, shared);
+  return subscribe<T>(shared, subscriber);
 }
 
 
-type SearchCardOptions = {
+type SearchCardOptions = CacheOptions & {
   limit?: number;
   offset?: number;
   setId?: string;
@@ -227,13 +265,13 @@ export function searchCards(query: string, options: SearchCardOptions = {}): Pro
   const isServer = typeof window === "undefined";
   const reqOptions: RequestInit = isServer
     ? { next: { revalidate: options.revalidate ?? 60 } }
-    : { cache: "no-store" };
-  return request<CardSummary[]>(`/cards/search${qs}`, reqOptions);
+    : { cache: "no-cache" };
+  return request<CardSummary[]>(`/cards/search${qs}`, reqOptions, options);
 }
 
 export function getSetStats(
   setId: string,
-  options: {
+  options: CacheOptions & {
     q?: string;
     hideSealed?: boolean;
     sealedOnly?: boolean;
@@ -254,13 +292,13 @@ export function getSetStats(
   const isServer = typeof window === "undefined";
   const reqOptions: RequestInit = isServer
     ? { next: { revalidate: options.revalidate ?? 120 } }
-    : { cache: "no-store" };
-  return request<SetStats>(`/cards/sets/${encodeURIComponent(setId)}/stats${qs}`, reqOptions);
+    : { cache: "no-cache" };
+  return request<SetStats>(`/cards/sets/${encodeURIComponent(setId)}/stats${qs}`, reqOptions, options);
 }
 
 export function getPokemonCards(
   pokemonName: string,
-  options: {
+  options: CacheOptions & {
     setId?: string;
     sortBy?: CardSort;
     game?: GameLanguage;
@@ -279,21 +317,21 @@ export function getPokemonCards(
   });
   return request<PokemonCardsResponse>(
     `/cards/pokemon/${encodeURIComponent(pokemonName)}${qs}`,
-    { cache: "no-store" }
+    { cache: "no-cache" }, options
   );
 }
 
-export function getCardSets(game?: GameLanguage): Promise<CardSetOption[]> {
+export function getCardSets(game?: GameLanguage, options: CacheOptions = {}): Promise<CardSetOption[]> {
   const qs = buildQueryString({
     game: game && game !== "all" ? game : undefined,
   });
   return request<CardSetOption[]>(`/cards/sets${qs}`, {
     next: { revalidate: 86400 },
-  });
+  }, options);
 
 }
 
-export function getMarketMovers(options: {
+export function getMarketMovers(options: CacheOptions & {
   direction?: MoverDirection;
   period?: MoverPeriod;
   game?: "pokemon" | "pokemon-japan";
@@ -309,7 +347,7 @@ export function getMarketMovers(options: {
   });
   return request<MarketMoversResponse>(`/cards/market-movers${qs}`, {
     next: { revalidate: 300 },
-  });
+  }, options);
 }
 
 export async function getCard(
@@ -342,7 +380,7 @@ export async function getCardPricing(cardId: string): Promise<CardPricing | null
   }
 }
 
-export function getGradingProfit(options: {
+export function getGradingProfit(options: CacheOptions & {
   gradingFee?: number;
   sortBy?: GradingSortOption;
   targetGrade?: "all" | "psa10" | "psa9";
@@ -370,10 +408,10 @@ export function getGradingProfit(options: {
   });
   return request<GradingProfitResponse>(`/cards/grading-profit${qs}`, {
     next: { revalidate: 300 },
-  });
+  }, options);
 }
 
-export function getSealedSignals(options: {
+export function getSealedSignals(options: CacheOptions & {
   game?: GameLanguage;
   era?: "newer" | "older";
   period?: 30 | 90;
@@ -399,7 +437,7 @@ export function getSealedSignals(options: {
   });
   return request<SealedSignalsResponse>(`/cards/sealed-signals${qs}`, {
     next: { revalidate: 300 },
-  });
+  }, options);
 }
 
 export function getTopPokemonVolume(options: {
@@ -448,7 +486,7 @@ export function trackUserAction(data: TrackActionPayload): void {
   } catch {}
 }
 
-export function getLiveUpdates(options: {
+export function getLiveUpdates(options: CacheOptions & {
   provider?: LiveUpdateProviderFilter;
   gradeFilter?: LiveUpdateGradeFilter;
   setId?: string;
@@ -466,7 +504,7 @@ export function getLiveUpdates(options: {
   });
   return request<LiveUpdatesResponse>(`/cards/live-updates${qs}`, {
     cache: "no-store",
-  });
+  }, options);
 }
 
 export async function getPortfolioValuation(
@@ -514,6 +552,6 @@ export function getSalesActivity(days: 7 | 30 | 90 = 30, query = "", signal?: Ab
   return request(`/market/sales-activity${buildQueryString({ days, q: query })}`, { signal, cache: "no-store" });
 }
 
-export function getHomeOverview(signal?: AbortSignal): Promise<HomeOverview> {
-  return request("/home/overview", { signal, cache: "no-store" });
+export function getHomeOverview(signal?: AbortSignal, options: CacheOptions = {}): Promise<HomeOverview> {
+  return request("/home/overview", { signal, cache: "no-cache" }, options);
 }

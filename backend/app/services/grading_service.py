@@ -47,6 +47,7 @@ def calculate_grading_profit(
     q: str = "",
     page: int = 1,
     per_page: int = 24,
+    use_cache: bool = True,
 ) -> GradingProfitResponse:
     """Calculate potential grading profit and ROI metrics across raw and graded comps."""
     now = time.time()
@@ -59,7 +60,7 @@ def calculate_grading_profit(
     redis_key = f"{image_generation()}:{redis_key}"
 
     # 1. Try Redis cache first
-    r = get_redis()
+    r = get_redis() if use_cache else None
     if r is not None:
         try:
             cached_data = r.get(redis_key)
@@ -70,7 +71,7 @@ def calculate_grading_profit(
 
     # 2. Try in-process fallback
     local_cached = _GRADING_PROFIT_LOCAL_FALLBACK.get(redis_key)
-    if local_cached and (now - local_cached[0]) < _GRADING_CACHE_TTL:
+    if use_cache and local_cached and (now - local_cached[0]) < _GRADING_CACHE_TTL:
         return local_cached[1]
 
     settings = get_settings()
@@ -326,5 +327,6 @@ def calculate_grading_profit(
         except (RedisError, Exception) as exc:
             logger.warning("Redis grading profit cache write failed error=%s: %s", type(exc).__name__, exc)
 
-    _GRADING_PROFIT_LOCAL_FALLBACK[redis_key] = (now, response)
+    if use_cache:
+        _GRADING_PROFIT_LOCAL_FALLBACK[redis_key] = (now, response)
     return response

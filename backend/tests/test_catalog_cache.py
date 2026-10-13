@@ -123,30 +123,31 @@ def test_list_card_sets_uses_cache(client: TestClient) -> None:
     assert res2.json() == data1
 
 
-def test_redis_cache_hit_and_write(client: TestClient) -> None:
-    mock_redis = MagicMock()
-    mock_redis.get.return_value = None  # miss initially
+def test_redis_cache_hit_and_write(client: TestClient, monkeypatch) -> None:
+    from app.common.response_cache import response_cache
+    from test_response_cache import MemoryRedis
+    redis = MemoryRedis()
+    monkeypatch.setattr(response_cache, 'redis_factory', lambda: redis)
+    monkeypatch.setattr(response_cache, '_redis_retry_at', 0)
+    first = client.get('/cards/search?q=Charizard')
+    assert first.status_code == 200
+    assert first.headers['X-Cache-Status'] == 'miss'
+    response_cache.clear()
+    second = client.get('/cards/search?q=Charizard')
+    assert second.json() == first.json()
+    assert second.headers['X-Cache-Status'] == 'hit'
+    assert second.headers['X-Cache-Generated-At'] == first.headers['X-Cache-Generated-At']
 
-    with patch("app.routers.cards._get_redis", return_value=mock_redis):
-        clear_catalog_caches()
-        res = client.get("/cards/search?q=Charizard")
-        assert res.status_code == 200
-        # Check that it attempted to write to Redis
-        assert mock_redis.setex.called
-        assert "cardboarddex:catalog:search:" in mock_redis.setex.call_args[0][0]
 
-
-def test_redis_error_gracefully_degrades(client: TestClient) -> None:
-    mock_redis = MagicMock()
-    mock_redis.get.side_effect = RedisError("Connection refused")
-    mock_redis.setex.side_effect = RedisError("Read-only replica")
-
-    with patch("app.routers.cards._get_redis", return_value=mock_redis):
-        clear_catalog_caches()
-        # Should gracefully log warning and proceed to DB
-        res = client.get("/cards/search?q=Charizard")
-        assert res.status_code == 200
-        assert len(res.json()) == 1
+def test_redis_error_gracefully_degrades(client: TestClient, monkeypatch) -> None:
+    from app.common.response_cache import response_cache
+    redis = MagicMock()
+    redis.get.side_effect = RedisError('Connection refused')
+    monkeypatch.setattr(response_cache, 'redis_factory', lambda: redis)
+    monkeypatch.setattr(response_cache, '_redis_retry_at', 0)
+    result = client.get('/cards/search?q=Charizard')
+    assert result.status_code == 200 and len(result.json()) == 1
+    assert redis.get.called
 
 
 def test_evict_oldest_cache_entries() -> None:

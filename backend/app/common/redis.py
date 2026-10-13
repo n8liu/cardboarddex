@@ -40,3 +40,26 @@ def get_redis() -> Redis | None:
             )
             _redis_client = None
     return _redis_client
+
+# Created lazily on the running API loop; never shared with Celery/sync clients.
+_async_redis_client = None
+
+
+def get_async_redis():
+    from redis.asyncio import Redis as AsyncRedis
+    global _async_redis_client
+    if _async_redis_client is None:
+        settings = get_settings()
+        _async_redis_client = AsyncRedis.from_url(
+            settings.cache_redis_url or settings.redis_url, decode_responses=True,
+            socket_connect_timeout=settings.redis_socket_timeout,
+            socket_timeout=settings.redis_socket_timeout,
+        )
+    return _async_redis_client
+
+
+async def close_async_redis():
+    global _async_redis_client
+    client, _async_redis_client = _async_redis_client, None
+    if client is not None:
+        await client.aclose()

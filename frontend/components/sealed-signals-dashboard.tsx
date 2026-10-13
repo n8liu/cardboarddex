@@ -1,4 +1,5 @@
 "use client";
+import { CacheNotice, useCacheNotice } from "@/components/cache-notice";
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -55,6 +56,8 @@ function ProductRow({ item, rank, period }: { item: SealedSignalItem; rank: numb
 }
 
 function RankingColumn({ era, filters, initial }: { era: Era; filters: Filters; initial?: SealedSignalsResponse | null }) {
+  const [cacheMetadata, setCacheMetadata] = useCacheNotice();
+  const previousFilters = useRef<string | null>(null);
   const [data, setData] = useState(initial ?? null);
   const [items, setItems] = useState(initial?.items ?? []);
   const [loading, setLoading] = useState(!initial);
@@ -68,25 +71,30 @@ function RankingColumn({ era, filters, initial }: { era: Era; filters: Filters; 
   }, []);
   useEffect(() => {
     if (initial && retry === 0) return;
+    const key = JSON.stringify([era, filters]);
+    if (previousFilters.current !== null && previousFilters.current !== key) { setItems([]); setData(null); }
+    previousFilters.current = key;
+    setCacheMetadata(null);
     let cancelled = false;
+    const controller = new AbortController();
     setLoading(true);
     setError("");
-    getSealedSignals({ ...filters, era, page: 1, perPage: 12 }).then((result) => {
+    getSealedSignals({ ...filters, era, page: 1, perPage: 12, abortSignal: controller.signal, bypassCache: retry > 0, onCache: (metadata) => { if (!cancelled) setCacheMetadata(metadata); } }).then((result) => {
       if (!cancelled) { setData(result); setItems(result.items); }
     }).catch((err) => {
       console.error(`Failed loading ${era} sealed rankings:`, err);
       if (!cancelled) setError("Could not load this ranking. Please try again.");
     }).finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+    return () => { cancelled = true; controller.abort(); };
   }, [era, filters, initial, retry]);
 
-  async function loadMore() {
+  async function loadMore(bypassCache = false) {
     if (!data || busy.current) return;
     busy.current = true;
     setLoading(true);
     setError("");
     try {
-      const result = await getSealedSignals({ ...filters, era, page: data.page + 1, perPage: 12 });
+      const result = await getSealedSignals({ ...filters, era, page: data.page + 1, perPage: 12, bypassCache, onCache: setCacheMetadata });
       if (mounted.current) {
         setData(result);
         setItems((previous) => {
@@ -112,9 +120,10 @@ function RankingColumn({ era, filters, initial }: { era: Era; filters: Filters; 
       </div>
       {items.length > 0 && <ol className="space-y-2">{items.map((item, index) => <ProductRow key={item.card_id} item={item} rank={index + 1} period={filters.period} />)}</ol>}
       {loading && <div role="status" className="space-y-3 p-5"><span className="text-xs text-slate-500">Loading {newer ? "newer" : "older"} products…</span>{!items.length && [0, 1, 2].map((n) => <div key={n} className="h-24 animate-pulse rounded-xl bg-slate-100" />)}</div>}
-      {error && <div role="alert" className="m-4 rounded-xl bg-rose-50 p-4 text-sm text-rose-700">{error}<button type="button" className="ml-2 font-semibold underline" onClick={() => data ? loadMore() : setRetry((n) => n + 1)}>Retry</button></div>}
+      <CacheNotice metadata={cacheMetadata} />
+      {error && <div role="alert" className="m-4 rounded-xl bg-rose-50 p-4 text-sm text-rose-700">{error}<button type="button" className="ml-2 font-semibold underline" onClick={() => data ? loadMore(true) : setRetry((n) => n + 1)}>Retry</button></div>}
       {!loading && !error && !items.length && <div className="px-6 py-16 text-center"><p className="text-sm font-semibold text-slate-700">No matching {newer ? "newer" : "older"} products</p><p className="mt-2 text-xs text-slate-500">Try another language or product type, or clear your filters.</p></div>}
-      {!error && data && data.page < data.total_pages && <div className="border-t border-slate-100 p-4"><button type="button" disabled={loading} onClick={loadMore} className="min-h-10 w-full rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-700 transition hover:bg-slate-100 focus-visible:outline-slate-900 disabled:opacity-50">{loading ? "Loading…" : `Load more ${newer ? "newer" : "older"} products`}</button></div>}
+      {!error && data && data.page < data.total_pages && <div className="border-t border-slate-100 p-4"><button type="button" disabled={loading} onClick={() => void loadMore()} className="min-h-10 w-full rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-700 transition hover:bg-slate-100 focus-visible:outline-slate-900 disabled:opacity-50">{loading ? "Loading…" : `Load more ${newer ? "newer" : "older"} products`}</button></div>}
     </section>
   );
 }

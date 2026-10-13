@@ -44,7 +44,6 @@ from app.routers.analytics import verify_admin_token, ADMIN_TOKEN_HEADER  # noqa
 from app.routers.market import (  # noqa: F401
     get_tcgapi_client,
     _MOVERS_LOCAL_FALLBACK,
-    _compute_db_market_movers,
     _build_mover_item,
 )
 

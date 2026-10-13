@@ -1,5 +1,7 @@
 "use client";
+import { CacheNotice, useCacheNotice } from "@/components/cache-notice";
 
+import { SectionLoadingBar } from "@/components/section-loading-bar";
 import Image from "@/components/card-image";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -49,9 +51,14 @@ export function GradingProfitDashboard({ initialData }: GradingProfitDashboardPr
   }, [initialData.grading_fee, initialData.sort_by, searchParams]);
 
   const initialParams = getUrlParams();
+  const [error, setError] = useState<string | null>(null);
+  const requestVersion = useRef(0);
+  const [cacheMetadata, setCacheMetadata] = useCacheNotice();
+  const previousFilters = useRef<string | null>(null);
+  const foregroundController = useRef<AbortController | null>(null);
   const [data, setData] = useState<GradingProfitResponse>(initialData);
   const [items, setItems] = useState<GradingProfitItem[]>(initialData.items);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(initialData.items.length === 0);
   const [loadingMore, setLoadingMore] = useState(false);
 
   // Filter & State controls
@@ -120,11 +127,21 @@ export function GradingProfitDashboard({ initialData }: GradingProfitDashboardPr
   }, [presetFilter]);
 
   // Fetch fresh data when filters change
-  const fetchFresh = useCallback(async () => {
+  const fetchFresh = useCallback(async (bypassCache = false) => {
+    const key = JSON.stringify([gradingFee, sortBy, targetGrade, minProfit, presetFilter, psa9SafeOnly, debouncedQuery]);
+    if (previousFilters.current !== null && previousFilters.current !== key) setItems([]);
+    previousFilters.current = key;
+    setCacheMetadata(null);
+    foregroundController.current?.abort();
+    const controller = new AbortController();
+    foregroundController.current = controller;
+    const version = ++requestVersion.current;
+    setError(null);
     setLoading(true);
     setPage(1);
     try {
       const res = await getGradingProfit({
+        bypassCache, abortSignal: controller.signal, onCache: (metadata) => { if (version === requestVersion.current) setCacheMetadata(metadata); },
         gradingFee,
         sortBy,
         targetGrade,
@@ -136,21 +153,25 @@ export function GradingProfitDashboard({ initialData }: GradingProfitDashboardPr
         page: 1,
         perPage,
       });
+      if (version !== requestVersion.current) return;
       setData(res);
       setItems(res.items);
     } catch (err) {
+      if (version !== requestVersion.current) return;
+      setError("Could not load results. Please try again.");
       console.error("Failed fetching grading profit opportunities:", err);
     } finally {
-      setLoading(false);
+      if (version === requestVersion.current) setLoading(false);
     }
   }, [gradingFee, sortBy, targetGrade, minProfit, presetFilter, psa9SafeOnly, debouncedQuery, perPage]);
 
   useEffect(() => {
     if (isFirstMount.current) {
       isFirstMount.current = false;
-      return;
+      if (initialData.items.length > 0) return;
     }
-    fetchFresh();
+    void fetchFresh();
+    return () => { requestVersion.current++; foregroundController.current?.abort(); };
   }, [fetchFresh]);
 
   const hasMore = page < data.total_pages;
@@ -158,6 +179,7 @@ export function GradingProfitDashboard({ initialData }: GradingProfitDashboardPr
   const loadMore = useCallback(async () => {
     if (!hasMore || loading || loadingMore) return;
     const nextPage = page + 1;
+    const version = requestVersion.current;
     setLoadingMore(true);
     try {
       const res = await getGradingProfit({
@@ -172,6 +194,7 @@ export function GradingProfitDashboard({ initialData }: GradingProfitDashboardPr
         page: nextPage,
         perPage,
       });
+      if (version !== requestVersion.current) return;
       setItems((prev) => {
         const seen = new Set(prev.map((i) => i.card_id));
         const newItems = res.items.filter((i) => !seen.has(i.card_id));
@@ -180,6 +203,8 @@ export function GradingProfitDashboard({ initialData }: GradingProfitDashboardPr
       setData(res);
       setPage(nextPage);
     } catch (err) {
+      if (version !== requestVersion.current) return;
+      setError("Could not load results. Please try again.");
       console.error("Failed loading more grading opportunities:", err);
     } finally {
       setLoadingMore(false);
@@ -475,6 +500,9 @@ export function GradingProfitDashboard({ initialData }: GradingProfitDashboardPr
         </div>
       </div>
 
+      <CacheNotice metadata={cacheMetadata} />
+      {error && <div role="alert" className="my-4 text-sm text-rose-700">{error} <button type="button" className="underline" onClick={() => void fetchFresh(true)}>Retry</button></div>}
+      {loading && <SectionLoadingBar label="Loading grading opportunities…" />}
       {/* Card Results Grid */}
       {loading ? (
         <div className="flex min-h-[400px] items-center justify-center rounded-3xl border border-slate-200 bg-white p-12">

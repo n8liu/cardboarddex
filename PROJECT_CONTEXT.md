@@ -1,8 +1,18 @@
 # CardboardDex Project Context
 
-Updated: 2026-10-12. This handoff retains detailed product and implementation context, with dated deployment records and explicit known limitations. Repository: [n8liu/cardboarddex](https://github.com/n8liu/cardboarddex).
+Updated: 2026-10-13. This handoff retains detailed product and implementation context, with dated deployment records and explicit known limitations. Repository: [n8liu/cardboarddex](https://github.com/n8liu/cardboarddex).
 
 Read [AGENTS.md](AGENTS.md) before changing code, including the installed Next.js documentation requirement. Treat source code and dated verification as authoritative when older documents disagree. [ARCHITECTURE.md](ARCHITECTURE.md) describes the system boundaries but still contains outdated deployment and eBay implementation notes.
+
+## Capacity upgrade blocked — 2026-10-13 UTC
+
+The approved target is now **`cardboarddex-1gb`, `micro_3_0`, $7/month, dual-stack, 1 GB RAM and 40 GB disk**. The provisioner validates these regional bundle properties and protects `cardboarddex-recovered` plus historical source names. Its 28 provisioning tests pass.
+
+At approximately 19:17 UTC, `provision.py --instance-name cardboarddex-1gb --instance-only --apply` validated the AWS account and bundle, but AWS rejected `CreateInstances` with `InvalidInputException`: "Sorry, you've reached your maximum limit of Lightsail Instances : 1. If you're new to Lightsail, please try again later. If the issue persists, please contact Customer Support."
+
+Follow-up AWS inventory confirmed only `cardboarddex-recovered`, running on `nano_3_0` with dual-stack networking. Public `/ready` returned HTTP 200 with `{"status":"ready"}`. No replacement was created and no source, Tunnel, ingestion, backup, or IAM changes were made. The migration stopped at the required creation gate. The nano-only restriction remains unresolved because creation failed at the instance-count gate. AWS must permit both two concurrent instances and the `micro_3_0` bundle before retrying; do not delete production to bypass either restriction.
+
+The planned 1,500-card priority pool, eight-card batches, scheduled subquotas, worker/Beat memory increases, immutable deployment, provider canaries, 48-hour observation, and seven-day coverage verification remain pending after the capacity gate. Existing local passive-refresh work is preserved, not upgraded or deployed by this attempt. Reuse existing backup infrastructure with `--instance-only`; source retirement still requires separate deletion authorization. The 30-minute maintenance window has not begun.
 
 ## Project rules
 
@@ -48,6 +58,15 @@ Catalog image responses use `/cards/{id}/image`. The backend downloads provider 
 | Binder state and UI | [frontend/context/binder-context.tsx](frontend/context/binder-context.tsx), [frontend/components/binder](frontend/components/binder) |
 | Pokédex data and species details | [frontend/lib/pokedex-data.ts](frontend/lib/pokedex-data.ts), [frontend/lib/pokeapi.ts](frontend/lib/pokeapi.ts) |
 | Deployment workflows | [.github/workflows/backend-ci-cd.yml](.github/workflows/backend-ci-cd.yml), [.github/workflows/frontend-ci-cd.yml](.github/workflows/frontend-ci-cd.yml) |
+
+## Application caching and loading improvements (local, 2026-10-13; not deployed)
+
+- Adds bounded Redis/process response caching with original generation/freshness timestamps, stale serving, token-owned rebuild locks, one background refresh per API process, isolated database sessions, query timeouts, and explicit unavailable responses after maximum age. Covers catalog/Pokémon searches, set directory/statistics, home, grading, sealed, and movers. Coordinated routes bypass older nested service caches.
+- Browser caching now explicitly covers browsing reads for up to 60 seconds and sets for five minutes, capped by backend freshness. Subscriber-aware cancellation, request deduplication, retry bypass, and stale notices preserve `no-store` for live polls/private/tracked reads. Coordinated server fetches bypass Next's data cache. Public response bodies remain compatible; exposed cache/timing headers provide metadata.
+- Catalog loads immediately and only debounces text/price changes. Existing independent controls/detail-streaming work is retained. Live Comps pauses hidden-tab polling and prevents poll overlap; PokéAPI has three-second deadlines; binder fallback is limited to four concurrent HTTP reads with partial-success/error logging.
+- Market Movers now reads stored ungraded USD TCG observations only, uses the exact period's reported percentage, and ranks before pagination. No provider requests, unrelated-row deltas, other-period substitution, or fabricated movers. Empty coverage is explicit; source observation dates remain visible while ingestion is paused.
+- Verification: 239 backend tests passed, 19 opt-in tests skipped; 103 frontend tests, TypeScript, and production build passed. Three separate disposable PostgreSQL/Redis integration tests passed. Local production-build browser checks held API responses pending across six listing/dashboard routes at 390px and 1440px: controls remained usable, no horizontal overflow, and zero browser exceptions. A fixture-based catalog revisit used zero additional API requests and had no browser errors. Production latency is not yet measured; no whole-page speedup is claimed. Existing framework deprecation warnings remain.
+- No Cards/Sets schema/index changes, ingestion restart, R2 activation, Cloudflare rules, paid-service upgrade, commit, push, or deployment. See [performance behavior and rollout](docs/performance.md) for exact freshness limits, interfaces, verification, monitoring, and rollback.
 
 ## FAQ, guides, and release calendar (local, 2026-10-12; not deployed)
 
@@ -164,20 +183,22 @@ The following retains the product's visual specifications, interaction behavior,
   - **Sliding Gliding Pill Navigation Header**:
     - Hardware-accelerated sliding background pill in [`frontend/components/nav-header.tsx`](frontend/components/nav-header.tsx) that glides to destination buttons with responsive resize tracking.
 
-- **Zero-Shift Route Loading with Instant Headers & In-Section Indeterminate Progress**:
-  - Route shells use stable headings and in-section progress indicators; data grids can still render skeleton placeholders.
-  - Route loading states render the final page title, pill badge, and description immediately.
-  - Created [`frontend/components/section-loading-bar.tsx`](frontend/components/section-loading-bar.tsx) positioned directly above the data grid, displaying an animated pulse indicator, status label, and continuous indeterminate progress bar (`.section-progress-indeterminate`).
+- **Responsive page controls and independent product loading (local, 2026-10-12; not deployed)**:
+  - Catalog, sealed signals, market movers, grading, trending, and live updates render their interactive headings/search/filter controls without awaiting backend product data in the route. Products load in the browser with visible in-section loading text; initial pending requests no longer flash empty grids. Existing route loading files cover route-code delivery, not product fetching.
+  - Catalog uses one debounced card-request flow instead of overlapping mount/filter requests. Set options and set statistics load independently of cards; set-option loading/failure, product failure, and retry are explicit. Obsolete card/stat responses cannot replace newer filters. Dashboard foreground requests also protect current filters from older responses; sealed columns retain their independent loading and retry behavior.
+  - Card detail navigation renders outside its data boundary; metadata and pricing requests start together but pricing streams in separately. Pokémon cycling navigation and card filters render independently of the PokéAPI hero; species cards load client-side and preserve the referral parameter. Home market/release loading labels are now visible as well as accessible.
+  - No backend/schema, provider-ingestion, deployment, or navigation-prefetch policy changes. Browser-fetched catalog/ranking results require JavaScript and browser API connectivity; these grids are no longer included in initial server HTML. This removes API waits from controls, not underlying API latency, and makes no claim about measured production speed.
+  - Verification: 92 frontend tests passed, including eight new delayed-API/control, catalog request-count/stale-response, and grading retry tests; TypeScript and production build passed. Local production-build browser checks held API responses pending across all six listing/dashboard routes at 390px and 1440px: headings/navigation/search remained available, result loading text was visible, no horizontal overflow, and zero browser exceptions. Detail streaming was build-checked, not tested against delayed production services. Existing Edge Runtime deprecation warnings remain.
 
 - **Cloudflare Pages Production Resilience & Error Isolation**:
   - Live production frontend deployed at `https://cardboarddex.app` and `https://cardboarddex.pages.dev`.
   - Added smart API endpoint resolution in [`frontend/lib/api.ts`](frontend/lib/api.ts) and [`frontend/next.config.ts`](frontend/next.config.ts): production targets `https://api.cardboarddex.app` through Cloudflare Tunnel, including when a stale Pages environment variable still supplies the generated AWS URL. Local development retains `http://localhost:8000`; generated `*.on.aws` image access has been removed.
   - Dynamic API URL resolution with trailing slash normalization inside `request<T>()`, `getCard()`, `getCardPricing()`, `trackUserAction()`, and `cardImageUrl()` prevents stale module-level hostnames in edge/serverless runtimes.
   - Added [`frontend/components/card-detail-client-fallback.tsx`](frontend/components/card-detail-client-fallback.tsx) with client-side fallback hydration: if Edge SSR encounters a network or runtime error, the card profile dynamically loads data and pricing comps directly from the browser rather than failing with a hard 404 `notFound()`.
-  - Added client-side fallback fetching on mount across all dashboards ([`catalog-browser.tsx`](frontend/components/catalog-browser.tsx), [`pokemon-cards-view.tsx`](frontend/components/pokemon-cards-view.tsx), [`market-movers-dashboard.tsx`](frontend/components/market-movers-dashboard.tsx), and [`top-volume-dashboard.tsx`](frontend/components/top-volume-dashboard.tsx)) so that if an initial SSR payload is empty or errored (e.g. edge timeouts, provider quota limits), fresh data is fetched client-side immediately upon mount.
+  - Listing/dashboard routes now fetch products client-side on mount as described above; card details retain a browser fallback after server-fetch failure.
   - Instant default load for Live Comps ([`live-updates-dashboard.tsx`](frontend/components/live-updates-dashboard.tsx)): removed the first-mount skip guard so recent comps load immediately on initial page open rather than waiting 15 seconds or requiring filter interaction.
   - Implemented comprehensive error boundary in [`frontend/app/error.tsx`](frontend/app/error.tsx) with technical details toggle, direct action buttons (`Retry Action`, `Reload Application`, `Return to Pokédex`), and API health status check.
-  - Added graceful SSR error catching on `/catalog`, `/cards/[id]`, `/live-updates`, and `/top-volume` routes, rendering UI shells rather than 500 error pages on transient backend outages.
+  - Listing/dashboard API errors stay within the rendered page. Card detail server-fetch failures render a browser retry fallback.
   - Disabled navigation prefetching (`prefetch={false}`) in [`frontend/components/nav-header.tsx`](frontend/components/nav-header.tsx) to prevent burst 404 / RSC fetch floods on Cloudflare Pages edge, and added `wrangler.toml` specifying `compatibility_flags = ["nodejs_compat"]`.
 
 - **Card Detail ➔ National Pokédex Species Bridge**:
@@ -369,9 +390,9 @@ The following retains the product's visual specifications, interaction behavior,
 
 ### Catalog queries and cache layers
 
-- Catalog search uses `_SEARCH_LOCAL_CACHE` (60-second TTL) and Redis `cardboarddex:catalog:search:{params}` (300-second TTL). Sets use `_SETS_LOCAL_CACHE` (300 seconds) and `cardboarddex:catalog:sets:{game}` (3,600 seconds).
+- Local implementation now uses `cardboarddex:responses:v1:*` and the bounded response coordinator; exact freshness/stale limits are in [performance notes](docs/performance.md). Earlier production cache names/lifetimes describe the pre-rollout implementation.
 - Search and set statistics accept `min_price`/`max_price`, filter latest-price subqueries, and support server-rendered bookmarked URLs. Catalog search uses the composite observation index `ix_price_observations_search_lookup`.
-- [api.ts](frontend/lib/api.ts) supplies Next revalidation options for search/set-statistics requests and a separate browser GET cache (60 seconds) with in-flight request deduplication. The browser cache currently ignores callers' `no-store` intent and does not evict old keys.
+- [api.ts](frontend/lib/api.ts) uses explicit browser endpoint lifetimes, a 64-entry cap, shared requests with independent cancellation, and original backend expiry timestamps. `no-store` is respected. Coordinated endpoints bypass Next server data caching; this new policy is local until deployed.
 - [catalog-browser.tsx](frontend/components/catalog-browser.tsx) avoids an immediate redundant set fetch when SSR already supplied sets. [next.config.ts](frontend/next.config.ts) configures AVIF/WebP, qualities 70/75/80, and a minimum cache TTL of 2,678,400 seconds (31 days). SVG optimization is allowed with attachment disposition and a sandboxed image CSP; local-IP allowance is enabled only for the configured local API origin.
 - `.card-cv` and `.table-row-cv` use `content-visibility: auto` to reduce offscreen work. [shimmer.ts](frontend/lib/shimmer.ts) generates base64 SVG blur placeholders.
 - The catalog summary code assumes USD for TCG observations. Validate currency/printing consistency before broadening provider support.
@@ -379,9 +400,9 @@ The following retains the product's visual specifications, interaction behavior,
 
 ### Market, trending, and pricing responses
 
-- Market movers cache both directions under `cardboarddex:movers:{game}:{period}` for 900 seconds, with `_MOVERS_LOCAL_FALLBACK` for local/stale fallback. Concurrent misses are not coalesced across workers.
-- `_build_mover_item()` accepts alternate upstream keys for card identity, price, and percentage change. `_compute_db_market_movers()` falls back to provider state and observations. Its final arbitrary-candidate fallback needs removal; nonempty results do not establish actual movement.
-- [market.py](backend/app/routers/market.py) creates the interactive TCG client without the job quota-acquisition callback. Review quota accounting for interactive provider fetches independently of Celery limits.
+- Local market movers now cache combined database rankings by language/period through the response coordinator (15 minutes fresh, 30 minutes maximum age), with Redis rebuild coalescing and no provider calls.
+- The old provider/fallback mover path has been removed locally. Stored observations require the requested period's explicit percentage; missing coverage stays empty. Legacy formatting exports are retained for compatibility but do not power this route.
+- The local market-movers route no longer instantiates an interactive provider client or consumes provider quota. Existing ingestion quota handling is unchanged.
 - Live updates aggregate provider/graded counts with a combined `CASE` query and Redis `cardboarddex:live_updates:kpi` (60 seconds). The unfiltered total count is also cached for 60 seconds.
 - Card prices resolve each observation payload once via `_resolve_obs_payload()`/`_build_obs_item()`, exposing selected pricing fields rather than raw provider payloads.
 - Latest-variant grouping includes `provider_card_id` to preserve distinct eBay listings. Raw asking-price averages use `_trim_outliers_iqr()` when enough observations exist.
@@ -676,7 +697,7 @@ Latest audit verification (2026-09-15):
 - **Image fetching:** validate redirects/destinations and enforce image type/size limits in `TCGAPIClient.get_image()`. The existing hostname allowlist only checks the initial URL.
 - **Caches and request cost:** bound and evict expired portfolio/grading/sealed/volume caches, avoid retaining invalid requests, enforce heavy-endpoint limits, and bound expensive history queries.
 - **Proxy trust:** accept client-IP headers only from trusted proxies; confirm direct-origin closure after cutover.
-- **Redis:** avoid synchronous network calls on the async middleware path; configure explicit connection/read timeouts.
+- **Redis:** local rate-limit middleware now uses an async client with explicit timeouts and lifespan cleanup; deployment and production latency verification remain pending.
 - **Development services:** bind Compose PostgreSQL/Redis to loopback; configure authentication/network isolation where remote access is required.
 - **Frontend headers:** deploy an application-compatible CSP and framing restrictions on HTML responses. API headers do not protect the separate frontend document.
 - **Cloud secrets/IAM (verify live):** the runbook reports secrets in ECS environment entries; move to secret references. Restrict the guide's wildcard OIDC subject and AWS resource permissions; grant OIDC permission only to deployment jobs.
@@ -698,3 +719,21 @@ Latest audit verification (2026-09-15):
 - Repair catalog `--all` and checkpoint semantics before relying on resumable ingestion. Verify one Beat scheduler during deployments.
 - Add freshness, provider-quota, failed-image, job-duration, and match/reject monitoring.
 - Verify available eBay programs/scopes before implementing completed-sales ingestion. Add sold-sales statistics and accounts/watchlists after pricing identity and data quality are reliable.
+
+### Passive refresh implementation — 2026-10-13 (local, not deployed)
+
+Scheduled TCGAPI/eBay jobs now use `app/services/passive_refresh.py`: recent
+card view/click popularity (today + yesterday, bounded Redis buckets), top 12
+pool, up to three popular and at least one catalog slot per batch, provider-specific
+1h/24h minimum freshness and attempt cooldowns. Existing alternating schedule,
+request ceilings, manual collectors, and observation/title matching are retained.
+A shared durable Redis token lease and 840s task limits prevent scheduled pricing
+overlap; Redis failure blocks scheduled collection. No database schema changes.
+See `docs/passive-refresh.md` for capacity, frequency, settings and rollout details.
+Production pause marker is unchanged; no worker restart, deployment, or AWS plan
+change has been performed. Popular freshness is a budget-dependent target:
+with defaults, 12 popular cards take roughly two hours per provider to rotate.
+Validation: isolated backend suite passed 249 tests with 19 skipped, including
+10 new passive-refresh tests covering allocation, provider freshness, cooldowns,
+quota/Redis/disabled/busy gates, lease cleanup, popularity expiry and task wiring.
+`git diff --check` passed. No live provider requests were made during validation.

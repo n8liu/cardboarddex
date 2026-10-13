@@ -387,10 +387,11 @@ def run_ebay_price_collection(
     return result
 
 
-@shared_task(name="jobs.collect_ebay_prices.collect_ebay_prices", autoretry_for=(), max_retries=0)
-def collect_ebay_prices() -> dict[str, int]:
+@shared_task(name="jobs.collect_ebay_prices.collect_ebay_prices", autoretry_for=(), max_retries=0, time_limit=840)
+def collect_ebay_prices() -> dict[str, int | str]:
     with SessionLocal() as session:
-        return run_ebay_price_collection(session)
+        from app.services.passive_refresh import run_scheduled_collection
+        return run_scheduled_collection(session, "ebay", run_ebay_price_collection)
 
 
 def _find_cards_by_query(session: Session, query_text: str, limit: int = 10) -> list[Card]:

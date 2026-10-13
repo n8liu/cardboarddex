@@ -16,12 +16,12 @@ spec.loader.exec_module(provision)
 def lightsail():
     lightsail = Mock()
     lightsail.get_bundles.return_value = {'bundles': [{
-        'bundleId': provision.BUNDLE, 'isActive': True, 'price': 5,
-        'ramSizeInGb': 1, 'diskSizeInGb': 40, 'publicIpv4AddressCount': 0,
+        'bundleId': provision.BUNDLE, 'isActive': True, 'price': 7,
+        'ramSizeInGb': 1, 'diskSizeInGb': 40, 'publicIpv4AddressCount': 1,
     }]}
     lightsail.get_instance.return_value = {'instance': {
-        'bundleId': provision.BUNDLE, 'ipAddressType': 'ipv6',
-        'ipv6Addresses': ['2001:db8::1'], 'state': {'name': 'running'},
+        'bundleId': provision.BUNDLE, 'ipAddressType': 'dualstack',
+        'publicIpAddress': '192.0.2.1', 'ipv6Addresses': ['2001:db8::1'], 'state': {'name': 'running'},
         'hardware': {'ramSizeInGb': 1, 'cpuCount': 2,
                      'disks': [{'isSystemDisk': True, 'sizeInGb': 40}]},
     }}
@@ -29,13 +29,13 @@ def lightsail():
     return lightsail
 
 
-def test_creates_one_gigabyte_ipv6_destination_without_public_ipv4(lightsail):
+def test_creates_one_gigabyte_dualstack_destination(lightsail):
     lightsail.get_instances.return_value = {'instances': [{'name': 'cardboarddex-server'}]}
     provision.provision_instance(lightsail)
     args = lightsail.create_instances.call_args.kwargs
-    assert args['bundleId'] == 'micro_ipv6_3_0'
-    assert args['ipAddressType'] == 'ipv6'
-    assert args['instanceNames'] == ['cardboarddex-ipv6-1gb']
+    assert args['bundleId'] == 'micro_3_0'
+    assert args['ipAddressType'] == 'dualstack'
+    assert args['instanceNames'] == ['cardboarddex-1gb']
     lightsail.delete_instance.assert_not_called()
     lightsail.allocate_static_ip.assert_not_called()
 
@@ -57,12 +57,12 @@ def test_quota_rejection_never_deletes_the_source(lightsail, message):
     lightsail.stop_instance.assert_not_called()
 
 
-@pytest.mark.parametrize('bundle', ['micro_ipv6_3_0', 'nano_3_0'])
+@pytest.mark.parametrize('bundle', ['micro_3_0', 'nano_3_0'])
 def test_existing_destination_is_validated_without_replacement(lightsail, bundle):
     lightsail.get_instances.return_value = {'instances': [{
-        'name': provision.INSTANCE, 'bundleId': bundle, 'ipAddressType': 'ipv6',
+        'name': provision.INSTANCE, 'bundleId': bundle, 'ipAddressType': 'dualstack',
     }]}
-    if bundle == 'micro_ipv6_3_0':
+    if bundle == 'micro_3_0':
         provision.provision_instance(lightsail)
     else:
         with pytest.raises(RuntimeError, match='does not match'):
@@ -71,16 +71,17 @@ def test_existing_destination_is_validated_without_replacement(lightsail, bundle
     lightsail.delete_instance.assert_not_called()
 
 
-def test_refuses_production_name(lightsail):
+@pytest.mark.parametrize('source', sorted(provision.PROTECTED_SOURCES))
+def test_refuses_production_name(lightsail, source):
     with pytest.raises(RuntimeError, match='production source'):
-        provision.provision_instance(lightsail, provision.SOURCE)
+        provision.provision_instance(lightsail, source)
     lightsail.create_instances.assert_not_called()
 
 
 def test_custom_destination_and_paginated_inventory(lightsail):
     lightsail.get_instances.side_effect = [
         {'instances': [{'name': provision.SOURCE}], 'nextPageToken': 'page2'},
-        {'instances': [{'name': 'custom', 'bundleId': provision.BUNDLE, 'ipAddressType': 'ipv6'}]},
+        {'instances': [{'name': 'custom', 'bundleId': provision.BUNDLE, 'ipAddressType': 'dualstack'}]},
     ]
     provision.provision_instance(lightsail, 'custom')
     lightsail.get_instances.assert_called_with(pageToken='page2')
@@ -88,8 +89,8 @@ def test_custom_destination_and_paginated_inventory(lightsail):
 
 
 @pytest.mark.parametrize('field,value', [
-    ('isActive', False), ('price', 7), ('ramSizeInGb', 0.5),
-    ('diskSizeInGb', 20), ('publicIpv4AddressCount', 1),
+    ('isActive', False), ('price', 5), ('ramSizeInGb', 0.5),
+    ('diskSizeInGb', 20), ('publicIpv4AddressCount', 0),
 ])
 def test_rejects_unexpected_bundle(lightsail, field, value):
     lightsail.get_bundles.return_value['bundles'][0][field] = value
@@ -98,9 +99,9 @@ def test_rejects_unexpected_bundle(lightsail, field, value):
     lightsail.create_instances.assert_not_called()
 
 
-def test_rejects_existing_dualstack_destination(lightsail):
+def test_rejects_existing_ipv6_only_destination(lightsail):
     lightsail.get_instances.return_value = {'instances': [{
-        'name': provision.INSTANCE, 'bundleId': provision.BUNDLE, 'ipAddressType': 'dualstack',
+        'name': provision.INSTANCE, 'bundleId': provision.BUNDLE, 'ipAddressType': 'ipv6',
     }]}
     with pytest.raises(RuntimeError, match='does not match'):
         provision.provision_instance(lightsail)
@@ -150,8 +151,8 @@ def test_failed_operation_preserves_aws_error(lightsail):
 
 
 @pytest.mark.parametrize('field,value', [
-    ('bundleId', 'nano_3_0'), ('ipAddressType', 'dualstack'),
-    ('publicIpAddress', '192.0.2.1'), ('ipv6Addresses', []),
+    ('bundleId', 'nano_3_0'), ('ipAddressType', 'ipv6'),
+    ('publicIpAddress', None), ('ipv6Addresses', []),
     ('hardware', {'ramSizeInGb': 0.5, 'cpuCount': 2, 'disks': []}),
     ('hardware', {'ramSizeInGb': 1, 'cpuCount': 2,
                   'disks': [{'isSystemDisk': True, 'sizeInGb': 20}]}),

@@ -1,5 +1,7 @@
 "use client";
+import { CacheNotice, useCacheNotice } from "@/components/cache-notice";
 
+import { SectionLoadingBar } from "@/components/section-loading-bar";
 import Image from "@/components/card-image";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -286,6 +288,9 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
 
   const { formatPrice } = useCurrency();
   const initialParams = getUrlParams();
+  const [cacheMetadata, setCacheMetadata] = useCacheNotice();
+  const previousFilters = useRef<string | null>(null);
+  const foregroundController = useRef<AbortController | null>(null);
   const [data, setData] = useState<MarketMoversResponse>(initialData);
   const [gainers, setGainers] = useState<MarketMoverItem[]>(initialData.gainers);
   const [losers, setLosers] = useState<MarketMoverItem[]>(initialData.losers);
@@ -296,10 +301,11 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
   const [searchTerm, setSearchTerm] = useState(initialParams.q);
   const [page, setPage] = useState(initialData.page || 1);
   const [perPage] = useState(initialData.per_page || 24);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(initialData.gainers.length === 0 && initialData.losers.length === 0);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isInitialized = useRef(false);
+  const requestVersion = useRef(0);
 
   useEffect(() => {
     try {
@@ -318,25 +324,37 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
   };
 
   const fetchFresh = useCallback(
-    async (selectedPeriod: MoverPeriod, selectedGame: "pokemon" | "pokemon-japan") => {
+    async (selectedPeriod: MoverPeriod, selectedGame: "pokemon" | "pokemon-japan", bypassCache = false) => {
+      const key = JSON.stringify([selectedPeriod, selectedGame]);
+      if (previousFilters.current !== null && previousFilters.current !== key) { setGainers([]); setLosers([]); }
+      previousFilters.current = key;
+      setCacheMetadata(null);
+      foregroundController.current?.abort();
+      const controller = new AbortController();
+      foregroundController.current = controller;
+      const version = ++requestVersion.current;
       setIsLoading(true);
       setError(null);
       setPage(1);
       try {
         const response = await getMarketMovers({
+          bypassCache, abortSignal: controller.signal, onCache: (metadata) => { if (version === requestVersion.current) setCacheMetadata(metadata); },
           direction: "all",
           period: selectedPeriod,
           game: selectedGame,
           page: 1,
           perPage,
         });
+        if (version !== requestVersion.current) return;
         setData(response);
         setGainers(response.gainers);
         setLosers(response.losers);
       } catch (err) {
+        console.error("Failed loading market movers:", err);
+        if (version !== requestVersion.current) return;
         setError(err instanceof Error ? err.message : "Failed to load market movers");
       } finally {
-        setIsLoading(false);
+        if (version === requestVersion.current) setIsLoading(false);
       }
     },
     [perPage]
@@ -408,6 +426,7 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
   const loadMore = useCallback(async () => {
     if (!hasMore || isLoading || isLoadingMore) return;
     const nextPage = page + 1;
+    const version = requestVersion.current;
     setIsLoadingMore(true);
     try {
       const response = await getMarketMovers({
@@ -417,6 +436,7 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
         page: nextPage,
         perPage,
       });
+      if (version !== requestVersion.current) return;
       setGainers((prev) => {
         const seen = new Set(prev.map((i) => `${i.card_id}-${i.printing}`));
         const newItems = response.gainers.filter((i) => !seen.has(`${i.card_id}-${i.printing}`));
@@ -724,13 +744,16 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
       </div>
 
       {error && (
-        <div className="mt-6 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
-          {error}
+        <div role="alert" className="mt-6 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+          {error} <button type="button" className="underline" onClick={() => void fetchFresh(period, game, true)}>Retry</button>
         </div>
       )}
 
       {/* Main Movers Display */}
-      <div className={`mt-8 ${isLoading ? "opacity-40 transition-opacity" : "transition-opacity"}`}>
+      <CacheNotice metadata={cacheMetadata} />
+      <p className="my-2 text-xs text-slate-500">Ranked from stored price observations; dates may be older while updates are paused.</p>
+      {isLoading && <SectionLoadingBar label="Loading market movers…" />}
+      <div aria-busy={isLoading} hidden={isLoading && !gainers.length && !losers.length} className={`mt-8 ${isLoading ? "opacity-40 transition-opacity" : "transition-opacity"}`}>
         {direction === "all" ? (
           <div className="grid gap-10 lg:grid-cols-2">
             {/* Top Gainers Section */}
@@ -749,7 +772,7 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
 
               {filteredGainers.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-10 text-center text-sm text-slate-500">
-                  No gainers found for this period.
+                  Insufficient stored growth data for this period.
                 </div>
               ) : layoutMode === "table" ? (
                 <MoverTableList items={filteredGainers} />
@@ -778,7 +801,7 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
 
               {filteredLosers.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-10 text-center text-sm text-slate-500">
-                  No price drops recorded for this period.
+                  Insufficient stored decline data for this period.
                 </div>
               ) : layoutMode === "table" ? (
                 <MoverTableList items={filteredLosers} />

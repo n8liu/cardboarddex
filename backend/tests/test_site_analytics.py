@@ -1,3 +1,4 @@
+from unittest.mock import AsyncMock
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -37,7 +38,7 @@ def db(monkeypatch):
 
 @pytest.fixture
 def client(db, monkeypatch):
-    monkeypatch.setattr("app.main.check_rate_limit", lambda **kwargs: (True, 0))
+    monkeypatch.setattr("app.main.check_rate_limit", AsyncMock(return_value=(True, 0)))
     monkeypatch.setattr("app.common.admin_auth.check_rate_limit", lambda *args, **kwargs: (True, 0))
     app.dependency_overrides[get_db] = lambda: db
     with TestClient(app, base_url="https://api.cardboarddex.app", headers={"Origin": ORIGIN}, raise_server_exceptions=False) as client:

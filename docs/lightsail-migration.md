@@ -1,5 +1,15 @@
 # Lightsail production operations
 
+## Capacity upgrade blocked — 2026-10-13 UTC
+
+The approved target is now **`cardboarddex-1gb`, `micro_3_0`, $7/month, dual-stack, 1 GB RAM and 40 GB disk**. The provisioner validates these regional bundle properties and protects `cardboarddex-recovered` plus historical source names. Its 28 provisioning tests pass.
+
+At approximately 19:17 UTC, `provision.py --instance-name cardboarddex-1gb --instance-only --apply` validated the AWS account and bundle, but AWS rejected `CreateInstances` with `InvalidInputException`: "Sorry, you've reached your maximum limit of Lightsail Instances : 1. If you're new to Lightsail, please try again later. If the issue persists, please contact Customer Support."
+
+Follow-up AWS inventory confirmed only `cardboarddex-recovered`, running on `nano_3_0` with dual-stack networking. Public `/ready` returned HTTP 200 with `{"status":"ready"}`. No replacement was created and no source, Tunnel, ingestion, backup, or IAM changes were made. The migration stopped at the required creation gate. The nano-only restriction remains unresolved because creation failed at the instance-count gate. AWS must permit both two concurrent instances and the `micro_3_0` bundle before retrying; do not delete production to bypass either restriction.
+
+The planned 1,500-card priority pool, eight-card batches, scheduled subquotas, worker/Beat memory increases, immutable deployment, provider canaries, 48-hour observation, and seven-day coverage verification remain pending after the capacity gate. Existing local passive-refresh work is preserved, not upgraded or deployed by this attempt. Reuse existing backup infrastructure with `--instance-only`; source retirement still requires separate deletion authorization. The 30-minute maintenance window has not begun.
+
 ## Current recovery outcome — 2026-10-08 UTC
 
 The authorized delete-first attempt could not create the 1 GB target. After source deletion, AWS explicitly rejected `micro_ipv6_3_0`: "your account can only create an instance using the smallest Lightsail plan size (nano)." Production was restored from the verified manual snapshot onto **`cardboarddex-recovered`**, dual-stack `nano_3_0`, 512 MB RAM, $5/month, in `us-west-2a`. The original `cardboarddex-ipv6` instance no longer exists. This is service recovery, not a successful IPv6/capacity migration. Ingestion remains paused.
@@ -82,6 +92,8 @@ Follow-up inventory confirms only `cardboarddex-ipv6`, running on dual-stack `na
 Local tooling now waits for accepted creation operations to finish and verifies actual hardware/network before follow-on changes. IPv6 transport preflight is repeatable on both the host and backend container; HTTP 401/403 proves transport only and must not count as authenticated provider success. Secure SSM bootstrap integration and destination runtime checks remain pending; do not run historical ignored scripts containing embedded configuration or credentials.
 
 After AWS lifts both restrictions, rerun the instance-only command. Keep production intact while bootstrapping management and rehearsing restore. Require rehearsal within 20 minutes; during final cutover abort by minute 20 if destination checks have not passed, reserving ten minutes to restart the source. Keep ingestion paused until bounded TCG/eBay jobs succeed with new observations. Acceptance requires 48 hours including nightly catalog sync, scheduled backup/restore, reboot, no OOM/restarts, available memory above 150 MiB, and no sustained swap-in above 1 MB/s or I/O wait above 10% for five minutes. No automatic larger-plan purchase. Retire the source only with separate deletion approval; after destination writes, rollback requires transferring the latest data back first.
+
+The following IPv6 provisioning instructions describe the superseded target; use the October 13 target and instance-only command above.
 
 `python scripts/lightsail/provision.py` validates the regional bundle and destination and previews resources. The default destination is `cardboarddex-ipv6-1gb`; `--instance-name` can override it, but the production source name `cardboarddex-ipv6` is rejected. Bundle validation requires an active $5 / 1 GB / 40 GB plan with zero public IPv4 addresses. Catalog availability does not prove account eligibility.
 

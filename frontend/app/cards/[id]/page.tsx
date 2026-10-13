@@ -1,3 +1,5 @@
+import { Suspense } from "react";
+import { SectionLoadingBar } from "@/components/section-loading-bar";
 import Image from "@/components/card-image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -35,27 +37,34 @@ function formatDate(value: string | null): string {
 export default async function CardPage({ params, searchParams }: CardPageProps) {
   const { id } = await params;
   const sp = searchParams ? await searchParams : undefined;
+  return (
+    <main className="mx-auto min-h-[70vh] max-w-7xl px-5 py-9 sm:px-8 sm:py-12">
+      <BackButton />
+      <Suspense fallback={<SectionLoadingBar className="mt-8" label="Loading card details…" />}>
+        <CardContent id={id} refParam={sp?.ref} />
+      </Suspense>
+    </main>
+  );
+}
+
+async function CardContent({ id, refParam }: { id: string; refParam?: string }) {
+  // Start both reads together, but let card details render before pricing resolves.
+  const pricing = getCardPricing(id).catch((err) => {
+    console.error(`[CardPage] Failed loading pricing for ${id}:`, err);
+    return null;
+  });
   let card = null;
-  let pricing = null;
   let fetchFailed = false;
 
   try {
-    const [fetchedCard, fetchedPricing] = await Promise.all([
-      getCard(id, { ref: sp?.ref }),
-      getCardPricing(id).catch((err) => {
-        console.warn(`[CardPage] Pricing fetch warning for card ${id}:`, err);
-        return null;
-      }),
-    ]);
-    card = fetchedCard;
-    pricing = fetchedPricing;
+    card = await getCard(id, { ref: refParam });
   } catch (err) {
     console.error(`[CardPage] Failed fetching card ${id} data on Edge SSR:`, err);
     fetchFailed = true;
   }
 
   if (fetchFailed) {
-    return <CardDetailClientFallback cardId={id} refParam={sp?.ref} />;
+    return <CardDetailClientFallback cardId={id} refParam={refParam} />;
   }
 
   if (!card) notFound();
@@ -66,9 +75,7 @@ export default async function CardPage({ params, searchParams }: CardPageProps) 
   const species = findPokemonForCardName(card.name);
 
   return (
-    <main className="mx-auto min-h-[70vh] max-w-7xl px-5 py-9 sm:px-8 sm:py-12">
-      <BackButton />
-
+    <>
       <div className="mt-8 grid items-start gap-8 rounded-3xl border border-stone-200 bg-white p-5 shadow-[0_18px_55px_rgba(33,45,25,0.06)] md:grid-cols-[320px_1fr] md:gap-12 md:p-8">
         <div className="self-start overflow-hidden rounded-2xl bg-[radial-gradient(circle_at_top,_#f1fee7,_#f5f5f4_70%)] p-5">
           <HoloCard maxTilt={14} rarity={card.rarity} className="mx-auto block w-full rounded-xl">
@@ -176,7 +183,17 @@ export default async function CardPage({ params, searchParams }: CardPageProps) 
       </div>
       <RememberViewedCard card={card} />
       <MarketHistoryPanel cardId={card.id} />
-      {pricing ? <PriceDashboard pricing={pricing} cardMeta={card} /> : null}
-    </main>
+      <Suspense fallback={<SectionLoadingBar label="Loading prices and market comparisons…" />}>
+        <CardPrices card={card} pricing={pricing} />
+      </Suspense>
+    </>
   );
+}
+
+async function CardPrices({ card, pricing }: {
+  card: NonNullable<Awaited<ReturnType<typeof getCard>>>;
+  pricing: Promise<Awaited<ReturnType<typeof getCardPricing>> | null>;
+}) {
+  const data = await pricing;
+  return data ? <PriceDashboard pricing={data} cardMeta={card} /> : <p role="alert">Pricing could not be loaded. Refresh to try again.</p>;
 }

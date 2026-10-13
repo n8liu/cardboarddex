@@ -124,3 +124,26 @@ def rate_limit(
             )
 
     return dependency
+
+
+async def check_rate_limit_async(
+    client_ip: str, bucket: str = 'default', max_requests: int = 120,
+    window_seconds: int = 60,
+) -> tuple[bool, int]:
+    """Nonblocking middleware equivalent of the synchronous dependency limiter."""
+    from app.common.redis import get_async_redis
+    now = int(time.time())
+    retry_after = max(1, window_seconds - now % window_seconds)
+    key = f'cardboarddex:rl:{bucket}:{client_ip}:{now // window_seconds}'
+    try:
+        client = get_async_redis()
+        # Atomic increment + expiry: cancellation cannot leave an immortal key.
+        current = await client.eval(
+            "local n=redis.call('incr',KEYS[1]); if n==1 then redis.call('expire',KEYS[1],ARGV[1]) end; return n",
+            1, key, window_seconds + 5,
+        )
+        return (False, retry_after) if current > max_requests else (True, 0)
+    except Exception as exc:
+        logger.warning('Async rate limit failed bucket=%s error=%s: %s; using local fallback', bucket, type(exc).__name__, exc)
+    allowed = _check_in_memory_rate_limit(f'{bucket}:{client_ip}', max_requests, window_seconds)
+    return allowed, 0 if allowed else retry_after

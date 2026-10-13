@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { getTrendingDashboard } from "@/lib/api";
 import { TopVolumeDashboard } from "@/components/top-volume-dashboard";
 import type { TrendingDashboardResponse } from "@/types/card";
 
@@ -11,8 +10,8 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 export const runtime = "edge";
 
-export default async function TopVolumePage() {
-  let initialData: TrendingDashboardResponse = {
+export default function TopVolumePage() {
+  const initialData: TrendingDashboardResponse = {
     timeframe: "7d",
     trending_cards: [],
     trending_pokemon: [],
@@ -22,11 +21,6 @@ export default async function TopVolumePage() {
     updated_at: new Date().toISOString(),
   };
 
-  try {
-    initialData = await getTrendingDashboard({ timeframe: "7d" });
-  } catch (err) {
-    console.error("Failed fetching initial trending dashboard:", err);
-  }
 
   return (
     <main className="min-h-[calc(100vh-65px)] bg-white text-slate-950">

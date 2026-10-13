@@ -2,12 +2,13 @@ from fastapi import APIRouter, Depends, Response
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.schemas.home import HomeOverview
-from app.services.home_service import get_home_overview
+from app.services.home_service import build_home_overview
+from app.common.response_cache import cached_read
 
 router = APIRouter(prefix='/home', tags=['Home'])
 
 
 @router.get('/overview', response_model=HomeOverview)
+@cached_read("home", fresh=300, maximum=1800)
 def overview(response: Response, db: Session = Depends(get_db)) -> HomeOverview:
-    response.headers['Cache-Control'] = 'public, max-age=60, s-maxage=300'
-    return get_home_overview(db)
+    return build_home_overview(db)

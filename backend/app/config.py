@@ -45,7 +45,12 @@ class Settings(BaseSettings):
     ebay_marketplace_id: str = "EBAY_US"
     ebay_daily_request_limit: int = 500
     market_history_enabled: bool = False
-    price_collection_card_limit: int = 5
+    price_collection_card_limit: int = Field(default=5, ge=1, le=50)
+    passive_refresh_enabled: bool = True
+    passive_popular_card_count: int = Field(default=12, ge=1, le=100)
+    passive_popular_batch_size: int = Field(default=3, ge=1, le=49)
+    passive_popular_refresh_hours: int = Field(default=1, ge=1, le=168)
+    passive_catalog_refresh_hours: int = Field(default=24, ge=1, le=720)
     backend_cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"
     psa_value_fee: float = 24.99
     image_cdn_enabled: bool = False

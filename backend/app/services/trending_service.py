@@ -10,6 +10,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.common.redis import get_redis
+from app.services.passive_refresh import record_card_interest
 from app.models import Card, PriceObservation, ProviderCardState, Set
 from app.schemas.cards import (
     TrendingCardItem,
@@ -116,6 +117,7 @@ def record_action(
         _safe_increment_in_memory(_IN_MEMORY_CARD_CLICKS, clean_id)
         if r is not None:
             try:
+                record_card_interest(r, clean_id)
                 r.zincrby(REDIS_KEY_CARD_CLICKS, 1, clean_id)
                 if r.zcard(REDIS_KEY_CARD_CLICKS) > 2500:
                     r.zremrangebyrank(REDIS_KEY_CARD_CLICKS, 0, -2001)

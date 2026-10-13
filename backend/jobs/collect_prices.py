@@ -448,10 +448,11 @@ def run_price_collection(
     return result
 
 
-@shared_task(name="jobs.collect_prices.collect_prices", autoretry_for=(), max_retries=0)
-def collect_prices() -> dict[str, int]:
+@shared_task(name="jobs.collect_prices.collect_prices", autoretry_for=(), max_retries=0, time_limit=840)
+def collect_prices() -> dict[str, int | str]:
     with SessionLocal() as session:
-        return run_price_collection(session)
+        from app.services.passive_refresh import run_scheduled_collection
+        return run_scheduled_collection(session, "tcgapi", run_price_collection)
 
 
 def main() -> None:

@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import Image from "@/components/card-image";
 import Link from "next/link";
 
-import { BackButton } from "@/components/back-button";
 import { RememberViewedCard } from "@/components/recently-viewed";
 import { MarketHistoryPanel } from "@/components/market-history-panel";
 import { PriceDashboard } from "@/components/price-dashboard";
@@ -72,8 +71,7 @@ export function CardDetailClientFallback({ cardId, refParam }: Props) {
 
   if (isLoading) {
     return (
-      <main className="mx-auto min-h-[70vh] max-w-7xl px-5 py-9 sm:px-8 sm:py-12">
-        <BackButton />
+      <div className="mx-auto min-h-[70vh] max-w-7xl px-5 py-9 sm:px-8 sm:py-12">
         <div className="mt-8 grid items-start gap-8 rounded-3xl border border-stone-200 bg-white p-5 shadow-[0_18px_55px_rgba(33,45,25,0.06)] md:grid-cols-[320px_1fr] md:gap-12 md:p-8 animate-pulse">
           <div className="h-[430px] rounded-2xl bg-slate-100" />
           <div className="space-y-4 pt-4">
@@ -84,13 +82,13 @@ export function CardDetailClientFallback({ cardId, refParam }: Props) {
             <div className="h-40 rounded-xl bg-slate-100 mt-8" />
           </div>
         </div>
-      </main>
+      </div>
     );
   }
 
   if (isNotFound) {
     return (
-      <main className="mx-auto min-h-[70vh] max-w-2xl px-5 py-20 text-center sm:px-8">
+      <div className="mx-auto min-h-[70vh] max-w-2xl px-5 py-20 text-center sm:px-8">
         <p className="text-sm font-medium text-zinc-500">404</p>
         <h1 className="mt-3 text-2xl font-semibold text-zinc-950">Card not found</h1>
         <p className="mt-2 text-sm text-slate-500">
@@ -111,13 +109,13 @@ export function CardDetailClientFallback({ cardId, refParam }: Props) {
             Try again
           </button>
         </div>
-      </main>
+      </div>
     );
   }
 
   if (errorMsg && !card) {
     return (
-      <main className="mx-auto min-h-[70vh] max-w-2xl px-5 py-20 text-center sm:px-8">
+      <div className="mx-auto min-h-[70vh] max-w-2xl px-5 py-20 text-center sm:px-8">
         <p className="text-sm font-medium text-red-500">Connection Error</p>
         <h1 className="mt-3 text-2xl font-semibold text-zinc-950">Unable to load card profile</h1>
         <p className="mt-2 text-sm text-slate-500">{errorMsg}</p>
@@ -136,7 +134,7 @@ export function CardDetailClientFallback({ cardId, refParam }: Props) {
             Return to catalog
           </Link>
         </div>
-      </main>
+      </div>
     );
   }
 
@@ -149,8 +147,7 @@ export function CardDetailClientFallback({ cardId, refParam }: Props) {
   const species = findPokemonForCardName(card.name);
 
   return (
-    <main className="mx-auto min-h-[70vh] max-w-7xl px-5 py-9 sm:px-8 sm:py-12">
-      <BackButton />
+    <div className="mx-auto min-h-[70vh] max-w-7xl px-5 py-9 sm:px-8 sm:py-12">
 
       <div className="mt-8 grid items-start gap-8 rounded-3xl border border-stone-200 bg-white p-5 shadow-[0_18px_55px_rgba(33,45,25,0.06)] md:grid-cols-[320px_1fr] md:gap-12 md:p-8">
         <div className="self-start overflow-hidden rounded-2xl bg-[radial-gradient(circle_at_top,_#f1fee7,_#f5f5f4_70%)] p-5">
@@ -260,6 +257,6 @@ export function CardDetailClientFallback({ cardId, refParam }: Props) {
       <RememberViewedCard card={card} />
       <MarketHistoryPanel cardId={card.id} />
       {pricing ? <PriceDashboard pricing={pricing} cardMeta={card} /> : null}
-    </main>
+    </div>
   );
 }

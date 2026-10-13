@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Provision the reviewed $5 Lightsail instance and private backup storage. Preview by default."""
+"""Provision the reviewed $7 Lightsail instance and private backup storage. Preview by default."""
 import argparse
 import json
 import logging
@@ -12,9 +12,10 @@ from botocore.exceptions import ClientError
 ACCOUNT = '349558247779'
 REGION = 'us-west-2'
 BUCKET = f'cardboarddex-backups-{ACCOUNT}-{REGION}'
-INSTANCE = 'cardboarddex-ipv6-1gb'
-SOURCE = 'cardboarddex-ipv6'
-BUNDLE = 'micro_ipv6_3_0'
+INSTANCE = 'cardboarddex-1gb'
+SOURCE = 'cardboarddex-recovered'
+PROTECTED_SOURCES = {SOURCE, 'cardboarddex-ipv6', 'cardboarddex-server'}
+BUNDLE = 'micro_3_0'
 USER = 'cardboarddex-backup-upload'
 ROLE = 'github-actions-cardboarddex-backup-read'
 
@@ -33,21 +34,21 @@ def list_resources(method, key):
 
 
 def validate_destination(lightsail, instance_name):
-    if instance_name == SOURCE:
+    if instance_name in PROTECTED_SOURCES:
         raise RuntimeError('Destination must differ from the production source')
     bundle = next((b for b in list_resources(lightsail.get_bundles, 'bundles')
                    if b['bundleId'] == BUNDLE), None)
     if not bundle or not bundle.get('isActive') or any(
         bundle.get(key) != value for key, value in
-        [('ramSizeInGb', 1), ('diskSizeInGb', 40), ('price', 5),
-         ('publicIpv4AddressCount', 0)]
+        [('ramSizeInGb', 1), ('diskSizeInGb', 40), ('price', 7),
+         ('publicIpv4AddressCount', 1)]
     ):
-        raise RuntimeError('Requested active $5 / 1 GB / 40 GB bundle is unavailable')
+        raise RuntimeError('Requested active $7 / 1 GB / 40 GB bundle is unavailable')
     existing = next((i for i in list_resources(lightsail.get_instances, 'instances')
                      if i['name'] == instance_name), None)
     if existing:
-        if existing['bundleId'] != BUNDLE or existing['ipAddressType'] != 'ipv6':
-            raise RuntimeError('Existing destination does not match the $5 IPv6-only plan; refusing to replace it')
+        if existing['bundleId'] != BUNDLE or existing['ipAddressType'] != 'dualstack':
+            raise RuntimeError('Existing destination does not match the $7 dual-stack plan; refusing to replace it')
     return existing
 
 
@@ -58,7 +59,7 @@ def provision_instance(lightsail, instance_name=INSTANCE):
     # A quota rejection must leave the source instance intact.
     return lightsail.create_instances(
         instanceNames=[instance_name], availabilityZone='us-west-2a',
-        blueprintId='ubuntu_24_04', bundleId=BUNDLE, ipAddressType='ipv6',
+        blueprintId='ubuntu_24_04', bundleId=BUNDLE, ipAddressType='dualstack',
         keyPairName='LightsailDefaultKeyPair',
         tags=[{'key': 'Project', 'value': 'cardboarddex'}, {'key': 'Purpose', 'value': 'production'}],
     )
@@ -66,7 +67,7 @@ def provision_instance(lightsail, instance_name=INSTANCE):
 
 def wait_for_instance(lightsail, instance_name, result, attempts=60, sleep=time.sleep):
     """Verify async creation and actual hardware before allowing follow-on changes."""
-    if instance_name == SOURCE:
+    if instance_name in PROTECTED_SOURCES:
         raise RuntimeError('Refusing readiness checks against production source')
     operations = result.get('operations', [])
     if not result.get('existing') and not operations:
@@ -85,15 +86,15 @@ def wait_for_instance(lightsail, instance_name, result, attempts=60, sleep=time.
                 hardware = instance.get('hardware', {})
                 disks = hardware.get('disks', [])
                 if (instance.get('bundleId') != BUNDLE
-                        or instance.get('ipAddressType') != 'ipv6'
-                        or instance.get('publicIpAddress')
+                        or instance.get('ipAddressType') != 'dualstack'
+                        or not instance.get('publicIpAddress')
                         or not instance.get('ipv6Addresses')
                         or hardware.get('ramSizeInGb') != 1
                         or hardware.get('cpuCount') != 2
                         or not any(d.get('isSystemDisk') and d.get('sizeInGb') == 40 for d in disks)):
                     raise RuntimeError('Running destination hardware/network does not match reviewed plan')
                 return {'instance': instance_name, 'state': 'running', 'bundle': BUNDLE,
-                        'network': 'ipv6', 'ram_gb': 1, 'disk_gb': 40}
+                        'network': 'dualstack', 'ram_gb': 1, 'disk_gb': 40}
         logging.info('Waiting for replacement readiness (%s/%s)', attempt + 1, attempts)
         if attempt + 1 < attempts:
             sleep(10)
@@ -113,8 +114,8 @@ def main():
         raise RuntimeError('Refusing unexpected AWS account')
     lightsail = session.client('lightsail')
     validate_destination(lightsail, args.instance_name)
-    print(json.dumps({'instance': args.instance_name, 'bundle': BUNDLE, 'monthly_usd': 5,
-                      'ram_gb': 1, 'network': 'ipv6',
+    print(json.dumps({'instance': args.instance_name, 'bundle': BUNDLE, 'monthly_usd': 7,
+                      'ram_gb': 1, 'network': 'dualstack',
                       'backup_bucket': BUCKET, 'region': REGION, 'apply': args.apply,
                       'instance_only': args.instance_only,
                       'eligibility': 'Catalog validated; account restrictions require CreateInstances acceptance'}))
@@ -173,7 +174,7 @@ def main():
         'Version':'2012-10-17','Statement':[
         {'Effect':'Allow','Action':'s3:ListBucket','Resource':f'arn:aws:s3:::{BUCKET}'},
         {'Effect':'Allow','Action':'s3:GetObject','Resource':f'arn:aws:s3:::{BUCKET}/*'}]}))
-    (state / 'resources.json').write_text(json.dumps({'instance': args.instance_name, 'bucket': BUCKET, 'bundle': BUNDLE, 'network': 'ipv6'}))
+    (state / 'resources.json').write_text(json.dumps({'instance': args.instance_name, 'bucket': BUCKET, 'bundle': BUNDLE, 'network': 'dualstack'}))
     print('Replacement running and backup resources configured. Management and application checks remain required.')
 
 
