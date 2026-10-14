@@ -26,6 +26,8 @@ sysctl --system > /dev/null
 bash "$(dirname "$0")/install_zram.sh"
 systemctl enable --now docker
 
+# Only IPv6-only hosts need fast rejection of unroutable container IPv4.
+if [[ ${IPV6_ONLY:-false} == true ]]; then
 cat << 'EOF' > /etc/systemd/system/cardboarddex-firewall.service
 [Unit]
 Description=Reject outbound IPv4 TCP forwarding with RST on IPv6-only host
@@ -40,7 +42,9 @@ ExecStart=/bin/sh -c 'iptables -C FORWARD -p tcp ! -d 172.16.0.0/12 -j REJECT --
 [Install]
 WantedBy=multi-user.target
 EOF
+systemctl daemon-reload
 systemctl enable --now cardboarddex-firewall.service
+fi
 
 cat << 'EOF' > /etc/systemd/system/cardboarddex-ipv6-tuning.service
 [Unit]

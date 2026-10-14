@@ -150,3 +150,15 @@ def test_invalid_relay_configuration_fails_closed(monkeypatch, relay):
         ebay_relay_url=relay, ebay_relay_key="key"))
     with pytest.raises(EbayConfigurationError, match="HTTPS origin"):
         EbayClient(acquire_request=lambda: None)
+
+
+@respx.mock
+def test_oauth_and_browse_retries_each_reserve_a_request(dummy_client):
+    calls=[]
+    dummy_client.acquire_request=lambda:calls.append('request')
+    auth=respx.post('https://api.ebay.com/identity/v1/oauth2/token')
+    auth.side_effect=[httpx.Response(503),httpx.Response(200,json={'access_token':'token','expires_in':7200})]
+    search=respx.get('https://api.ebay.com/buy/browse/v1/item_summary/search')
+    search.side_effect=[httpx.Response(503),httpx.Response(200,json={'itemSummaries':[]})]
+    assert dummy_client.search_item_summaries('test')==[]
+    assert len(calls)==4

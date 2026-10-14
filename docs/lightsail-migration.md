@@ -1,16 +1,26 @@
 # Lightsail production operations
 
-## Capacity upgrade blocked — 2026-10-13 UTC
+## Active production — 2026-10-14 UTC
 
-The approved target is now **`cardboarddex-1gb`, `micro_3_0`, $7/month, dual-stack, 1 GB RAM and 40 GB disk**. The provisioner validates these regional bundle properties and protects `cardboarddex-recovered` plus historical source names. Its 28 provisioning tests pass.
+Production runs on **`cardboarddex-1gb`, dual-stack `micro_3_0`, 1 GB RAM, 40 GB disk, $7/month base**, in `us-west-2a`. AWS approved the additional instance and creation succeeded October 13 at 23:58 UTC. Direct SSH and SSM access were verified; managed node is `mi-0701a7d2b33760744`. Query AWS for the current dynamic address.
 
-At approximately 19:17 UTC, `provision.py --instance-name cardboarddex-1gb --instance-only --apply` validated the AWS account and bundle, but AWS rejected `CreateInstances` with `InvalidInputException`: "Sorry, you've reached your maximum limit of Lightsail Instances : 1. If you're new to Lightsail, please try again later. If the issue persists, please contact Customer Support."
+The October 14 maintenance window ran from 00:12:14 to 00:14:42 UTC (148 seconds). Final quiesced backup `six-hourly/20261014T001220Z/manifest.json` restored PostgreSQL and Redis off-server and on the destination. All public-table counts matched before switching the Tunnel: 54,968 cards, 491 sets, 284,056 observations, schema `0006_site_analytics`. Production volumes are `cardboarddex_pg_1gb_final` and `cardboarddex_redis_1gb_final`. Rehearsal volumes and source recovery artifacts are retained.
 
-Follow-up AWS inventory confirmed only `cardboarddex-recovered`, running on `nano_3_0` with dual-stack networking. Public `/ready` returned HTTP 200 with `{"status":"ready"}`. No replacement was created and no source, Tunnel, ingestion, backup, or IAM changes were made. The migration stopped at the required creation gate. The nano-only restriction remains unresolved because creation failed at the instance-count gate. AWS must permit both two concurrent instances and the `micro_3_0` bundle before retrying; do not delete production to bypass either restriction.
+Active release is `/opt/cardboarddex/releases/passive-652c868fcf5b`, image digest `sha256:dac6310bc20b26a6798760b0c35864a0b385432c6da305f4a8cb79ca61141f06` in the existing backend ECR repository. It overlays scoped refresh changes on production commit `5096ca27113f319836af15d9a0112faaa4ef748f`; unrelated repository HEAD changes/schema 0007 were not deployed. Both provider canaries wrote observations visible through public Live Comps. One worker (192/256 MiB) and one Beat (64/96 MiB) resumed at 06:25:48 UTC; concurrency is one. API/database tuning is unchanged.
 
-The planned 1,500-card priority pool, eight-card batches, scheduled subquotas, worker/Beat memory increases, immutable deployment, provider canaries, 48-hour observation, and seven-day coverage verification remain pending after the capacity gate. Existing local passive-refresh work is preserved, not upgraded or deployed by this attempt. Reuse existing backup infrastructure with `--instance-only`; source retirement still requires separate deletion authorization. The 30-minute maintenance window has not begun.
+At 18:17 UTC, each provider had 202 successful checks, 145/1,500 priority coverage, and 26 catalog advances. There were no retry backlogs, OOMs, container restarts, or monitor regressions. Six-hourly backups and analytics retention are active on the destination. The minute-by-minute ingestion monitor is installed under `/opt/cardboarddex/operations`; see [passive refresh operations](passive-refresh.md). **48-hour review: October 16 06:25:48 UTC. Weekly coverage review: October 21 06:19:46 UTC. Both remain pending.**
 
-## Current recovery outcome — 2026-10-08 UTC
+The source `cardboarddex-recovered` remains running/billable, with API, Tunnel, worker and Beat stopped, their restart policies disabled, and source backup/retention timers disabled. Do not start stale source services. **Rollback now requires transferring destination writes and durable Redis state back before switching traffic.** Source retirement requires separate deletion authorization. The $7 destination base excludes temporary $5 source overlap, backups, storage, and retained snapshots.
+
+GitHub host/SSM settings point to the destination and workflows are active. Stale run `34748756712` was not deleted: the approved deletion returned HTTP 403; cancel/force-cancel returned 409. Its historical workflow was checked and targets retired ECS, not Lightsail. ECR's missing old production image was recovered at its original digest, and retention was corrected to preserve tagged releases and expire unreferenced untagged images after seven days.
+
+Post-deployment backup `six-hourly/20261014T122001Z/manifest.json` also passed checksum checks and off-server PostgreSQL/Redis restoration on October 14 at 18:17 UTC, retaining schema `0006_site_analytics`, 54,968 cards, and 491 sets.
+
+## Previous creation restriction — resolved October 13
+
+The initial October 13 attempt was rejected by AWS's one-instance limit. After approval, the replacement was created alongside production; the source was not deleted to bypass the restriction.
+
+## Historical recovery outcome — 2026-10-08 UTC
 
 The authorized delete-first attempt could not create the 1 GB target. After source deletion, AWS explicitly rejected `micro_ipv6_3_0`: "your account can only create an instance using the smallest Lightsail plan size (nano)." Production was restored from the verified manual snapshot onto **`cardboarddex-recovered`**, dual-stack `nano_3_0`, 512 MB RAM, $5/month, in `us-west-2a`. The original `cardboarddex-ipv6` instance no longer exists. This is service recovery, not a successful IPv6/capacity migration. Ingestion remains paused.
 
@@ -23,7 +33,7 @@ The authorized delete-first attempt could not create the 1 GB target. After sour
 - Image-sync workflow was returned to its previous enabled state. Backend deployment workflow remains **disabled** because obsolete run `34748756712` (September 13, commit `5b3d8cc`) is reported queued while both cancel and force-cancel return HTTP 409, "Cannot cancel a workflow run that has not been queued yet." Resolve that run before reenabling backend deployments. No workflow run history was deleted.
 - AWS Support must lift the nano-only restriction before another 1 GB attempt. Retain all recovery artifacts. No further deletion, larger-plan purchase, or ingestion restart was performed. Recovery backup `six-hourly/20261008T173507Z/manifest.json` subsequently passed checksums and off-server PostgreSQL and Redis restoration.
 
-The original production design used the $5 `nano_3_0` (512 MB RAM) bundle in `us-west-2`, Cloudflare Tunnel, PostgreSQL 16, a single Celery worker, one Beat scheduler, and separate durable/cache Redis services. The frontend stays on Cloudflare Pages. The target is strictly $5/month for the server base; domain renewal and third-party APIs are separate, and backup/image storage, temporary recovery snapshots, and management usage are separate.
+The original production design used the $5 `nano_3_0` (512 MB RAM) bundle in `us-west-2`, Cloudflare Tunnel, PostgreSQL 16, a single Celery worker, one Beat scheduler, and separate durable/cache Redis services. The frontend stays on Cloudflare Pages. The historical target was $5/month for the server base; domain renewal and third-party APIs are separate, and backup/image storage, temporary recovery snapshots, and management usage are separate.
 
 ## Production recovery on 2026-09-23/24
 

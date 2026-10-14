@@ -88,6 +88,17 @@ def _observation(session: Session, *, card_id: str, provider: str,
         pending_fingerprints.add(fingerprint)
         return False
     parsed_grade = _decimal(grade)
+    latest = session.scalar(select(PriceObservation).where(
+        PriceObservation.card_id == card_id, PriceObservation.provider == provider,
+        PriceObservation.provider_card_id == provider_card_id,
+        PriceObservation.variant_id == variant_id,
+    ).order_by(PriceObservation.observed_at.desc(), PriceObservation.id.desc()).limit(1))
+    # A provider check (or a changed check date) is not a new market comp.
+    if latest is not None and (
+        latest.price, latest.currency, latest.condition, latest.printing,
+        latest.grading_company, latest.grade,
+    ) == (amount, currency[:3].upper(), condition, printing, grading_company, parsed_grade):
+        return False
     session.add(PriceObservation(
         fingerprint=fingerprint, card_id=card_id, provider=provider,
         provider_card_id=provider_card_id, variant_id=variant_id,

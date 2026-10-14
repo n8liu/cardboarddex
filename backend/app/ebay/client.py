@@ -129,6 +129,7 @@ class EbayClient:
 
         logger.info("Requesting fresh eBay OAuth 2.0 application access token")
         for attempt in range(1, MAX_ATTEMPTS + 1):
+            self.acquire_request()
             try:
                 response = httpx.post(
                     self.auth_url,
@@ -231,7 +232,7 @@ class EbayClient:
                     raise error
                 items = payload.get("itemSummaries") or []
                 if not isinstance(items, list):
-                    return []
+                    raise TypeError("eBay itemSummaries must be a list")
                 return [item for item in items if isinstance(item, dict)]
             except httpx.HTTPStatusError as exc:
                 status = exc.response.status_code

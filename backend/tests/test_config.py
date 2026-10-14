@@ -15,7 +15,10 @@ def test_tcgapi_defaults_are_server_side_and_bounded() -> None:
     assert settings.tcgapi_daily_request_limit == 2000
     assert settings.tcgapi_sync_set_limit == 250
     assert settings.ebay_daily_request_limit == 500
-    assert settings.price_collection_card_limit == 5
+    assert settings.price_collection_card_limit == 8
+    assert settings.tcgapi_scheduled_request_limit == 1500
+    assert settings.ebay_scheduled_request_limit == 450
+    assert settings.passive_priority_card_count == 1500
 
 
 def test_default_cors_origins_allow_both_local_loopback_names() -> None:

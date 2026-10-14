@@ -1,11 +1,33 @@
 import logging
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from redis import Redis
 from redis.exceptions import RedisError
 
 logger = logging.getLogger(__name__)
+
+
+_SCHEDULED = ContextVar("scheduled_pricing_budget", default=None)
+RESERVE = """
+if ARGV[3] ~= '' and redis.call('get', KEYS[3]) ~= ARGV[3] then return -3 end
+if tonumber(redis.call('get', KEYS[1]) or '0') >= tonumber(ARGV[1]) then return -1 end
+if tonumber(ARGV[2]) > 0 and tonumber(redis.call('get', KEYS[2]) or '0') >= tonumber(ARGV[2]) then return -2 end
+local n = redis.call('incr', KEYS[1]); redis.call('expire', KEYS[1], 90000)
+if tonumber(ARGV[2]) > 0 then redis.call('incr', KEYS[2]); redis.call('expire', KEYS[2], 90000) end
+return n
+"""
+
+
+@contextmanager
+def scheduled_budget(provider, limit, lease_key, lease_token):
+    token = _SCHEDULED.set((provider, limit, lease_key, lease_token))
+    try:
+        yield
+    finally:
+        _SCHEDULED.reset(token)
 
 
 class ProviderRequestLimitExceeded(RuntimeError):
@@ -70,32 +92,25 @@ class DailyRequestLimiter:
                 else:
                     break
 
-        # 2. Daily safety ceiling limiter
+        # Reserve both allowances atomically immediately before each HTTP attempt.
+        # A crash after reservation conservatively consumes that request allowance.
+        day_bucket = int(self.now() // 86400)
+        daily_key = f"cardboarddex:{self.provider}:requests:{day_bucket}"
+        scheduled_key = f"cardboarddex:{self.provider}:scheduled_requests:{day_bucket}"
+        budget = _SCHEDULED.get()
+        sublimit, lease_key, lease_token = 0, daily_key, ""
+        if budget is not None:
+            provider, sublimit, lease_key, lease_token = budget
+            if provider != self.provider:
+                raise ProviderRequestLimitExceeded("Unexpected provider in scheduled request context")
         try:
-            count = int(self.redis.incr(daily_key))
-            if count == 1:
-                self.redis.expire(daily_key, 90000)
+            count = int(self.redis.eval(RESERVE, 3, daily_key, scheduled_key, lease_key,
+                                        self.limit, sublimit, lease_token))
         except RedisError as exc:
-            logger.error(
-                "Provider daily rate limiter failed provider=%s key=%s limit=%s error=%s: %s",
-                self.provider,
-                daily_key,
-                self.limit,
-                type(exc).__name__,
-                exc,
-            )
+            logger.error("Provider quota reservation failed provider=%s error=%s: %s",
+                         self.provider, type(exc).__name__, exc)
             raise
-        if count > self.limit:
-            error = ProviderRequestLimitExceeded(
-                f"{self.provider} daily safety limit reached ({self.limit} requests)"
-            )
-            logger.error(
-                "Provider request blocked provider=%s key=%s count=%s limit=%s error=%s: %s",
-                self.provider,
-                daily_key,
-                count,
-                self.limit,
-                type(error).__name__,
-                error,
-            )
-            raise error
+        if count < 0:
+            reason = {-1: "daily_limit", -2: "scheduled_limit", -3: "lease_expired"}[count]
+            logger.warning("Provider request blocked provider=%s reason=%s", self.provider, reason)
+            raise ProviderRequestLimitExceeded(f"{self.provider} request blocked: {reason}")

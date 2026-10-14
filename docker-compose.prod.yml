@@ -89,8 +89,8 @@ services:
       start_interval: 5s
   celery-worker:
     <<: *app
-    mem_limit: 96m
-    memswap_limit: 160m
+    mem_limit: 192m
+    memswap_limit: 256m
     environment:
       <<: *app-env
       DB_POOL_SIZE: "2"
@@ -101,8 +101,8 @@ services:
       disable: true
   celery-beat:
     <<: *app
-    mem_limit: 48m
-    memswap_limit: 80m
+    mem_limit: 64m
+    memswap_limit: 96m
     command: [celery, -A, app.celery_app, beat, --loglevel=info, --schedule=/beat/celerybeat-schedule, --pidfile=]
     volumes:
       - beat_data:/beat

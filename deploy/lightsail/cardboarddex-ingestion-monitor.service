@@ -1,0 +1,11 @@
+[Unit]
+Description=CardboardDex ingestion stability and coverage monitor
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/cardboarddex/operations/scripts/lightsail/monitor_ingestion.py
+UMask=0077
+TimeoutStartSec=120
+Nice=10

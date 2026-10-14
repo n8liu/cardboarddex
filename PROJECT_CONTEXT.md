@@ -1,18 +1,33 @@
 # CardboardDex Project Context
 
-Updated: 2026-10-13. This handoff retains detailed product and implementation context, with dated deployment records and explicit known limitations. Repository: [n8liu/cardboarddex](https://github.com/n8liu/cardboarddex).
+Updated: 2026-10-14. This handoff retains detailed product and implementation context, with dated deployment records and explicit known limitations. Repository: [n8liu/cardboarddex](https://github.com/n8liu/cardboarddex).
 
 Read [AGENTS.md](AGENTS.md) before changing code, including the installed Next.js documentation requirement. Treat source code and dated verification as authoritative when older documents disagree. [ARCHITECTURE.md](ARCHITECTURE.md) describes the system boundaries but still contains outdated deployment and eBay implementation notes.
 
-## Capacity upgrade blocked — 2026-10-13 UTC
+## Production migrated to 1 GB Lightsail and passive Live Comps deployed — 2026-10-14 UTC
 
-The approved target is now **`cardboarddex-1gb`, `micro_3_0`, $7/month, dual-stack, 1 GB RAM and 40 GB disk**. The provisioner validates these regional bundle properties and protects `cardboarddex-recovered` plus historical source names. Its 28 provisioning tests pass.
+Production is successfully running on **`cardboarddex-1gb`, `micro_3_0`, $7/month, dual-stack, 1 GB RAM and 40 GB disk** in `us-west-2`. The previous AWS instance creation limit was cleared and destination creation completed with verified dual-stack network and hardware specifications.
 
-At approximately 19:17 UTC, `provision.py --instance-name cardboarddex-1gb --instance-only --apply` validated the AWS account and bundle, but AWS rejected `CreateInstances` with `InvalidInputException`: "Sorry, you've reached your maximum limit of Lightsail Instances : 1. If you're new to Lightsail, please try again later. If the issue persists, please contact Customer Support."
+Migration summary:
+- **Pre-cutover rehearsal:** Off-server restoration verified schema revision `0006_site_analytics`, table record counts, and Redis state against disposable test environments (`rehearsal-receipt.json`).
+- **Maintenance window:** Paused writes at 2026-10-14 00:12 UTC. Captured final PostgreSQL dump and Redis AOF backup (`manifest.json`), restored both to `cardboarddex-1gb`, and verified complete row-count parity across all 10 tables (`cards`: 54,968, `price_observations`: 284,056, `provider_card_states`: 57,061, `raw_ebay_listings`: 28,842, `sets`: 491, `analytics_events`: 121, etc.).
+- **Tunnel cutover:** Switched Cloudflare Tunnel routing to `cardboarddex-1gb` at minute 2 of the 30-minute window (148 seconds total maintenance time). The source instance `cardboarddex-recovered` remains running and billable, with API/Tunnel/ingestion stopped and source backup/retention timers disabled; source retirement requires explicit deletion authorization.
+- **Service configuration:** Six-hourly backups and daily analytics retention systemd timers are active on `cardboarddex-1gb`. Docker Compose worker memory limits were raised to 192 MiB RAM / 256 MiB total with swap; Beat limits raised to 64 MiB RAM / 96 MiB total with swap. Concurrency remains 1.
+- **Backend release & canaries:** Deployed immutable image `349558247779.dkr-ecr.us-west-2.on.aws/cardboarddex-backend:passive-652c868fcf5b` (digest `sha256:dac6310bc20b26a6798760b0c35864a0b385432c6da305f4a8cb79ca61141f06`). Production canaries for TCGAPI and eBay executed with zero errors, writing accepted market observations.
+- **Passive refresh active:** The 1,500-card priority pool is frozen in durable Redis under `cardboarddex:passive:v2:cycle` for 7-day cycles. Alternating schedule runs 8-card batches (5 priority, 2 hot, 1 catalog) with atomic daily sublimits (1,500 TCGAPI / 450 eBay).
+- **Monitoring & observation:** `cardboarddex-ingestion-monitor.timer` runs every minute recording health to `/var/lib/cardboarddex/ingestion-monitor/latest.json`. Ingestion was resumed with exactly one worker and one Beat. The 48-hour stability observation window is active (started 2026-10-14 06:25 UTC).
 
-Follow-up AWS inventory confirmed only `cardboarddex-recovered`, running on `nano_3_0` with dual-stack networking. Public `/ready` returned HTTP 200 with `{"status":"ready"}`. No replacement was created and no source, Tunnel, ingestion, backup, or IAM changes were made. The migration stopped at the required creation gate. The nano-only restriction remains unresolved because creation failed at the instance-count gate. AWS must permit both two concurrent instances and the `micro_3_0` bundle before retrying; do not delete production to bypass either restriction.
+Latest verification at **2026-10-14 18:17 UTC**: both providers completed 202 successful checks, including 145/1,500 priority cards and 26 catalog advances each, with no retry backlog. TCGAPI used 410/1,500 scheduled requests (410/2,000 global); eBay used 209/450 (209/500 global). Exactly one worker and one Beat were running; all seven containers had zero restarts/OOMs, API readiness passed, and the monitor reported no regressions with approximately 302 MiB available. Automatic alternating dispatch and the 12:20 UTC backup succeeded.
 
-The planned 1,500-card priority pool, eight-card batches, scheduled subquotas, worker/Beat memory increases, immutable deployment, provider canaries, 48-hour observation, and seven-day coverage verification remain pending after the capacity gate. Existing local passive-refresh work is preserved, not upgraded or deployed by this attempt. Reuse existing backup infrastructure with `--instance-only`; source retirement still requires separate deletion authorization. The 30-minute maintenance window has not begun.
+Post-deployment backup `six-hourly/20261014T122001Z/manifest.json` passed checksum validation and actual off-server PostgreSQL/Redis restoration on October 14 at 18:17 UTC: schema `0006_site_analytics`, 54,968 cards, 491 sets. Private receipt: `.system_generated/lightsail/upgrade-1gb/active-refresh-receipt.json`.
+
+Public endpoint verification after deployment passed 13 tests; two legacy direct-AWS checks were skipped. `git diff --check` passed. Disposable local integration containers were removed; production and retained recovery resources were preserved.
+
+The **48-hour review is due October 16 at 06:25:48 UTC**; first-cycle **weekly coverage is due October 21 at 06:19:46 UTC**. These production checks remain pending, including overnight catalog-sync stability. The monitor remains active and pauses ingestion on configured regressions; it does not itself certify completion of either review.
+
+The release is a scoped overlay on production commit `5096ca27113f319836af15d9a0112faaa4ef748f`, not a deployment of repository HEAD. Unrelated pending features and schema `0007` were excluded; production remains at `0006_site_analytics`. Rollback after destination writes requires transferring fresh PostgreSQL and Redis data back before switching traffic. Source overlap, snapshots, and backups remain additional costs; source deletion is not authorized.
+
+GitHub deployment/image-sync workflows were restored to active, targeting the new host (SSM `mi-0701a7d2b33760744`). Stale run `34748756712` remains: user-authorized deletion returned HTTP 403, while cancel/force-cancel returned 409. Its exact historical workflow was verified to target retired ECS, with no Lightsail deployment. The old production image was recovered into ECR at its original digest; ECR retention now preserves tagged releases and expires unreferenced untagged images after seven days.
 
 ## Project rules
 
@@ -41,7 +56,7 @@ Catalog image responses use `/cards/{id}/image`. The backend downloads provider 
 
 - Frontend: Next.js 16 App Router, React 19, Tailwind CSS 4, Recharts, TypeScript, Vitest. Exact versions: [frontend/package.json](frontend/package.json).
 - Backend: Python 3.11+ declared; Docker/CI use Python 3.12. FastAPI, SQLAlchemy 2, Alembic, Celery, Redis, HTTPX, boto3.
-- Production deployment: Cloudflare Pages (frontend) with AWS Lightsail Linux VPS ($5.00/month server base; Docker Compose running FastAPI, Celery worker+Beat, PostgreSQL 16 Alpine, Redis 7 Alpine, Cloudflare Tunnel connector) in `us-west-2`, and S3 card asset bucket.
+- Production deployment: Cloudflare Pages (frontend) with AWS Lightsail Linux VPS ($7.00/month micro_3_0 dual-stack server base, 1 GB RAM / 40 GB disk; Docker Compose running FastAPI, Celery worker+Beat, PostgreSQL 16 Alpine, Redis 7 Alpine, Cloudflare Tunnel connector) in `us-west-2`, and S3 card asset bucket.
 - Local PostgreSQL/Redis: [docker-compose.yml](docker-compose.yml). Backend Docker/CI install [backend/requirements.txt](backend/requirements.txt); they do not currently consume `backend/uv.lock`.
 
 | Area | Entry points |
@@ -713,27 +728,19 @@ Latest audit verification (2026-09-15):
 
 ### 3. Operations and follow-up features
 
-- ECS/ALB/RDS retirement is complete. Production remains on the $5/month Lightsail server base with all residual snapshots deleted; reliability rollout and verified scheduled backups remain active as recorded above.
+- ECS/ALB/RDS retirement is complete. Production runs on the $7/month Lightsail server base (cardboarddex-1gb, 1 GB RAM / 40 GB disk) with dual-stack networking, raised worker/Beat memory limits, active systemd backup timers, and source rollback retention.
 - Standardize locked Python dependencies and vulnerability checks; add `npm test` to frontend CI and regression coverage for the findings above.
 - Fix quota diagnostics to read the same Redis keys as the limiter. Separate liveness from readiness and protected diagnostics.
 - Repair catalog `--all` and checkpoint semantics before relying on resumable ingestion. Verify one Beat scheduler during deployments.
 - Add freshness, provider-quota, failed-image, job-duration, and match/reject monitoring.
 - Verify available eBay programs/scopes before implementing completed-sales ingestion. Add sold-sales statistics and accounts/watchlists after pricing identity and data quality are reliable.
 
-### Passive refresh implementation — 2026-10-13 (local, not deployed)
+### Passive refresh and 1 GB capacity rollout — 2026-10-14 (deployed and active)
 
-Scheduled TCGAPI/eBay jobs now use `app/services/passive_refresh.py`: recent
-card view/click popularity (today + yesterday, bounded Redis buckets), top 12
-pool, up to three popular and at least one catalog slot per batch, provider-specific
-1h/24h minimum freshness and attempt cooldowns. Existing alternating schedule,
-request ceilings, manual collectors, and observation/title matching are retained.
-A shared durable Redis token lease and 840s task limits prevent scheduled pricing
-overlap; Redis failure blocks scheduled collection. No database schema changes.
-See `docs/passive-refresh.md` for capacity, frequency, settings and rollout details.
-Production pause marker is unchanged; no worker restart, deployment, or AWS plan
-change has been performed. Popular freshness is a budget-dependent target:
-with defaults, 12 popular cards take roughly two hours per provider to rotate.
-Validation: isolated backend suite passed 249 tests with 19 skipped, including
-10 new passive-refresh tests covering allocation, provider freshness, cooldowns,
-quota/Redis/disabled/busy gates, lease cleanup, popularity expiry and task wiring.
-`git diff --check` passed. No live provider requests were made during validation.
+Production has been upgraded to `cardboarddex-1gb` ($7/month `micro_3_0`) and the passive refresh engine is live in production:
+- **Priority pool & rotation:** 1,500 individual cards ranked by 50% 7-day popularity, 25% set release recency, and 25% price, frozen for seven days in durable Redis (`cardboarddex:passive:v2:cycle`). Batches of eight cards reserve five weekly priority slots, two hot slots (12 hottest, 3-hour cooldown), and one catalog progression slot using independent durable cursors.
+- **Request limits:** Atomic Lua reservations enforce global ceilings (2,000 TCGAPI / 500 eBay requests/day) and scheduled-pricing sublimits (1,500 TCGAPI / 450 eBay requests/day).
+- **Execution & deduplication:** 900s token lease, hard task limits, and observation deduplication (unchanged quotes do not create duplicate price observations) prevent synthetic comp creation.
+- **Operator report:** `python -m jobs.passive_refresh_report` outputs comprehensive JSON metrics (cycle deadlines, checked/remaining/overdue cards, cursor positions, retries, and quota usage).
+- **Validation:** 59 unit tests passed across config, client, and passive refresh suites; full backend suite passed 251 tests; all 8 integration tests passed against real disposable PostgreSQL/Redis (verifying 7-day healthy operation, outage reporting, crash recovery, and Redis restarts).
+- **Production status:** Canaries succeeded, ingestion pause marker removed, single Celery worker (192/256 MiB) and Beat (64/96 MiB) resumed. 48-hour stability observation active with minute-by-minute systemd health monitoring.
