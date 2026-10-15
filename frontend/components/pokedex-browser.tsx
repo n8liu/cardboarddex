@@ -452,6 +452,7 @@ export function PokedexBrowser() {
                 </svg>
               </span>
               <input
+                data-mobile-search
                 type="text"
                 value={query}
                 onChange={(e) => handleSearchChange(e.target.value)}

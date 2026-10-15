@@ -74,3 +74,13 @@ it("loads catalog health only when expanded and displays discovered missing sets
   expect(await screen.findByText("New expansion · Not yet imported")).toBeInTheDocument();
   expect(screen.getByText(/1 \/ 2 discovered sets/)).toBeInTheDocument();
 });
+
+it("explains unsynced sales without presenting a zero", async () => {
+  vi.mocked(getSalesActivity).mockResolvedValue({
+    days: 30, start: "2026-09-12", end: "2026-10-11", synced_at: null,
+    total_sales: null, products_with_sales_data: 0, coverage: "", items: [], status: "not_synced",
+  });
+  render(<SalesActivityPanel />);
+  expect(await screen.findByText(/Sales history has not been synced yet/)).toBeInTheDocument();
+  expect(screen.queryByText(/0 reported sales/)).not.toBeInTheDocument();
+});

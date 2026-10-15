@@ -35,6 +35,9 @@ class MarketMoverItem(BaseModel):
     market_price: float
     price_change_percentage: float
     price_change_amount: float | None = None
+    previous_price: float | None = None
+    comparison_price: float | None = None
+    comparison_source: str | None = None
     period: str
     direction: str
     last_updated_at: datetime | None = None
@@ -169,6 +172,10 @@ class SealedSignalItem(BaseModel):
     price_freshness: str = "unknown"
     checked_at: datetime | None = None
     return_days: int = 30
+    price_change_amount: float | None = None
+    previous_price: float | None = None
+    comparison_price: float | None = None
+    comparison_source: str | None = None
     return_percent: float | None = None
     history: dict = Field(default_factory=dict)
     market_price: float

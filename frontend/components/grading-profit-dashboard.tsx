@@ -557,12 +557,12 @@ export function GradingProfitDashboard({ initialData }: GradingProfitDashboardPr
 
                   {/* Thumbnail & Core Info */}
                   <div className="flex gap-3.5">
-                    <div className="relative h-24 w-18 shrink-0 overflow-hidden rounded-xl border border-slate-100 bg-slate-50 p-1">
+                    <div className="relative h-40 w-28 shrink-0 sm:h-52 sm:w-36 overflow-hidden rounded-xl border border-slate-100 bg-slate-50 p-1">
                       <Image
                         src={cardImageUrl(item.image_url)}
                         alt={item.name}
                         fill
-                        sizes="80px"
+                        sizes="(min-width: 640px) 144px, 112px"
                         className="object-contain transition duration-200 group-hover:scale-105"
                       />
                     </div>

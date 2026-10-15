@@ -107,3 +107,25 @@ def test_endpoint_is_cached_and_queries_do_not_grow_per_release(db, monkeypatch)
     finally:
         app.dependency_overrides.clear()
         event.remove(db.bind, 'before_cursor_execute', record)
+
+
+def test_live_collection_totals_follow_new_records_and_share_live_comps_cache(db):
+    from fastapi import Response
+    from unittest.mock import Mock, patch
+    from app.routers.home import stats
+    from app.services.collection_stats import COUNT_KEY, live_observation_count
+
+    with patch('app.common.redis.get_redis', return_value=None):
+        assert stats(Response(), db)["price_observations"] == 0
+        add_product(db, 'first', 10)
+        result = stats(Response(), db)
+        assert result["products"] == result["sets"] == result["price_observations"] == 1
+        add_product(db, 'second', -10)
+        assert stats(Response(), db)["price_observations"] == 2
+    redis = Mock()
+    redis.get.return_value = '17'
+    assert live_observation_count(db, redis) == 17
+    redis.get.assert_called_once_with(COUNT_KEY)
+    redis.get.return_value = None
+    assert live_observation_count(db, redis) == 2
+    redis.setex.assert_called_once_with(COUNT_KEY, 60, '2')

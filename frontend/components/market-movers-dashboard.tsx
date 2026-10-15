@@ -1,4 +1,5 @@
 "use client";
+import { PriceComparison } from "@/components/price-comparison";
 import { CacheNotice, useCacheNotice } from "@/components/cache-notice";
 
 import { SectionLoadingBar } from "@/components/section-loading-bar";
@@ -114,7 +115,7 @@ function MoverCard({ item }: { item: MarketMoverItem }) {
       </div>
 
       {/* Pricing & Change Footer */}
-      <div className="mt-3.5 flex items-end justify-between border-t border-slate-100 pt-2.5">
+      <div className="mt-3.5 flex flex-wrap gap-2 items-end justify-between border-t border-slate-100 pt-2.5">
         <div>
           <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Market</span>
           <p className="font-mono text-sm sm:text-base font-black tracking-tight text-slate-950">
@@ -133,12 +134,7 @@ function MoverCard({ item }: { item: MarketMoverItem }) {
             <span>{isUp ? "▲" : "▼"}</span>
             <span>{formatPercentage(item.price_change_percentage)}</span>
           </span>
-          {item.price_change_amount !== null && item.price_change_amount !== undefined && (
-            <p className="mt-0.5 text-[10px] text-slate-400 font-mono">
-              {item.price_change_amount >= 0 ? "+" : ""}
-              {formatPrice(item.price_change_amount)}
-            </p>
-          )}
+          <PriceComparison value={item} period={item.period} />
         </div>
       </div>
 
@@ -220,6 +216,7 @@ function MoverTableRow({ item, rank }: { item: MarketMoverItem; rank?: number })
       </td>
       <td className="py-2.5 px-3 text-right font-black tracking-tight text-slate-950 sm:text-sm">
         {formatPrice(item.market_price)}
+        <PriceComparison value={item} period={item.period} />
       </td>
       <td className="hidden lg:table-cell py-2.5 px-3 text-right text-[11px] text-slate-400">
         {formatRelativeTime(item.last_updated_at)}

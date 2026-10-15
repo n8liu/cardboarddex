@@ -1,4 +1,5 @@
 "use client";
+import { PriceComparison } from "@/components/price-comparison";
 import { CacheNotice, useCacheNotice } from "@/components/cache-notice";
 
 import Link from "next/link";
@@ -19,27 +20,49 @@ const signals = { all: "All signals", strong_buy: "Strong buy", buy: "Buy", hold
 const sorts = { momentum_desc: "30-day growth", score_desc: "Signal score", price_asc: "Lowest price", price_desc: "Highest price", supply_asc: "Fewest listings", age_desc: "Oldest release" };
 const selectClass = "min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-800 transition hover:bg-slate-100 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10";
 
-function ProductRow({ item, rank, period }: { item: SealedSignalItem; rank: number; period: 30 | 90 }) {
+function ProductCard({ item, rank, period }: { item: SealedSignalItem; rank: number; period: 30 | 90 }) {
   const { formatPrice } = useCurrency();
   const growth = item.return_percent !== undefined ? item.return_percent : period === 30 ? item.price_change_30d : null;
   const hasGrowth = growth != null && Number.isFinite(growth);
+  const signalStyle = item.signal_label === "STRONG BUY" || item.signal_label === "BUY"
+    ? "border-emerald-200/60 bg-emerald-50 text-emerald-700"
+    : item.signal_label === "UNDERPERFORM" ? "border-rose-200/60 bg-rose-50 text-rose-700"
+    : "border-slate-200 bg-slate-50 text-slate-700";
   return (
-    <li className="rounded-xl border border-slate-200/80 bg-white p-3 transition hover:border-slate-400 focus-within:border-slate-400">
-      <div className="flex items-center gap-2.5">
-        <span className="w-5 shrink-0 text-center text-xs font-bold tabular-nums text-slate-400">{String(rank).padStart(2, "0")}</span>
-        <Link href={`/cards/${encodeURIComponent(item.card_id)}`} prefetch={false} tabIndex={-1} aria-hidden="true" className="relative h-12 w-10 shrink-0 overflow-hidden rounded-lg border border-slate-100 bg-slate-50/60">
-          <Image src={cardImageUrl(item.image_url)} alt="" fill sizes="40px" className="object-contain p-0.5" />
+    <li className="group relative flex min-w-0 flex-col rounded-2xl border border-slate-200/90 bg-white p-4 shadow-2xs transition duration-150 hover:border-slate-400 hover:shadow-md focus-within:border-slate-400">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-700">#{String(rank).padStart(2, "0")} · {item.product_type}</span>
+        <span className={`rounded-md border px-2 py-0.5 text-[10px] font-bold ${signalStyle}`}>{item.signal_label.replaceAll("_", " ")}</span>
+      </div>
+      <div className="flex gap-3.5">
+        <Link href={`/cards/${encodeURIComponent(item.card_id)}`} prefetch={false} tabIndex={-1} aria-hidden="true" className="relative h-40 w-28 shrink-0 overflow-hidden rounded-xl border border-slate-100 bg-slate-50 sm:h-52 sm:w-36">
+          <Image src={cardImageUrl(item.image_url)} alt="" fill sizes="(min-width: 640px) 144px, 112px" className="object-contain p-1 transition duration-200 group-hover:scale-105" />
         </Link>
-        <div className="min-w-0 flex-1">
-          <h3 className="text-xs font-bold leading-snug text-slate-950 sm:text-sm"><Link href={`/cards/${encodeURIComponent(item.card_id)}`} prefetch={false} className="hover:underline focus-visible:outline-slate-900">{item.name}</Link></h3>
-          <p className="mt-1 truncate text-[10px] text-slate-500">{item.set_name} · {item.release_date?.slice(0, 4)}</p>
-        </div>
-        <div className="shrink-0 text-right tabular-nums">
-          <p className="text-xs font-bold text-slate-950 sm:text-sm">{formatPrice(item.market_price)}</p>
-          <p className={`mt-1 text-[11px] font-semibold ${hasGrowth && growth > 0 ? "text-emerald-700" : hasGrowth && growth < 0 ? "text-rose-700" : "text-slate-500"}`}><span className="sr-only">{period}-day growth: </span>{hasGrowth ? `${growth > 0 ? "+" : ""}${growth.toFixed(1)}%` : "Unavailable"}</p>
+        <div className="flex min-w-0 flex-1 flex-col justify-between">
+          <div>
+            <p className="truncate text-[11px] font-semibold text-slate-400">{item.set_name}</p>
+            <h3 className="mt-1 text-xs font-bold leading-snug text-slate-950 sm:text-sm"><Link href={`/cards/${encodeURIComponent(item.card_id)}`} prefetch={false} className="hover:underline focus-visible:outline-slate-900">{item.name}</Link></h3>
+          </div>
+          <div className="mt-3 text-[10px] leading-relaxed text-slate-500">
+            <p>Released {item.release_date?.slice(0, 4) ?? "Unknown"}</p>
+            <p className="mt-1">Signal score {item.signal_score}/100</p>
+          </div>
         </div>
       </div>
-      <details className="mt-2 text-[11px] text-slate-500">
+      <div className="mt-3.5 flex-1 space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200/80 bg-slate-50/60 p-2.5">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Market price</span>
+          <span className="text-sm font-black tabular-nums text-slate-950">{formatPrice(item.market_price)}</span>
+        </div>
+        <div className="rounded-xl border border-slate-200/80 bg-slate-50/60 p-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{period}-day growth<span className="sr-only">: </span></span>
+            <span className={`text-xs font-bold tabular-nums ${hasGrowth && growth > 0 ? "text-emerald-700" : hasGrowth && growth < 0 ? "text-rose-700" : "text-slate-500"}`}>{hasGrowth ? `${growth > 0 ? "+" : ""}${growth.toFixed(1)}%` : "Unavailable"}</span>
+          </div>
+          <PriceComparison value={item} period={`${period}d`} />
+        </div>
+      </div>
+      <details className="mt-4 border-t border-slate-100 pt-3 text-[11px] text-slate-500">
         <summary className="cursor-pointer py-1 hover:text-slate-950">Price history & purchase return<span className="sr-only"> for {item.name}</span></summary>
         <div className="mt-2 border-t border-slate-100 pt-3">
           <p className="mb-2">{item.product_type} · Signal score {item.signal_score}/100</p>
@@ -112,14 +135,14 @@ function RankingColumn({ era, filters, initial }: { era: Era; filters: Filters; 
   }
   const newer = era === "newer";
   return (
-    <section aria-labelledby={`${era}-heading`} aria-busy={loading} className="min-w-0 rounded-2xl border border-slate-200/90 bg-slate-50/50 p-3.5 shadow-2xs sm:p-4">
+    <section aria-labelledby={`${era}-heading`} aria-busy={loading} className="min-w-0">
       <div className="mb-3 border-b border-slate-200 pb-3">
         <div className="flex flex-wrap items-center justify-between gap-2"><h2 id={`${era}-heading`} className="text-xs font-bold uppercase tracking-wider text-slate-900">{newer ? "Newer releases" : "Older & vintage"}</h2><span className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold tabular-nums text-slate-500">{data ? `${data.total_items} products` : "…"}</span></div>
         <p className="mt-1 text-xs text-slate-500">{newer ? "Sets released within the last 3 years" : "Sets released 3 or more years ago"}</p>
         <p className="mt-3 text-[10px] font-semibold uppercase tracking-widest text-slate-500">Ranked by {filters.sortBy === "momentum_desc" ? `${filters.period}-day growth` : sorts[filters.sortBy].toLowerCase()}</p>
       </div>
-      {items.length > 0 && <ol className="space-y-2">{items.map((item, index) => <ProductRow key={item.card_id} item={item} rank={index + 1} period={filters.period} />)}</ol>}
-      {loading && <div role="status" className="space-y-3 p-5"><span className="text-xs text-slate-500">Loading {newer ? "newer" : "older"} products…</span>{!items.length && [0, 1, 2].map((n) => <div key={n} className="h-24 animate-pulse rounded-xl bg-slate-100" />)}</div>}
+      {items.length > 0 && <ol className="grid grid-cols-1 items-start gap-4 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">{items.map((item, index) => <ProductCard key={item.card_id} item={item} rank={index + 1} period={filters.period} />)}</ol>}
+      {loading && <div role="status" className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2"><span className="col-span-full text-xs text-slate-500">Loading {newer ? "newer" : "older"} products…</span>{!items.length && [0, 1, 2, 3].map((n) => <div key={n} className="h-96 animate-pulse rounded-2xl bg-slate-100" />)}</div>}
       <CacheNotice metadata={cacheMetadata} />
       {error && <div role="alert" className="m-4 rounded-xl bg-rose-50 p-4 text-sm text-rose-700">{error}<button type="button" className="ml-2 font-semibold underline" onClick={() => data ? loadMore(true) : setRetry((n) => n + 1)}>Retry</button></div>}
       {!loading && !error && !items.length && <div className="px-6 py-16 text-center"><p className="text-sm font-semibold text-slate-700">No matching {newer ? "newer" : "older"} products</p><p className="mt-2 text-xs text-slate-500">Try another language or product type, or clear your filters.</p></div>}
@@ -200,7 +223,7 @@ export function SealedSignalsDashboard({ initialData }: { initialData: Record<Er
         {!defaults && <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 text-xs text-slate-600"><span>{[game !== "all" && languages[game], period !== 30 && `${period}-day growth`, debounced && `“${debounced}”`, productType !== "all" && products[productType], signal !== "all" && signals[signal], sortBy !== "momentum_desc" && sorts[sortBy]].filter(Boolean).join(" · ")}</span><button type="button" onClick={reset} className="ml-auto min-h-8 font-semibold text-slate-700 hover:text-slate-950 hover:underline">Reset filters</button></div>}
       </div>
       <p className="mb-6 text-[11px] leading-relaxed text-slate-500">{period}-day growth is historical price change before fees, not projected ROI.</p>
-      <div className="grid items-start gap-5 lg:grid-cols-2">{(["newer", "older"] as const).map((era) => <RankingColumn key={`${era}:${key}`} era={era} filters={filters} initial={defaults ? initialData[era] : null} />)}</div>
+      <div className="grid items-start gap-8 lg:grid-cols-2">{(["newer", "older"] as const).map((era) => <RankingColumn key={`${era}:${key}`} era={era} filters={filters} initial={defaults ? initialData[era] : null} />)}</div>
       <p className="mt-5 text-xs leading-relaxed text-slate-500">Era is based on the set release date, not confirmed print status. Products with unknown or future release dates are excluded. Missing return data appears last; the signal score is a separate supply, demand, age, and momentum indicator.</p>
     </div>
   );

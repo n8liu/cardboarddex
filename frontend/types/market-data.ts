@@ -13,6 +13,7 @@ export interface MarketHistory extends PriceFreshness {
   market_price?: number | null; points: HistoryPoint[];
 }
 export interface SalesActivity {
+  status?: "ready" | "not_synced" | "no_matches" | "no_sales";
   days: number; start: string; end: string; synced_at: string | null;
   total_sales: number | null; products_with_sales_data: number; coverage: string;
   items: { card_id: string; name: string; set_name: string; sales: number; reported_rows: number; last_reported_day: string }[];

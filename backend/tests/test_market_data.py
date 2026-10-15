@@ -255,3 +255,50 @@ def test_history_collection_is_opt_in():
     from app.config import Settings
     assert Settings(_env_file=None).market_history_enabled is False
     assert "sync-market-history" not in celery_app.conf.beat_schedule
+
+
+@pytest.mark.parametrize("price, percent, previous, delta", [(120, 20, 100, 20), (50, -50, 100, -50), (100, 0, 100, 0)])
+def test_estimated_comparison(price, percent, previous, delta):
+    result = service.estimated_price_change(price, percent)
+    assert result["previous_price"] == previous
+    assert result["price_change_amount"] == delta
+    assert result["comparison_source"] == "estimated"
+
+
+@pytest.mark.parametrize("percent", [None, -100, -110, float("nan"), float("inf")])
+def test_invalid_comparison_is_unavailable(percent):
+    assert service.estimated_price_change(100, percent) == {}
+
+
+def test_sealed_comparison_uses_history_endpoint_not_current_quote(db):
+    today = datetime.now(UTC).date()
+    db.add(PriceObservation(card_id="box", provider="tcgapi", provider_card_id="box", variant_id="normal", printing="Normal", fingerprint="comparison", price=999, payload={"price_change_30d": 5}))
+    for ago, price in [(90, 100), (0, 150)]:
+        db.add(MarketHistory(card_id="box", printing="Normal", day=today - timedelta(days=ago), market_price=price, fetched_at=datetime.now(UTC)))
+    db.commit()
+    item = sealed_service.calculate_sealed_signals(db, period=90).items[0]
+    assert item.market_price == 999
+    assert item.previous_price == 100
+    assert item.comparison_price == 150
+    assert item.price_change_amount == 50
+    assert item.return_percent == 50
+    assert item.comparison_source == "history"
+
+
+def test_sales_status_search_and_scoped_sync(db):
+    assert service.sales_activity(db)["status"] == "not_synced"
+    today = datetime.now(UTC).date()
+    db.add(MarketHistory(card_id="box", printing="Normal", day=today, market_price=100, sales_volume=None, fetched_at=datetime.now(UTC)))
+    db.commit()
+    assert service.sales_activity(db)["status"] == "no_sales"
+    row = db.get(MarketHistory, ("box", "Normal", today))
+    row.sales_volume = 0
+    db.commit()
+    result = service.sales_activity(db, q="Test")
+    assert result["status"] == "ready"
+    assert result["total_sales"] == 0
+    assert result["products_with_sales_data"] == 1
+    assert result["synced_at"] is not None
+    empty = service.sales_activity(db, q="missing")
+    assert empty["status"] == "no_matches"
+    assert empty["synced_at"] is None

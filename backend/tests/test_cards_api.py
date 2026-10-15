@@ -465,7 +465,9 @@ def test_get_market_movers_endpoint() -> None:
             assert data["gainers"][0]["set_name"] == "Base Set"
             assert data["gainers"][0]["market_price"] == 25.0
             assert data["gainers"][0]["price_change_percentage"] == 102.6
-            assert data["gainers"][0]["price_change_amount"] is None
+            assert data["gainers"][0]["price_change_amount"] == 12.66
+            assert data["gainers"][0]["previous_price"] == 12.34
+            assert data["gainers"][0]["comparison_source"] == "estimated"
             assert data["gainers"][0]["direction"] == "up"
 
             assert len(data["losers"]) == 1

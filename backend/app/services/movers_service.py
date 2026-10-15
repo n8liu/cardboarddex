@@ -10,9 +10,10 @@ from app.common.response_cache import cached_read
 from app.models import Card, PriceObservation, Set
 from app.schemas.cards import MarketMoverItem
 from app.services.image_delivery import card_image_url
+from app.services.market_data_service import estimated_price_change
 
 
-@cached_read('stored-movers', fresh=900, maximum=1800)
+@cached_read('stored-movers-v2', fresh=900, maximum=1800)
 def stored_movers(response: Response, db: Session, game: str, period: str) -> dict[str, list[MarketMoverItem]]:
     latest = select(PriceObservation.id, func.row_number().over(
         partition_by=PriceObservation.card_id,
@@ -45,7 +46,7 @@ def stored_movers(response: Response, db: Session, game: str, period: str) -> di
         result['gainers' if direction == 'up' else 'losers'].append(MarketMoverItem(
             card_id=row.id, name=row.name, set_name=row.set_name, set_id=row.set_id,
             number=row.number, image_url=card_image_url(row.id), market_price=price,
-            price_change_percentage=change, price_change_amount=None,
+            price_change_percentage=change, **estimated_price_change(price, change),
             period=period, direction=direction, last_updated_at=row.observed_at,
         ))
     result['gainers'].sort(key=lambda item: (-item.price_change_percentage, item.card_id))

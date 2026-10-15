@@ -176,6 +176,7 @@ export function NavHeader() {
 
   return (
     <header
+      data-site-header
       className={`sticky top-0 z-40 transition-all duration-200 border-b ${
         isScrolled
           ? "border-slate-200 bg-white/92 shadow-2xs backdrop-blur-md"

@@ -24,6 +24,7 @@ export function SearchForm({
             <path d="m21 21-4.35-4.35m2.35-5.65a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z" stroke="currentColor" strokeLinecap="round" strokeWidth="1.8" />
           </svg>
           <input
+            data-mobile-search
             aria-busy={isSearching}
             autoComplete="off"
             className="h-13 w-full rounded-xl border border-slate-200 bg-white pl-10 pr-10 text-sm text-slate-950 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10"

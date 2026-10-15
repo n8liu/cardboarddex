@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.common.formatters import escape_like, extract_float
 from app.common.redis import get_redis
 from app.models import Card, PriceObservation, ProviderCardState, MarketHistory, Set
-from app.services.market_data_service import freshness, historical_returns, summarize_history
+from app.services.market_data_service import freshness, historical_returns, summarize_history, estimated_price_change
 from app.schemas.cards import SealedSignalItem, SealedSignalsResponse
 
 logger = logging.getLogger(__name__)
@@ -80,7 +80,7 @@ def calculate_sealed_signals(
 ) -> SealedSignalsResponse:
     """Calculate multi-factor sealed market investment signals and scores."""
     now = time.time()
-    cache_key_raw = f"v4:{game}:{period}:{era}:{signal}:{product_type}:{sort_by}:{set_id}:{q.strip().lower()}:{page}:{per_page}"
+    cache_key_raw = f"v5:{game}:{period}:{era}:{signal}:{product_type}:{sort_by}:{set_id}:{q.strip().lower()}:{page}:{per_page}"
     cache_hash = hashlib.md5(cache_key_raw.encode()).hexdigest()
     redis_key = f"cardboarddex:sealed_signals:{cache_hash}"
     redis_key = f"{image_generation()}:{redis_key}"
@@ -396,6 +396,9 @@ def calculate_sealed_signals(
     for item in paged_items:
         item.history = summarize_history(history_by_card.get(item.card_id, []), item.card_id, period,
                                          selected_printings.get(item.card_id, "Normal"), today=today)
+        comparison = item.history if item.history["complete_return_window"] else estimated_price_change(item.market_price, item.return_percent)
+        for field in ("previous_price", "comparison_price", "price_change_amount", "comparison_source"):
+            setattr(item, field, comparison.get(field))
 
     response = SealedSignalsResponse(
         page=page,

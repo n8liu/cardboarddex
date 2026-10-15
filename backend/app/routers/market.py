@@ -1,3 +1,4 @@
+from app.services.collection_stats import live_observation_count
 from app.common.response_cache import cached_read
 from app.services.movers_service import stored_movers
 from app.services.image_delivery import card_image_url
@@ -223,7 +224,7 @@ def get_grading_profit(
 
 
 @router.get("/sealed-signals", response_model=SealedSignalsResponse)
-@cached_read("get_sealed_signals", fresh=300, maximum=1800)
+@cached_read("get_sealed_signals_v2", fresh=300, maximum=1800)
 def get_sealed_signals(
     response: Response,
     game: Literal["all", "pokemon", "pokemon-japan"] = Query(default="all"),
@@ -330,23 +331,9 @@ def get_live_updates(
     )
 
     r = _get_redis()
-    total_items: int | None = None
-    if is_unfiltered and r is not None:
-        try:
-            cached_total = r.get("cardboarddex:live_updates:total_count")
-            if cached_total:
-                total_items = int(cached_total)
-        except Exception:
-            pass
-
-    if total_items is None:
-        count_stmt = select(func.count()).select_from(stmt.subquery())
-        total_items = db.scalar(count_stmt) or 0
-        if is_unfiltered and r is not None:
-            try:
-                r.setex("cardboarddex:live_updates:total_count", 60, str(total_items))
-            except Exception:
-                pass
+    total_items = live_observation_count(db, r) if is_unfiltered else (
+        db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    )
 
     total_pages = max(1, math.ceil(total_items / per_page))
     offset = (page - 1) * per_page

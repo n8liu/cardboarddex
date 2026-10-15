@@ -34,3 +34,5 @@ export type HomeOverview = {
   sealed: HomeHighlight | null;
   releases: HomeRelease[];
 };
+
+export type HomeStats = Pick<HomeOverview, "products" | "sets" | "price_observations" | "calculated_at">;

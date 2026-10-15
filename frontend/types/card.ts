@@ -30,6 +30,10 @@ export type MarketMoverItem = {
   market_price: number;
   price_change_percentage: number;
   price_change_amount?: number | null;
+  previous_price?: number | null;
+  comparison_price?: number | null;
+  comparison_source?: "history" | "estimated" | null;
+
   period: string;
   direction: "up" | "down";
   last_updated_at?: string | null;
@@ -151,6 +155,11 @@ export type GradingProfitResponse = {
 
 export type SealedSignalItem = PriceFreshness & {
   return_days?: number;
+  price_change_amount?: number | null;
+  previous_price?: number | null;
+  comparison_price?: number | null;
+  comparison_source?: "history" | "estimated" | null;
+
   return_percent?: number | null;
   history?: MarketHistory;
   card_id: string;

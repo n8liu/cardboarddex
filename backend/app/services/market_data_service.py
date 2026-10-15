@@ -1,13 +1,27 @@
 """Read cached provider data; public requests never consume provider quota."""
 import logging
+import math
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 from app.models import Card, Set, PriceObservation, ProviderCardState, MarketHistory, CatalogSnapshot
 from app.tcgapi.client import parse_release_date
 
 logger = logging.getLogger(__name__)
+
+
+def estimated_price_change(price, percent):
+    """Reverse a provider percentage; this is an estimate, not a historical quote."""
+    if price is None or percent is None:
+        return {}
+    if not math.isfinite(price) or not math.isfinite(percent) or price <= 0 or percent <= -100:
+        return {}
+    previous = price / (1 + percent / 100)
+    if not math.isfinite(previous):
+        return {}
+    return {"previous_price": round(previous, 2), "comparison_price": round(price, 2),
+            "price_change_amount": round(price - previous, 2), "comparison_source": "estimated"}
 
 
 def product_metadata(payload):
@@ -98,6 +112,10 @@ def summarize_history(rows, card_id, days, printing, sync=None, today=None):
         "coverage_end": visible[-1].day if visible else None,
         "return_end": latest.day if latest else None,
         "return_percent": growth, "complete_return_window": growth is not None,
+        "previous_price": float(baseline.market_price) if growth is not None else None,
+        "comparison_price": float(latest.market_price) if growth is not None else None,
+        "price_change_amount": round(float(latest.market_price - baseline.market_price), 2) if growth is not None else None,
+        "comparison_source": "history" if growth is not None else None,
         "points": [{"date": r.day, "market_price": float(r.market_price) if r.market_price is not None else None,
                     "sales_volume": r.sales_volume, "avg_sales_price": float(r.avg_sales_price) if r.avg_sales_price is not None else None} for r in visible],
     }
@@ -130,16 +148,20 @@ def sales_activity(db: Session, days=30, q=""):
         func.sum(MarketHistory.sales_volume).label("sales"),
         func.count(MarketHistory.sales_volume).label("reported_rows"),
         func.max(MarketHistory.day).label("last_reported_day"),
+        func.max(MarketHistory.fetched_at).label("synced_at"),
     ).join(Card, Card.id == MarketHistory.card_id).join(Set, Set.id == Card.set_id).where(
         MarketHistory.day >= start, MarketHistory.day <= today, MarketHistory.sales_volume.is_not(None))
     if q:
         from app.common.formatters import escape_like
-        base = base.where(Card.name.ilike(f"%{escape_like(q)}%", escape="\\"))
+        base = base.where(or_(Card.name.ilike(f"%{escape_like(q)}%", escape="\\"),
+                              Set.name.ilike(f"%{escape_like(q)}%", escape="\\")))
     aggregate = base.group_by(MarketHistory.card_id, Card.name, Set.name).subquery()
     totals = db.execute(select(func.sum(aggregate.c.sales), func.count()).select_from(aggregate)).one()
     rows = db.execute(select(aggregate).order_by(aggregate.c.sales.desc(), aggregate.c.card_id).limit(50)).mappings().all()
-    synced = db.scalar(select(func.max(MarketHistory.fetched_at)))
-    return {"days": days, "start": start, "end": today, "synced_at": synced,
+    synced = db.scalar(select(func.max(aggregate.c.synced_at)))
+    has_history = db.scalar(select(MarketHistory.card_id).limit(1)) is not None
+    status = "ready" if totals[0] is not None else "no_matches" if q.strip() and has_history else "no_sales" if has_history else "not_synced"
+    return {"days": days, "start": start, "end": today, "synced_at": synced, "status": status,
         "total_sales": int(totals[0]) if totals[0] is not None else None, "products_with_sales_data": totals[1],
         "items": [dict(row) for row in rows], "source": "TCG API reported sales",
         "coverage": "Synced products only. Missing sales are unknown; the newest 1–3 days may be incomplete."}

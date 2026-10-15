@@ -1,4 +1,4 @@
-import type { HomeOverview } from "@/types/home";
+import type { HomeOverview, HomeStats } from "@/types/home";
 import type { MarketHistory, SalesActivity } from "@/types/market-data";
 import type {
   CardDetail,
@@ -456,6 +456,7 @@ export function getTopPokemonVolume(options: {
 }
 
 export function getTrendingDashboard(options: {
+  abortSignal?: AbortSignal;
   timeframe?: VolumeTimeframe;
   query?: string;
 } = {}): Promise<TrendingDashboardResponse> {
@@ -466,6 +467,7 @@ export function getTrendingDashboard(options: {
   });
   return request<TrendingDashboardResponse>(`/cards/trending${qs}`, {
     cache: "no-store",
+    signal: options.abortSignal,
   });
 }
 
@@ -554,4 +556,8 @@ export function getSalesActivity(days: 7 | 30 | 90 = 30, query = "", signal?: Ab
 
 export function getHomeOverview(signal?: AbortSignal, options: CacheOptions = {}): Promise<HomeOverview> {
   return request("/home/overview", { signal, cache: "no-cache" }, options);
+}
+
+export function getHomeStats(signal?: AbortSignal): Promise<HomeStats> {
+  return request("/home/stats", { signal, cache: "no-store" });
 }

@@ -20,7 +20,7 @@ interface AutocompleteItem {
   href: string;
 }
 
-export function SearchAutocomplete() {
+export function SearchAutocomplete({ fullWidth = false }: { fullWidth?: boolean }) {
   const router = useRouter();
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -254,7 +254,7 @@ export function SearchAutocomplete() {
   const hasAnyResults = matchedPokemon.length > 0 || matchedSets.length > 0 || cardsResults.length > 0;
 
   return (
-    <div ref={containerRef} className="relative w-full max-w-2xl font-mono">
+    <div data-mobile-search-container ref={containerRef} className={`relative w-full font-mono ${fullWidth ? "" : "max-w-2xl"}`}>
       <form onSubmit={handleSubmit} className="relative flex items-center">
         <svg
           aria-hidden="true"
@@ -271,6 +271,7 @@ export function SearchAutocomplete() {
         </svg>
 
         <input
+          data-mobile-search
           ref={inputRef}
           type="search"
           value={query}
@@ -313,7 +314,7 @@ export function SearchAutocomplete() {
 
       {/* AUTOCOMPLETE DROPDOWN MENU */}
       {isOpen && query.trim().length >= 1 && (
-        <div className="absolute left-0 right-0 top-full z-50 mt-2 max-h-[480px] overflow-y-auto rounded-2xl border border-slate-200/90 bg-white/95 p-2 shadow-2xl backdrop-blur-md">
+        <div className="absolute left-0 right-0 top-full z-50 mt-2 max-h-[min(480px,var(--search-results-max-height,480px))] overflow-y-auto rounded-2xl border border-slate-200/90 bg-white/95 p-2 shadow-2xl backdrop-blur-md">
           {/* 1. Pokémon Species Section */}
           {matchedPokemon.length > 0 && (
             <div className="mb-2">

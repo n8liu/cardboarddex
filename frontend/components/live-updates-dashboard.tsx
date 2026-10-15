@@ -1,5 +1,7 @@
 "use client";
 
+import { AnimatedNumber } from "@/components/ui/animated-number";
+
 import { SectionLoadingBar } from "@/components/section-loading-bar";
 import Image from "@/components/card-image";
 import Link from "next/link";
@@ -417,7 +419,7 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
             </span>
             <div>
               <p className="text-[10px] font-bold uppercase tracking-wider text-sky-800">Total Observations</p>
-              <p className="text-xs font-black text-slate-950">{data.total_items.toLocaleString()} Comps</p>
+              <p className="text-xs font-black text-slate-950"><AnimatedNumber value={data.total_items} /> Comps</p>
             </div>
           </div>
 
@@ -427,7 +429,7 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
             </span>
             <div>
               <p className="text-[10px] font-bold uppercase tracking-wider text-purple-800">Graded Slabs</p>
-              <p className="text-xs font-black text-purple-950">{data.graded_updates_count.toLocaleString()} Tracked</p>
+              <p className="text-xs font-black text-purple-950"><AnimatedNumber value={data.graded_updates_count} /> Tracked</p>
             </div>
           </div>
         </div>

@@ -1,4 +1,7 @@
 "use client";
+
+import { HomeLiveStats } from "@/components/home-live-stats";
+import { HomeTrendingCard } from "@/components/home-trending-card";
 import { CacheNotice, useCacheNotice } from "@/components/cache-notice";
 
 import { useEffect, useState } from "react";
@@ -88,20 +91,35 @@ export function LandingPage() {
     .sort((a, b) => (upcoming ? a.release_date.localeCompare(b.release_date) : b.release_date.localeCompare(a.release_date)) || a.id.localeCompare(b.id));
 
   return <div className="min-h-screen bg-[#f7f8f6] font-mono text-slate-950">
-    <section className="relative z-10 overflow-visible border-b border-slate-200/80 bg-white px-4 py-14 sm:px-6 sm:py-20 lg:px-8">
+    <section className="relative z-10 overflow-visible border-b border-slate-200/80 bg-white px-4 py-8 sm:px-6 sm:py-10 lg:px-8 lg:py-12">
       <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden"><div className="absolute -right-20 -top-40 h-[550px] w-[700px] rounded-full bg-[radial-gradient(ellipse,_#d1fae5_0%,_transparent_65%)] opacity-60" /></div>
-      <div className="relative mx-auto max-w-[1400px]">
-        <p className="mb-5 inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/80 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-600"><span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-emerald-500" />For the love of collecting</p>
-        <h1 className="max-w-4xl text-4xl font-bold leading-[1.08] tracking-tight sm:text-5xl lg:text-7xl">Your next card<br /><span className="text-emerald-700">starts here.</span></h1>
-        <p className="mt-5 max-w-2xl text-sm leading-relaxed text-slate-600 sm:text-base">Discover Pokémon cards, compare market prices, and build a collection that’s yours.</p>
-        <div className="mt-8 max-w-2xl"><SearchAutocomplete /></div>
-        <div className="mt-3 flex max-w-2xl flex-wrap items-center gap-2 text-[11px]"><span className="text-slate-400">Try:</span>{POPULAR.map((q) => <Link key={q} href={`/catalog?q=${encodeURIComponent(q)}`} className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-slate-600 transition-colors hover:border-emerald-300 hover:text-emerald-800">{q}</Link>)}</div>
-        <div className="mt-7 flex flex-wrap items-center gap-3"><Link href="/catalog" className="rounded-xl bg-slate-900 px-5 py-3 text-xs font-bold text-white transition-colors hover:bg-slate-700">Explore the catalog →</Link><Link href="/binder" className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50">Open your binder</Link><button type="button" onClick={openCommandPalette} className="rounded-lg px-2 py-3 text-xs text-slate-500 hover:text-slate-900">Quick jump <kbd className="ml-1 rounded border border-slate-200 px-1.5 py-0.5 text-[10px]">⌘K / Ctrl K</kbd></button></div>
+      <div className="relative mx-auto max-w-[1600px]">
+        <div className="grid items-center gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(300px,420px)] lg:gap-10 xl:gap-14">
+          <div className="relative z-10 min-w-0">
+            <p className="mb-5 inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/80 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-600"><span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-emerald-500" />For the love of collecting</p>
+            <h1 className="text-4xl font-bold leading-[1.08] tracking-tight sm:text-5xl lg:text-7xl xl:text-[clamp(4.5rem,5.5vw,6rem)]">Your next card<br /><span className="text-emerald-700">starts here.</span></h1>
+            <p className="mt-5 text-sm leading-relaxed text-slate-600 sm:text-base xl:text-lg">Discover Pokémon cards, compare market prices, and build a collection that’s yours.</p>
+            <div className="mt-6 w-full"><SearchAutocomplete fullWidth /></div>
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px]"><span className="text-slate-400">Try:</span>{POPULAR.map((q) => <Link key={q} href={`/catalog?q=${encodeURIComponent(q)}`} className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-slate-600 transition-colors hover:border-emerald-300 hover:text-emerald-800">{q}</Link>)}</div>
+            <div className="mt-5 flex flex-wrap items-center gap-3"><Link href="/catalog" className="rounded-xl bg-slate-900 px-5 py-3 text-xs font-bold text-white transition-colors hover:bg-slate-700">Explore the catalog →</Link><Link href="/binder" className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50">Open your binder</Link><button type="button" onClick={openCommandPalette} className="rounded-lg px-2 py-3 text-xs text-slate-500 hover:text-slate-900">Quick jump <kbd className="ml-1 rounded border border-slate-200 px-1.5 py-0.5 text-[10px]">⌘K / Ctrl K</kbd></button></div>
+            <nav aria-label="Explore the market" className="mt-6 grid grid-cols-3 gap-2 border-t border-slate-200 pt-5 sm:gap-3">
+              {[
+                { href: "/top-volume", title: "Trending", detail: "Explore the top 50" },
+                { href: "/live-updates", title: "Live Comps", detail: "Latest price updates" },
+                { href: "/sealed-signals", title: "Sealed Signals", detail: "Compare sealed products" },
+              ].map((item) => <Link key={item.href} href={item.href} className="group rounded-xl border border-slate-200 bg-slate-50/70 p-3 transition-colors hover:border-emerald-300 hover:bg-emerald-50/50 focus-visible:outline-emerald-600 sm:p-4">
+                <span className="flex items-center justify-between gap-1 text-[11px] font-bold text-slate-800 sm:text-xs">{item.title}<span aria-hidden="true" className="text-emerald-700">↗</span></span>
+                <span className="mt-2 block text-[10px] leading-relaxed text-slate-500">{item.detail}</span>
+              </Link>)}
+            </nav>
+          </div>
+          <HomeTrendingCard />
+        </div>
       </div>
     </section>
 
-    <div className="mx-auto max-w-[1400px] px-4 sm:px-6 lg:px-8">
-      <section aria-labelledby="market-heading" className="pt-10 pb-4 sm:pt-12">
+    <div className="mx-auto max-w-[1600px] px-4 sm:px-6 lg:px-8">
+      <section aria-labelledby="market-heading" className="pt-6 pb-4 sm:pt-8">
         <div className="mb-5 flex flex-wrap items-end justify-between gap-3"><div><p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">A quick market check</p><h2 id="market-heading" className="mt-1 text-2xl font-bold tracking-tight">Market today</h2><p className="mt-2 text-xs leading-relaxed text-slate-500">Latest available 30-day changes across tracked products. Check price dates below.</p></div><Link href="/market-movers?period=30d" className="text-xs font-bold text-emerald-700 hover:underline">Explore movers →</Link></div>
         <CacheNotice metadata={cacheMetadata} />
         {error && <div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900"><span>Market and catalog data are temporarily unavailable.</span><button type="button" onClick={() => setAttempt((n) => n + 1)} className="min-h-9 rounded-lg border border-amber-300 px-3 font-bold hover:bg-amber-100">Retry data</button></div>}
@@ -138,9 +156,8 @@ export function LandingPage() {
       </section>
 
       <section aria-labelledby="coverage-heading" className="border-t border-slate-200 py-10 sm:py-12">
-        <div className="mb-5"><h2 id="coverage-heading" className="text-lg font-bold">Behind the collection</h2><p className="mt-2 text-xs leading-relaxed text-slate-500">Counts from our catalog and recorded price observations. Observations are price records, not completed sales.</p></div>
-        <dl className="grid gap-4 sm:grid-cols-3">{[["Catalog products", data?.products], ["Sets", data?.sets], ["Price observations", data?.price_observations]].map(([label, value]) => <div key={String(label)} className="rounded-xl border border-slate-200 bg-white/60 p-4"><dt className="text-[10px] uppercase tracking-wider text-slate-500">{label}</dt><dd className="mt-2 text-2xl font-bold tabular-nums">{typeof value === "number" ? value.toLocaleString("en-US") : loading ? "…" : "Unavailable"}</dd></div>)}</dl>
-        {data && <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 text-[10px] text-slate-500"><p>Catalog updated {dateLabel(data.catalog_updated_at)}</p><p>Latest price observation {dateLabel(data.latest_observation_at)}</p><p>Snapshot calculated {dateLabel(data.calculated_at)} (UTC)</p></div>}
+        <div className="mb-5"><h2 id="coverage-heading" className="text-lg font-bold">Behind the collection</h2><p className="mt-2 text-xs leading-relaxed text-slate-500">The sources behind the catalog, price comparisons, and Pokémon reference data.</p></div>
+        <HomeLiveStats />
         <div className="mt-8 grid gap-5 text-xs leading-relaxed text-slate-500 sm:grid-cols-3"><p><strong className="block text-slate-700">TCG API</strong>Catalog details and per-printing market prices. Availability and price dates vary by product.</p><p><strong className="block text-slate-700">eBay</strong>Matched active listings for price comparisons. Asking prices do not establish completed sales.</p><p><strong className="block text-slate-700">PokéAPI</strong>Species artwork and reference data for exploring the Pokémon behind your cards.</p></div>
       </section>
     </div>

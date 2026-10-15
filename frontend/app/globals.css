@@ -169,3 +169,10 @@ body {
 
 
 
+
+/* Keep mobile search readable without triggering browser focus zoom. */
+@media (max-width: 767px) {
+  input[data-mobile-search] {
+    font-size: 16px;
+  }
+}

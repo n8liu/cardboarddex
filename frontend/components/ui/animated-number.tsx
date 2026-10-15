@@ -9,65 +9,79 @@ interface AnimatedNumberProps {
   className?: string;
 }
 
+const formatCount = (value: number) => Math.round(value).toLocaleString("en-US");
+
 export function AnimatedNumber({
   value,
-  duration = 420,
-  format,
+  duration = 900,
+  format = formatCount,
   className = "",
 }: AnimatedNumberProps) {
-  const [currentValue, setCurrentValue] = useState<number>(() => (isNaN(value) ? 0 : value));
-  const prevValueRef = useRef<number>(isNaN(value) ? 0 : value);
-  const rafIdRef = useRef<number | null>(null);
+  const target = Number.isFinite(value) ? value : 0;
+  const elementRef = useRef<HTMLSpanElement>(null);
+  // Keep server HTML and the first client render identical and useful without JS.
+  const [currentValue, setCurrentValue] = useState(target);
 
   useEffect(() => {
-    const target = isNaN(value) ? 0 : value;
-    const startVal = prevValueRef.current;
-    prevValueRef.current = target;
+    const element = elementRef.current;
+    if (!element) return;
 
-    if (startVal === target) {
+    const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+    let frame: number | null = null;
+    let observer: IntersectionObserver | null = null;
+    let started = false;
+    let disposed = false;
+
+    const finish = () => {
+      if (frame !== null) cancelAnimationFrame(frame);
+      observer?.disconnect();
       setCurrentValue(target);
-      return;
-    }
-
-    // Check for prefers-reduced-motion
-    if (
-      typeof window !== "undefined" &&
-      window.matchMedia &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches
-    ) {
-      setCurrentValue(target);
-      return;
-    }
-
-    let startTime: number | null = null;
-
-    const animate = (timestamp: number) => {
-      if (startTime === null) startTime = timestamp;
-      const elapsed = timestamp - startTime;
-      const progress = Math.min(elapsed / duration, 1);
-
-      // Ease out cubic: 1 - (1 - t)^3
-      const ease = 1 - Math.pow(1 - progress, 3);
-      const nextVal = startVal + (target - startVal) * ease;
-      setCurrentValue(nextVal);
-
-      if (progress < 1) {
-        rafIdRef.current = requestAnimationFrame(animate);
-      } else {
-        setCurrentValue(target);
+    };
+    const onMotionChange = () => {
+      if (motion?.matches) {
+        started = true;
+        finish();
       }
     };
+    const start = () => {
+      if (started || disposed) return;
+      started = true;
+      observer?.disconnect();
+      let startTime: number | null = null;
+      const animate = (timestamp: number) => {
+        if (disposed) return;
+        startTime ??= timestamp;
+        const progress = Math.min((timestamp - startTime) / duration, 1);
+        setCurrentValue(target * (1 - Math.pow(1 - progress, 3)));
+        if (progress < 1) frame = requestAnimationFrame(animate);
+      };
+      frame = requestAnimationFrame(animate);
+    };
 
-    rafIdRef.current = requestAnimationFrame(animate);
-
+    if (motion?.matches || duration <= 0 || !Number.isFinite(duration) || target === 0 || !window.IntersectionObserver) {
+      finish();
+    } else {
+      setCurrentValue(0);
+      observer = new IntersectionObserver((entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) start();
+      }, { threshold: 0.1 });
+      observer.observe(element);
+    }
+    motion?.addEventListener("change", onMotionChange);
     return () => {
-      if (rafIdRef.current !== null) {
-        cancelAnimationFrame(rafIdRef.current);
-      }
+      disposed = true;
+      if (frame !== null) cancelAnimationFrame(frame);
+      observer?.disconnect();
+      motion?.removeEventListener("change", onMotionChange);
     };
-  }, [value, duration]);
+  }, [target, duration]);
 
-  const output = format ? format(currentValue) : Math.round(currentValue).toLocaleString();
-
-  return <span className={`inline-block tabular-nums ${className}`}>{output}</span>;
+  return (
+    <span ref={elementRef} className={`inline-grid tabular-nums ${className}`}>
+      {/* Reserve final width and expose only the real value to assistive tech. */}
+      <span className="invisible col-start-1 row-start-1" aria-hidden="true">{format(target)}</span>
+      <span className="col-start-1 row-start-1" aria-hidden="true">{format(currentValue)}</span>
+      <span className="sr-only">{format(target)}</span>
+    </span>
+  );
 }

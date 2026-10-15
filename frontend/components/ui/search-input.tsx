@@ -44,6 +44,7 @@ export function SearchInput({
       </svg>
 
       <input
+        data-mobile-search
         id={id}
         type="text"
         value={value}

@@ -1,5 +1,7 @@
 "use client";
 
+import { AnimatedNumber } from "@/components/ui/animated-number";
+
 import { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { ShopOnEbayButton, type EbaySearchCardTarget } from "@/components/shop-ebay-button";
@@ -457,7 +459,7 @@ export function PriceDashboard({ pricing, cardMeta }: PriceDashboardProps) {
             )}
           </div>
           <p className="mt-2 text-2xl font-black tracking-tight text-slate-950">
-            {money(tcgPrimary?.price, tcgPrimary?.currency)}
+            {tcgPrimary?.price != null ? <AnimatedNumber value={tcgPrimary.price} format={(value) => money(value, tcgPrimary.currency)} /> : "—"}
           </p>
           {/* 24h / 7d / 30d Momentum Pills */}
           <div className="mt-3 flex flex-wrap gap-1.5">
@@ -498,7 +500,7 @@ export function PriceDashboard({ pricing, cardMeta }: PriceDashboardProps) {
         <div className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">
           <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Lowest Verified (Raw)</p>
           <p className="mt-2 text-2xl font-bold tracking-tight text-slate-950">
-            {money(lowestVerified)}
+            {lowestVerified != null ? <AnimatedNumber value={lowestVerified} format={money} /> : "—"}
           </p>
           <p className="mt-2 truncate text-xs text-slate-400" title={lowestVerifiedSubtitle}>
             {lowestVerifiedSubtitle}
@@ -509,7 +511,7 @@ export function PriceDashboard({ pricing, cardMeta }: PriceDashboardProps) {
         <div className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">
           <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Avg Listing (Raw)</p>
           <p className="mt-2 text-2xl font-bold tracking-tight text-slate-950">
-            {money(avgListingPrice)}
+            {avgListingPrice != null ? <AnimatedNumber value={avgListingPrice} format={money} /> : "—"}
           </p>
           <p className="mt-2 truncate text-xs text-slate-400" title={avgListingSubtitle}>
             {avgListingSubtitle}
@@ -520,7 +522,7 @@ export function PriceDashboard({ pricing, cardMeta }: PriceDashboardProps) {
         <div className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">
           <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Median Listing (Raw)</p>
           <p className="mt-2 text-2xl font-bold tracking-tight text-slate-950">
-            {money(medianListing)}
+            {medianListing != null ? <AnimatedNumber value={medianListing} format={money} /> : "—"}
           </p>
           <p className="mt-2 truncate text-xs text-slate-400" title={medianListingSubtitle}>
             {medianListingSubtitle}
@@ -531,7 +533,7 @@ export function PriceDashboard({ pricing, cardMeta }: PriceDashboardProps) {
         <div className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">
           <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Volatility</p>
           <p className="mt-2 text-2xl font-bold tracking-tight text-slate-950">
-            {volatilityPct !== null ? `±${volatilityPct.toFixed(1)}%` : "—"}
+            {volatilityPct !== null ? <AnimatedNumber value={volatilityPct} format={(value) => `±${value.toFixed(1)}%`} /> : "—"}
           </p>
           <p className="mt-2 truncate text-xs text-slate-400" title={volatilitySubtitle}>
             {volatilitySubtitle}

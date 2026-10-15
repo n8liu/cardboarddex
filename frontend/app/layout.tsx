@@ -7,6 +7,7 @@ import { CommandPalette } from "@/components/command-palette-lazy";
 import { NavHeader } from "@/components/nav-header";
 import { CurrencyProvider } from "@/context/currency-context";
 import { BinderProvider } from "@/context/binder-context";
+import { MobileSearchFocus } from "@/components/mobile-search-focus";
 import "./globals.css";
 
 
@@ -39,6 +40,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           <BinderProvider>
             <CommandPalette />
             <NavHeader />
+            <MobileSearchFocus />
             {children}
             <footer className="border-t border-slate-200 bg-white">
               <div className="mx-auto max-w-[1600px] px-5 py-8 text-xs text-slate-500 sm:px-8">

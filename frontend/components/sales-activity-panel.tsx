@@ -22,6 +22,13 @@ export function SalesActivityPanel({ compact = false, query = "" }: { compact?: 
     <p className="mt-2 text-xs leading-relaxed text-slate-500">TCG API reported sales across synced products and printings. Missing days are unknown; the newest 1–3 days may be incomplete.</p>
     {error ? <p role="alert" className="mt-4 text-sm text-rose-700">{error} <button onClick={() => setRetry((n) => n + 1)} className="underline">Retry</button></p> : !data ? <p role="status" className="py-6 text-sm text-slate-500">Loading reported sales…</p> : <>
       <p className="my-4 text-sm text-slate-700">{data.total_sales == null ? "Sales data unavailable for this selection." : `${data.total_sales.toLocaleString()} reported sales · ${data.products_with_sales_data} products with data`}</p>
+      {data.total_sales == null && <p className="mb-4 text-xs leading-relaxed text-slate-500">{
+        data.status === "not_synced" || (!data.status && !data.synced_at && !query.trim())
+          ? "Sales history has not been synced yet. Rankings will appear when reported sales are available."
+          : data.status === "no_matches" || query.trim()
+            ? "No reported sales match this search and period. Try another product, set, or period."
+            : "No sales counts were reported in this period. Missing sales data does not mean zero sales."
+      }</p>}
       {data.synced_at && <p className="mb-3 text-[11px] text-slate-500">Last history sync {data.synced_at.slice(0, 10)} · Window {data.start} – {data.end}</p>}
       <ol className="space-y-2">{data.items.slice(0, compact ? 15 : 50).map((item, index) => <li key={item.card_id}><Link href={`/cards/${encodeURIComponent(item.card_id)}`} prefetch={false} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3 hover:border-emerald-500"><div className="min-w-0"><p className="text-sm font-semibold text-slate-900">{index + 1}. {item.name}</p><p className="mt-1 text-[11px] text-slate-500">{item.set_name} · Latest reported day {item.last_reported_day}</p></div><span className="shrink-0 text-sm font-bold text-emerald-800">{item.sales.toLocaleString()} sales</span></Link></li>)}</ol>
     </>}
