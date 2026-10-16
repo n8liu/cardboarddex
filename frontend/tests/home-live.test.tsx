@@ -1,5 +1,7 @@
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { PokedexLiveStats } from "@/components/pokedex-live-stats";
+import { POKEDEX_DATA } from "@/lib/pokedex-data";
 import { HomeLiveStats } from "@/components/home-live-stats";
 import { HomeTrendingCard } from "@/components/home-trending-card";
 import { getHomeStats, getTrendingDashboard } from "@/lib/api";
@@ -59,4 +61,22 @@ it("does not overlap requests and aborts an outstanding refresh on unmount", asy
   const signal = vi.mocked(getHomeStats).mock.calls[0][0];
   unmount();
   expect(signal?.aborted).toBe(true);
+});
+
+
+it("uses live collection counts and the registry species count in the Pokedex", async () => {
+  render(<PokedexLiveStats />);
+  expect(await screen.findByText("1,000", { selector: ".sr-only" })).toBeInTheDocument();
+  expect(screen.getByText(POKEDEX_DATA.length.toLocaleString("en-US"), { selector: ".sr-only" })).toBeInTheDocument();
+  expect(screen.getByText("100", { selector: ".sr-only" })).toBeInTheDocument();
+  expect(screen.getByText("10", { selector: ".sr-only" })).toBeInTheDocument();
+  expect(screen.queryByText("54,480+")).not.toBeInTheDocument();
+  expect(screen.queryByText("17,400+")).not.toBeInTheDocument();
+});
+
+it("does not invent Pokedex totals while the live request is pending", () => {
+  vi.mocked(getHomeStats).mockImplementation(() => new Promise(() => {}));
+  render(<PokedexLiveStats />);
+  expect(screen.getAllByText("…")).toHaveLength(3);
+  expect(screen.getByText(POKEDEX_DATA.length.toLocaleString("en-US"), { selector: ".sr-only" })).toBeInTheDocument();
 });

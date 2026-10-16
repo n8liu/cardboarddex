@@ -89,15 +89,15 @@ function GradeBadge({ item }: { item: LiveUpdateItem }) {
   );
 }
 
-function LiveUpdateRow({ item }: { item: LiveUpdateItem }) {
+function LiveUpdateRow({ item, grid = false }: { item: LiveUpdateItem; grid?: boolean }) {
   const [imageFailed, setImageFailed] = useState(false);
   const isEbay = item.provider.toLowerCase().includes("ebay");
 
   return (
-    <div className="group relative flex flex-col justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs transition duration-150 hover:border-slate-300 hover:bg-slate-50/60 hover:shadow-md sm:flex-row sm:items-center">
+    <div className={`group relative flex min-w-0 flex-col justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-xs transition duration-150 hover:border-slate-300 hover:bg-slate-50/60 hover:shadow-md ${grid ? "" : "sm:flex-row sm:items-center sm:p-4"}`}>
       {/* Left: Thumbnail & Card Details */}
-      <div className="flex min-w-0 items-center gap-3.5">
-        <div className="relative h-14 w-10 shrink-0 overflow-hidden rounded-lg bg-slate-100 p-0.5 shadow-xs">
+      <div className={`flex min-w-0 gap-3.5 ${grid ? "flex-col" : "items-center"}`}>
+        <div className={`relative shrink-0 overflow-hidden rounded-lg bg-slate-100 p-0.5 shadow-xs ${grid ? "aspect-[5/7] w-full" : "h-14 w-10"}`}>
           {imageFailed ? (
             <div className="flex h-full w-full items-center justify-center bg-slate-100 text-xs font-bold text-slate-400">
               {item.card_name.slice(0, 1).toUpperCase()}
@@ -108,7 +108,7 @@ function LiveUpdateRow({ item }: { item: LiveUpdateItem }) {
               alt={item.card_name}
               fill
               className="object-contain transition group-hover:scale-105"
-              sizes="40px"
+              sizes={grid ? "(min-width: 1536px) 230px, (min-width: 1280px) 200px, (min-width: 1024px) 23vw, (min-width: 640px) 30vw, 45vw" : "40px"}
               onError={() => setImageFailed(true)}
             />
           )}
@@ -119,7 +119,7 @@ function LiveUpdateRow({ item }: { item: LiveUpdateItem }) {
             <Link
               href={`/cards/${encodeURIComponent(item.card_id)}`}
               prefetch={false}
-              className="truncate text-sm font-bold text-slate-950 transition hover:text-emerald-700 hover:underline"
+              className="line-clamp-2 text-xs font-bold text-slate-950 transition hover:text-emerald-700 hover:underline sm:text-sm"
             >
               {item.card_name}
             </Link>
@@ -147,12 +147,12 @@ function LiveUpdateRow({ item }: { item: LiveUpdateItem }) {
       </div>
 
       {/* Right: Price, Source & Link */}
-      <div className="flex shrink-0 items-center justify-between gap-4 border-t border-slate-100 pt-2 sm:flex-col sm:items-end sm:border-t-0 sm:pt-0">
-        <div className="text-left sm:text-right">
+      <div className={`flex shrink-0 gap-3 border-t border-slate-100 pt-2 ${grid ? "flex-col" : "items-center justify-between sm:flex-col sm:items-end sm:border-t-0 sm:pt-0"}`}>
+        <div className={grid ? "text-left" : "text-left sm:text-right"}>
           <div className="text-base font-black tracking-tight text-slate-950">
             {formatMoney(item.price)}
           </div>
-          <div className="flex items-center gap-1.5 text-[10px] font-medium text-slate-400">
+          <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-medium text-slate-400">
             <span
               className={`inline-block h-1.5 w-1.5 rounded-full ${
                 isEbay ? "bg-sky-500" : "bg-emerald-500"
@@ -164,7 +164,7 @@ function LiveUpdateRow({ item }: { item: LiveUpdateItem }) {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {item.listing_url && (item.listing_url.startsWith("https://") || item.listing_url.startsWith("http://")) && (
             <a
               href={item.listing_url}
@@ -487,13 +487,14 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
                     ? "bg-white font-bold text-slate-950 shadow-xs"
                     : "text-slate-600 hover:text-slate-900"
                 }`}
-                title="Side-by-side (2 columns)"
+                title="Catalog-style grid"
+                aria-pressed={viewMode === "side-by-side"}
               >
                 <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="currentColor">
                   <rect x="1" y="2" width="6" height="12" rx="1.5" />
                   <rect x="9" y="2" width="6" height="12" rx="1.5" />
                 </svg>
-                <span>Side by Side</span>
+                <span>Grid</span>
               </button>
               <button
                 type="button"
@@ -504,6 +505,7 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
                     : "text-slate-600 hover:text-slate-900"
                 }`}
                 title="Full-width list (1 column)"
+                aria-pressed={viewMode === "stacked"}
               >
                 <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="currentColor">
                   <rect x="1" y="2" width="14" height="5" rx="1" />
@@ -585,14 +587,14 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
       <div
         className={
           viewMode === "side-by-side"
-            ? "mt-6 grid grid-cols-1 gap-3.5 lg:grid-cols-2"
+            ? "mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6"
             : "mt-6 space-y-2.5"
         }
       >
         {isLoading ? (
           viewMode === "side-by-side" ? (
             Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="h-24 w-full animate-pulse rounded-2xl bg-slate-200/70" />
+              <div key={i} className="aspect-[3/5] w-full animate-pulse rounded-2xl bg-slate-200/70" />
             ))
           ) : (
             Array.from({ length: 8 }).map((_, i) => (
@@ -612,7 +614,7 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
             />
           </div>
         ) : (
-          items.map((item) => <LiveUpdateRow key={item.id} item={item} />)
+          items.map((item) => <LiveUpdateRow key={item.id} item={item} grid={viewMode === "side-by-side"} />)
         )}
       </div>
 

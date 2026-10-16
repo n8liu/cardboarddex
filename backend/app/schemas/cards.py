@@ -122,6 +122,9 @@ class CardPricingResponse(BaseModel):
     provider_states: list[ProviderPricingState]
     observations: list[PriceObservationItem]
     avg_listing_price: float | None = None
+    median_listing_price: float | None = None
+    listing_sample_count: int = 0
+    tcg_market_prices: list[PriceObservationItem] = Field(default_factory=list)
 
 
 class GradingProfitItem(BaseModel):

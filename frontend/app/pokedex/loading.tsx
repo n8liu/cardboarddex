@@ -32,19 +32,19 @@ export default function PokedexLoading() {
 
             <div className="flex flex-wrap items-center gap-2.5 text-xs font-semibold">
               <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 shadow-2xs">
-                <span className="text-emerald-700 font-mono text-sm font-bold">1,025</span>
+                <span className="text-emerald-700 font-mono text-sm font-bold">…</span>
                 <span className="text-slate-600">Pokémon</span>
               </div>
               <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 shadow-2xs">
-                <span className="text-cyan-700 font-mono text-sm font-bold">54,480+</span>
+                <span className="text-cyan-700 font-mono text-sm font-bold">…</span>
                 <span className="text-slate-600">Cards Tracked</span>
               </div>
               <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 shadow-2xs">
-                <span className="text-amber-700 font-mono text-sm font-bold">482</span>
+                <span className="text-amber-700 font-mono text-sm font-bold">…</span>
                 <span className="text-slate-600">Sets Indexed</span>
               </div>
               <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 shadow-2xs">
-                <span className="text-indigo-700 font-mono text-sm font-bold">17,400+</span>
+                <span className="text-indigo-700 font-mono text-sm font-bold">…</span>
                 <span className="text-slate-600">Verified Comps</span>
               </div>
             </div>

@@ -236,48 +236,56 @@ def get_card_prices(
 
     obs_items = [_build_obs_item(item) for item in observations]
 
-    avg_listing_price: float | None = None
-    latest_by_variant: dict[str, PriceObservationItem] = {}
-    for item in obs_items:
-        key = f"{item.provider}:{item.variant_id}:{item.provider_card_id}"
-        if key not in latest_by_variant:
-            latest_by_variant[key] = item
-    latest_items = list(latest_by_variant.values())
+    # Current provider snapshots are separate from deduplicated historical comps.
+    # A flat market price can still have newly reported momentum percentages.
+    tcg_market_prices = []
+    tcg_state = next((state for state in states if state.provider == "tcgapi" and state.match_status == "matched"), None)
+    if tcg_state and isinstance(tcg_state.payload, dict):
+        prices_payload = tcg_state.payload.get("prices")
+        rows = prices_payload.get("data") if isinstance(prices_payload, dict) else None
+        rows = [rows] if isinstance(rows, dict) else rows if isinstance(rows, list) else []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            def finite_field(name):
+                raw = row.get(name)
+                if raw is None:
+                    return None
+                try:
+                    number = float(raw)
+                except (ValueError, TypeError) as exc:
+                    logger.warning("Invalid current TCG field card_id=%s field=%s error=%s: %s", card_id, name, type(exc).__name__, exc)
+                    return None
+                return number if math.isfinite(number) else None
+            price = finite_field("market_price")
+            if price is None or price <= 0:
+                continue
+            printing = str(row.get("printing") or "Standard")
+            tcg_market_prices.append(PriceObservationItem(
+                provider="tcgapi", provider_card_id=tcg_state.provider_card_id or card_id,
+                variant_id=f"{card_id}:{printing}", condition=None, printing=printing,
+                grading_company=None, grade=None, price=price, currency="USD",
+                observed_at=tcg_state.last_synced_at, provider_updated_at=_parse_iso_datetime(row.get("last_updated_at")),
+                price_change_24h=finite_field("price_change_24h"),
+                price_change_7d=finite_field("price_change_7d"),
+                price_change_30d=finite_field("price_change_30d"),
+            ))
 
-    raw_ebay_prices = [
-        item.price
-        for item in latest_items
-        if item.provider == "ebay" and item.grading_company is None and item.price > 0
-    ]
-    if raw_ebay_prices:
-        # Trim extreme asking-price outliers using IQR filtering
-        trimmed_ebay_prices = _trim_outliers_iqr(raw_ebay_prices)
-        avg_listing_price = round(sum(trimmed_ebay_prices) / len(trimmed_ebay_prices), 2)
-    else:
-        tcg_state = next((s for s in states if s.provider == "tcgapi" and isinstance(s.payload, dict)), None)
-        if tcg_state and isinstance(tcg_state.payload, dict):
-            card_payload = tcg_state.payload.get("card") or {}
-            variants_list = card_payload.get("variants") or []
-            valid_tcg_prices: list[float] = []
-            for v in variants_list:
-                if isinstance(v, dict):
-                    m_p = v.get("market_price")
-                    if m_p is not None and float(m_p) > 0:
-                        valid_tcg_prices.append(float(m_p))
-                    elif v.get("low_price") is not None and float(v.get("low_price")) > 0:
-                        valid_tcg_prices.append(float(v.get("low_price")))
-            if valid_tcg_prices:
-                avg_listing_price = round(sum(valid_tcg_prices) / len(valid_tcg_prices), 2)
-
-        if avg_listing_price is None:
-            tcg_prices: list[float] = []
-            for item in latest_items:
-                if item.provider == "tcgapi":
-                    if item.median_price is not None:
-                        tcg_prices.append(item.median_price)
-                    elif item.low_price is not None:
-                        tcg_prices.append(item.low_price)
-            avg_listing_price = round(sum(tcg_prices) / len(tcg_prices), 2) if tcg_prices else None
+    now = datetime.now(UTC)
+    recent_listings = db.scalars(select(PriceObservation).where(
+        PriceObservation.card_id == card_id, PriceObservation.provider.ilike("%ebay%"),
+        PriceObservation.grading_company.is_(None), PriceObservation.currency == "USD",
+        PriceObservation.price > 0, PriceObservation.observed_at >= now - timedelta(days=7),
+        PriceObservation.observed_at <= now,
+    ).order_by(PriceObservation.observed_at.desc(), PriceObservation.id.desc()))
+    # Count each listing once, using its latest observed price within the window.
+    prices_by_listing = {}
+    for listing in recent_listings:
+        prices_by_listing.setdefault((listing.provider, listing.provider_card_id), float(listing.price))
+    prices = sorted(prices_by_listing.values())
+    count = len(prices)
+    avg_listing_price = round(sum(prices) / count, 2) if count else None
+    median_listing_price = (prices[count // 2] if count % 2 else (prices[count // 2 - 1] + prices[count // 2]) / 2) if count else None
 
     return CardPricingResponse(
         card_id=card_id,
@@ -288,6 +296,9 @@ def get_card_prices(
         ) for item in states],
         observations=obs_items,
         avg_listing_price=avg_listing_price,
+        median_listing_price=median_listing_price,
+        listing_sample_count=count,
+        tcg_market_prices=tcg_market_prices,
     )
 
 

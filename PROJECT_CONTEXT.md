@@ -91,9 +91,21 @@ Catalog image responses use `/cards/{id}/image`. The backend downloads provider 
 | Pokédex data and species details | [frontend/lib/pokedex-data.ts](frontend/lib/pokedex-data.ts), [frontend/lib/pokeapi.ts](frontend/lib/pokeapi.ts) |
 | Deployment workflows | [.github/workflows/backend-ci-cd.yml](.github/workflows/backend-ci-cd.yml), [.github/workflows/frontend-ci-cd.yml](.github/workflows/frontend-ci-cd.yml) |
 
+## Card-profile pricing corrections and Live Comps grid (local, 2026-10-15)
+
+- Card pricing now returns `tcg_market_prices` from the latest matched `ProviderCardState.payload.prices.data` snapshot. The market price and 24h/7d/30d changes come from the same printing in that response. This fixes stale momentum when unchanged prices suppress new historical observations. Null/missing percentages are not backfilled; eBay observations never substitute for TCG market data. Existing historical observations remain unchanged, and opening a profile makes no provider requests.
+- `avg_listing_price`, `median_listing_price`, and `listing_sample_count` use unique raw USD eBay listing IDs observed within the trailing seven days, excluding future observations, nonpositive prices, non-USD prices, and graded listings. Repeated listing observations use the latest price once, independently of the history-chart window. No outlier trimming or TCG fallback is applied. UI labels explicitly state 7d; lowest listing and volatility retain their existing scope. No Cards/Sets schema changes.
+- Live Comps defaults to a responsive 2/3/4/6-column artwork grid, showing six cards per row at widths of 1280px and above with price, provider, time, condition/grade, and links in each card. The optional full-width list, URL state, filtering, polling, and infinite pagination remain.
+- Validation: 128 frontend tests, 57 focused backend tests, TypeScript, production build, and diff checks passed. Provider-data verification and deployment were not performed. Deploy the backend pricing-response additions before the frontend; the frontend intentionally does not fall back to old observation percentages when current snapshot fields are absent.
+
+## Pokédex live totals (local, 2026-10-15)
+
+- Pokédex header counts now use `AnimatedNumber` for species, tracked catalog products, indexed sets, and comps. Species count comes from `POKEDEX_DATA.length`; other totals come from `/home/stats`, sharing the homepage and unfiltered Live Comps count source.
+- `useLiveCollectionStats` centralizes the existing homepage polling behavior for both pages: 60-second visible-tab refresh, refresh on return, no overlapping requests, abort on hide/unmount, and retained prior values with retry on errors. The Pokédex route loading shell uses placeholders instead of obsolete hardcoded totals. No new provider calls or backend changes. Local verification: all 130 frontend tests, TypeScript, production build, and diff checks passed; not deployed.
+
 ## Homepage live totals and trending feature (local, 2026-10-14)
 
-- Fuller opening layout: the homepage uses a 1600px content width, reduced hero padding/gaps, and compact Trending, Live Comps, and Sealed Signals shortcuts under the main actions. The left hero column now uses its full available width for search and shortcuts, with a larger fluid desktop headline; this removes the unused space caused by nested 672px width caps. Market today begins closer to the hero. The enlarged artwork and lower-page totals retain their existing behavior.
+- Fuller opening layout: the homepage uses a 1600px content width, reduced hero padding/gaps, and compact Trending, Live Comps, and Sealed Signals shortcuts under the main actions. The left hero column uses its full available width for shortcuts, with a larger fluid desktop headline; the homepage search bar uses 75% of that column on desktop and full width on mobile; this removes the unused space caused by nested 672px width caps. Market today begins closer to the hero. The enlarged artwork and lower-page totals retain their existing behavior.
 
 - The three animated collection totals appear in their original “Behind the collection” section at the bottom of the homepage. `HomeLiveStats` fetches `/home/stats` independently of the cached market overview, refreshes every 60 seconds while visible, and refreshes when returning to the tab. Requests do not overlap; hidden/unmounted reads are aborted. Failed refreshes retain the last counts with an explicit retry state.
 - `/home/stats` reads current product/set totals from the database. Its price-observation total uses `live_observation_count`, the same joined query and 60-second Redis count key as unfiltered Live Comps. Neither endpoint makes provider requests. Filtered Live Comps counts still reflect their filters; snapshots fetched at different times can differ.
@@ -103,6 +115,8 @@ Catalog image responses use `/cards/{id}/image`. The backend downloads provider 
 
 ## Mobile search positioning (local, 2026-10-14)
 
+- Catalog filters (quick chips and Browse sidebar) are collapsed by default below 1024px behind an accessible Show/Hide filters button. Focusing the catalog search collapses them again without resetting filter selections. Desktop keeps both visible.
+
 - At widths below 768px, focusing page search aligns the input eight pixels below the actual sticky header. Homepage autocomplete, catalog search, shared dashboard/species search, and Pokédex search opt in via `data-mobile-search`; dialog searches and desktop are excluded.
 - `MobileSearchFocus` handles focus centrally in the root layout, adjusts during the first 700 ms of keyboard opening using VisualViewport resize events, and stops repositioning afterward. Blur/unmount cancels listeners and timers. Autocomplete's scrollable suggestions use the remaining visible viewport height. Mobile search text is 16px to avoid browser focus zoom.
 - Local verification: all 119 frontend tests passed, including six mobile-focus tests for alignment, viewport sizing, desktop/modal exclusions, and cleanup; TypeScript, production build, and diff checks passed. Real-device keyboard behavior and production deployment remain unverified.
@@ -111,7 +125,7 @@ Catalog image responses use `/cards/{id}/image`. The backend downloads provider 
 
 - Sealed Signals now follows Grading Profitability’s product-card layout: side-by-side newer/older sections on desktop, each with two product columns from 1280px (four total); narrower desktop uses one product column per era, and mobile stacks the sections, rounded cards, rank/type/signal badges, 112×160px mobile and 144×208px larger artwork, and separate market-price/growth panels. Each era retains independent rankings, pagination, errors, and loading; history and purchase-return controls remain in each card’s disclosure.
 
-- Larger dashboard artwork: Sealed Signals and Grading Profitability images are 112×160px on mobile and 144×208px from 640px. Images retain object-contain sizing so the full product remains visible.
+- Larger dashboard artwork: Sealed Signals, Grading Profitability, and Market Movers card images are 112×160px on mobile and 144×208px from 640px. Market Movers table thumbnails are 56×80px on mobile and 64×96px from 640px; its side-by-side gainers/drops grids use one product per era column at narrow desktop widths and two at 1280px+. Images retain object-contain sizing so the full product remains visible.
 
 - Movers cards and table rows, and Sealed Signals rows, now show previous → comparison price and signed monetary change alongside the selected-period percentage. Provider-percentage reversals are explicitly labeled “Est. previous”; missing/invalid baselines remain unavailable. Movers returns these fields from stored data only.
 - Sealed comparisons use actual matching-printing history endpoints when a complete 30/90-day window exists. The historical ending price is kept separate from today's market quote, avoiding mismatched dollar/percentage changes. Provider-only 30-day changes use an estimated baseline. Response/service cache versions were bumped for the new fields. No database tables or migrations changed.

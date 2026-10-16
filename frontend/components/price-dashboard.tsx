@@ -260,8 +260,8 @@ export function PriceDashboard({ pricing, cardMeta }: PriceDashboardProps) {
   const latest = useMemo(() => latestByVariant(pricing.observations), [pricing.observations]);
   const primaryRaw = useMemo(() => choosePrimaryRaw(latest), [latest]);
   const tcgPrimary = useMemo(
-    () => latest.find((item) => item.provider === "tcgapi") ?? primaryRaw,
-    [latest, primaryRaw],
+    () => choosePrimaryRaw((pricing.tcg_market_prices ?? []).filter((item) => item.provider === "tcgapi")),
+    [pricing.tcg_market_prices],
   );
 
   const psaTen = latest
@@ -291,25 +291,12 @@ export function PriceDashboard({ pricing, cardMeta }: PriceDashboardProps) {
     lowestVerifiedSubtitle = `Lowest of ${rawEbayPrices.length} raw eBay listing${rawEbayPrices.length === 1 ? "" : "s"}`;
   }
 
-  // 2. Avg Listing Price (Raw eBay Only)
-  let avgListingPrice: number | null = null;
-  let avgListingSubtitle = "No raw eBay listings recorded";
-  if (rawEbayPrices.length > 0) {
-    avgListingPrice = rawEbayPrices.reduce((sum, p) => sum + p, 0) / rawEbayPrices.length;
-    avgListingSubtitle = `Mean of ${rawEbayPrices.length} raw eBay listing${rawEbayPrices.length === 1 ? "" : "s"}`;
-  }
-
-  // 3. Median Listing (Raw eBay Only)
-  let medianListing: number | null = null;
-  let medianListingSubtitle = "No raw eBay listings recorded";
-  if (rawEbayPrices.length > 0) {
-    const mid = Math.floor(rawEbayPrices.length / 2);
-    medianListing =
-      rawEbayPrices.length % 2 !== 0
-        ? rawEbayPrices[mid]
-        : (rawEbayPrices[mid - 1] + rawEbayPrices[mid]) / 2;
-    medianListingSubtitle = `Midpoint of ${rawEbayPrices.length} raw eBay listing${rawEbayPrices.length === 1 ? "" : "s"}`;
-  }
+  // Both summaries use the server's seven-day window and one price per listing.
+  const avgListingPrice = pricing.avg_listing_price ?? null;
+  const medianListing = pricing.median_listing_price ?? null;
+  const sampleCount = pricing.listing_sample_count ?? 0;
+  const avgListingSubtitle = sampleCount ? `Mean of ${sampleCount} raw USD eBay listings observed in the past 7 days` : "No raw USD eBay listings observed in the past 7 days";
+  const medianListingSubtitle = sampleCount ? `Median of ${sampleCount} raw USD eBay listings observed in the past 7 days` : "No raw USD eBay listings observed in the past 7 days";
 
   // 4. Volatility Value (Replaces Store Buylist)
   // Calculates price dispersion (Coefficient of Variation CV = stdDev / mean) across active comps
@@ -413,7 +400,7 @@ export function PriceDashboard({ pricing, cardMeta }: PriceDashboardProps) {
 
   const displayedVariants = showAllVariants ? sortedVariants : sortedVariants.slice(0, 15);
 
-  if (pricing.observations.length === 0) {
+  if (pricing.observations.length === 0 && !tcgPrimary) {
     return (
       <section className="mt-8 border-t border-stone-200 pt-6 sm:mt-10 sm:pt-8">
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-lime-700">Market data</p>
@@ -509,7 +496,7 @@ export function PriceDashboard({ pricing, cardMeta }: PriceDashboardProps) {
 
         {/* Avg Listing Price (Raw eBay only) */}
         <div className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Avg Listing (Raw)</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Avg Listing (Raw, 7d)</p>
           <p className="mt-2 text-2xl font-bold tracking-tight text-slate-950">
             {avgListingPrice != null ? <AnimatedNumber value={avgListingPrice} format={money} /> : "—"}
           </p>
@@ -520,7 +507,7 @@ export function PriceDashboard({ pricing, cardMeta }: PriceDashboardProps) {
 
         {/* Median Listing (Raw eBay only) */}
         <div className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Median Listing (Raw)</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Median Listing (Raw, 7d)</p>
           <p className="mt-2 text-2xl font-bold tracking-tight text-slate-950">
             {medianListing != null ? <AnimatedNumber value={medianListing} format={money} /> : "—"}
           </p>

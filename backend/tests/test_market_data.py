@@ -302,3 +302,45 @@ def test_sales_status_search_and_scoped_sync(db):
     empty = service.sales_activity(db, q="missing")
     assert empty["status"] == "no_matches"
     assert empty["synced_at"] is None
+
+
+def test_profile_uses_current_tcg_percentages_without_rewriting_history(db):
+    from fastapi import Response
+    from app.routers.cards import get_card_prices
+    now = datetime.now(UTC)
+    db.add(PriceObservation(card_id="box", provider="tcgapi", provider_card_id="box", variant_id="normal", printing="Normal", fingerprint="old-momentum", price=100,
+        observed_at=now - timedelta(days=10), payload={"price_change_24h": 1, "price_change_7d": 75, "price_change_30d": 90}))
+    db.add(ProviderCardState(card_id="box", provider="tcgapi", match_status="matched", last_synced_at=now, payload={"prices": {"data": [
+        {"printing": "Normal", "market_price": 100, "price_change_24h": 1, "price_change_7d": -4, "price_change_30d": None},
+        {"printing": "Foil", "market_price": 200, "price_change_7d": 40, "price_change_30d": 50},
+    ]}}))
+    db.commit()
+    result = get_card_prices("box", Response(), days=365, db=db)
+    quote = result.tcg_market_prices[0]
+    assert quote.price == 100
+    assert quote.price_change_24h == 1
+    assert quote.price_change_7d == -4
+    assert quote.price_change_30d is None
+    assert result.observations[0].price_change_30d == 90
+    assert result.avg_listing_price is None
+    assert result.median_listing_price is None
+
+
+def test_profile_seven_day_raw_usd_listing_sample(db):
+    from fastapi import Response
+    from app.routers.cards import get_card_prices
+    now = datetime.now(UTC)
+    for index, (listing, price, days, currency, graded) in enumerate([
+        ("a", 10, 2, "USD", False), ("a", 20, 1, "USD", False),
+        ("b", 40, 6, "USD", False), ("c", 10000, 8, "USD", False),
+        ("d", 900, 1, "USD", True), ("e", 800, 1, "EUR", False),
+        ("f", 700, -1, "USD", False),
+    ]):
+        db.add(PriceObservation(card_id="box", provider="ebay", provider_card_id=listing, variant_id=f"variant-{index}", fingerprint=f"listing-{index}", price=price,
+            observed_at=now - timedelta(days=days), currency=currency, grading_company="PSA" if graded else None))
+    db.commit()
+    result = get_card_prices("box", Response(), days=1, db=db)
+    assert result.listing_sample_count == 2
+    assert result.avg_listing_price == 30
+    assert result.median_listing_price == 30
+    assert result.tcg_market_prices == []

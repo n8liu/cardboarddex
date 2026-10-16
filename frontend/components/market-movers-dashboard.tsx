@@ -68,7 +68,7 @@ function MoverCard({ item }: { item: MarketMoverItem }) {
     >
       <div className="flex gap-3.5">
         {/* Card Image Thumbnail */}
-        <div className="relative h-24 w-18 shrink-0 overflow-hidden rounded-xl border border-slate-100 bg-slate-50 p-1">
+        <div className="relative h-40 w-28 shrink-0 sm:h-52 sm:w-36 overflow-hidden rounded-xl border border-slate-100 bg-slate-50 p-1">
           {imageFailed ? (
             <div className="flex h-full w-full items-center justify-center text-xs font-bold text-slate-400">
               {item.name.slice(0, 1).toUpperCase()}
@@ -81,7 +81,7 @@ function MoverCard({ item }: { item: MarketMoverItem }) {
               className="object-contain transition duration-200 group-hover:scale-105"
               placeholder="blur"
               blurDataURL={shimmerBlurDataUrl(80, 110)}
-              sizes="80px"
+              sizes="(min-width: 640px) 144px, 112px"
               onError={() => setImageFailed(true)}
             />
           )}
@@ -166,7 +166,7 @@ function MoverTableRow({ item, rank }: { item: MarketMoverItem; rank?: number })
           prefetch={false}
           className="flex items-center gap-2.5 focus:outline-none"
         >
-          <div className="relative h-11 w-8 shrink-0 overflow-hidden rounded border border-slate-100 bg-slate-50">
+          <div className="relative h-20 w-14 shrink-0 sm:h-24 sm:w-16 overflow-hidden rounded border border-slate-100 bg-slate-50">
             {imageFailed ? (
               <div className="flex h-full w-full items-center justify-center text-[10px] font-bold text-slate-400">
                 {item.name.slice(0, 1).toUpperCase()}
@@ -179,7 +179,7 @@ function MoverTableRow({ item, rank }: { item: MarketMoverItem; rank?: number })
                 className="object-contain"
                 placeholder="blur"
                 blurDataURL={shimmerBlurDataUrl(80, 110)}
-                sizes="40px"
+                sizes="(min-width: 640px) 64px, 56px"
                 onError={() => setImageFailed(true)}
               />
             )}
@@ -774,7 +774,7 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
               ) : layoutMode === "table" ? (
                 <MoverTableList items={filteredGainers} />
               ) : (
-                <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
                   {filteredGainers.map((item) => (
                     <MoverCard key={`gain-${item.card_id}-${item.printing}`} item={item} />
                   ))}
@@ -803,7 +803,7 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
               ) : layoutMode === "table" ? (
                 <MoverTableList items={filteredLosers} />
               ) : (
-                <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
                   {filteredLosers.map((item) => (
                     <MoverCard key={`loss-${item.card_id}-${item.printing}`} item={item} />
                   ))}

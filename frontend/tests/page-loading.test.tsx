@@ -132,3 +132,30 @@ it("pauses Live Comps in hidden tabs, resumes immediately, and avoids overlappin
     expect(api.getLiveUpdates).toHaveBeenCalledTimes(2);
   } finally { cleanup(); hidden.mockRestore(); vi.useRealTimers(); }
 });
+
+it("collapses catalog filters by default and again when mobile search is focused", async () => {
+  vi.stubGlobal("innerWidth", 390);
+  render(await CatalogPage({ searchParams: Promise.resolve({}) }));
+  const toggle = screen.getByRole("button", { name: "Show filters" });
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  fireEvent.click(toggle);
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
+  fireEvent.focus(screen.getByRole("searchbox"));
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  expect(document.getElementById("catalog-browse-filters")).toHaveClass("hidden", "lg:block");
+  expect(document.getElementById("catalog-quick-filters")).toHaveClass("hidden", "lg:flex");
+});
+
+it("renders Live Comps as a catalog grid and allows switching to the list", async () => {
+  vi.mocked(api.getLiveUpdates).mockResolvedValue({
+    page: 1, per_page: 24, total_items: 1, total_pages: 1, provider_filter: "all", grade_filter: "all",
+    total_ebay_updates: 1, total_tcg_updates: 0, graded_updates_count: 0, updated_at: "2026-10-15",
+    items: [{ id: "comp", card_id: "card", card_name: "Grid card", set_id: "set", set_name: "Test set", image_url: "/image", provider: "ebay", price: 20, currency: "USD", observed_at: "2026-10-15" }],
+  });
+  render(LivePage());
+  expect(await screen.findByRole("link", { name: "Grid card" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Grid" })).toHaveAttribute("aria-pressed", "true");
+  fireEvent.click(screen.getByRole("button", { name: "Full Width" }));
+  expect(screen.getByRole("button", { name: "Full Width" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("link", { name: "Grid card" })).toHaveAttribute("href", "/cards/card");
+});

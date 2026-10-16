@@ -90,6 +90,7 @@ export function CatalogBrowser({
   };
 
   const [query, setQuery] = useState(initialQuery);
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [setId, setSetId] = useState(initialSetId);
   const [sortBy, setSortBy] = useState<CardSort>(initialSortBy);
   const [hideSealed, setHideSealed] = useState(initialHideSealed);
@@ -347,7 +348,11 @@ export function CatalogBrowser({
 
   return (
     <section className="mx-auto min-w-0 max-w-[1600px] px-4 pb-14 pt-10 sm:px-6 sm:pt-14 lg:px-8">
-      <div className="max-w-4xl">
+      <div className="max-w-4xl" onFocusCapture={(event) => {
+        if (window.innerWidth < 1024 && event.target instanceof HTMLInputElement && event.target.type === "search") {
+          setMobileFiltersOpen(false);
+        }
+      }}>
         <SearchForm
           isSearching={isSearching}
           onClear={() => setQuery("")}
@@ -355,8 +360,12 @@ export function CatalogBrowser({
           query={query}
         />
 
+        <button type="button" aria-expanded={mobileFiltersOpen} aria-controls="catalog-quick-filters catalog-browse-filters" onClick={() => setMobileFiltersOpen((open) => !open)} className="mt-3 min-h-10 rounded-lg border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700 lg:hidden">
+          {mobileFiltersOpen ? "Hide filters" : "Show filters"}
+        </button>
+
         {/* Quick Filter Chips */}
-        <div className="mt-3 flex flex-wrap items-center gap-1.5 font-mono text-xs">
+        <div id="catalog-quick-filters" className={`${mobileFiltersOpen ? "flex" : "hidden"} mt-3 flex-wrap items-center gap-1.5 font-mono text-xs lg:flex`}>
           <span className="text-slate-400 text-[11px] uppercase tracking-wider font-semibold mr-1">
             Filter:
           </span>
@@ -380,8 +389,8 @@ export function CatalogBrowser({
         </div>
       </div>
 
-      <div className="mt-10 grid items-start gap-7 lg:grid-cols-[240px_minmax(0,1fr)]">
-        <aside className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_8px_28px_rgba(15,23,42,0.035)] lg:sticky lg:top-24">
+      <div className="mt-5 grid items-start gap-5 lg:mt-10 lg:gap-7 lg:grid-cols-[240px_minmax(0,1fr)]">
+        <aside id="catalog-browse-filters" className={`${mobileFiltersOpen ? "block" : "hidden"} rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_8px_28px_rgba(15,23,42,0.035)] lg:block lg:sticky lg:top-24`}>
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-bold text-slate-950">Browse</h2>
             {(setId || sortBy !== "price_desc" || !hideSealed || query || game !== "all" || (minPrice != null && minPrice > 0) || maxPrice != null) ? (

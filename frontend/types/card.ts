@@ -108,6 +108,9 @@ export type CardPricing = {
   provider_states: ProviderPricingState[];
   observations: PriceObservation[];
   avg_listing_price?: number | null;
+  median_listing_price?: number | null;
+  listing_sample_count?: number;
+  tcg_market_prices?: PriceObservation[];
 };
 
 export type GradingProfitItem = {
