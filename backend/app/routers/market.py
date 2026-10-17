@@ -1,3 +1,4 @@
+from app.services.listing_quality import eligible_observation
 from app.services.collection_stats import live_observation_count
 from app.common.response_cache import cached_read
 from app.services.movers_service import stored_movers
@@ -181,7 +182,7 @@ def get_market_movers(
 
 
 @router.get("/grading-profit", response_model=GradingProfitResponse)
-@cached_read("get_grading_profit", fresh=300, maximum=1800)
+@cached_read("get_grading_profit_identity_v1", fresh=300, maximum=1800)
 def get_grading_profit(
     response: Response,
     grading_fee: float | None = Query(default=None, ge=0.0, le=1000.0),
@@ -274,7 +275,7 @@ def get_sealed_signals(
 @router.get("/live-updates", response_model=LiveUpdatesResponse)
 def get_live_updates(
     response: Response,
-    provider: Literal["all", "ebay", "tcgapi"] = Query(default="all", description="Source provider filter"),
+    provider: Literal["all", "ebay", "tcgapi", "pokemonpricetracker"] = Query(default="all", description="Source provider filter"),
     grade_filter: Literal["all", "graded", "psa10", "psa9", "raw"] = Query(
         default="all", description="Grading filter"
     ),
@@ -292,6 +293,9 @@ def get_live_updates(
         stmt = stmt.where(PriceObservation.provider == "ebay")
     elif provider == "tcgapi":
         stmt = stmt.where(PriceObservation.provider == "tcgapi")
+
+    if provider == "pokemonpricetracker":
+        stmt = stmt.where(PriceObservation.provider == "pokemonpricetracker")
 
     if grade_filter == "graded":
         stmt = stmt.where(PriceObservation.grading_company.is_not(None))
@@ -323,6 +327,8 @@ def get_live_updates(
             )
         )
 
+    stmt = stmt.where(eligible_observation())
+
     is_unfiltered = (
         provider == "all"
         and grade_filter == "all"
@@ -342,7 +348,8 @@ def get_live_updates(
     stmt = stmt.order_by(order_col.desc(), PriceObservation.id.desc()).offset(offset).limit(per_page)
     rows = db.execute(stmt).all()
 
-    kpi_cache_key = "cardboarddex:live_updates:kpi"
+    from app.config import get_settings
+    kpi_cache_key = "cardboarddex:live_updates:kpi:identity-v1" + (":ppt" if get_settings().ppt_primary_enabled else "")
     total_ebay: int | None = None
     total_tcg: int | None = None
     total_graded: int | None = None
@@ -364,7 +371,7 @@ def get_live_updates(
             func.count(case((PriceObservation.provider == "tcgapi", 1))),
             func.count(case((PriceObservation.grading_company.is_not(None), 1))),
         )
-        kpi_result = db.execute(kpi_stmt).one()
+        kpi_result = db.execute(kpi_stmt.where(eligible_observation())).one()
         total_ebay, total_tcg, total_graded = kpi_result[0] or 0, kpi_result[1] or 0, kpi_result[2] or 0
         if r is not None:
             try:
@@ -407,6 +414,9 @@ def get_live_updates(
                 card_number=card.number,
                 image_url=card_image_url(card.id),
                 provider=obs.provider,
+                update_type=(obs.payload or {}).get("update_type") or ("asking_listing" if obs.provider == "ebay" else "market_update"),
+                price_date=obs.provider_updated_at,
+                metric=(obs.payload or {}).get("metric"),
                 price=price_val,
                 currency=obs.currency or "USD",
                 condition=obs.condition,

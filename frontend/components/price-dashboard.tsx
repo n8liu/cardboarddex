@@ -6,6 +6,7 @@ import { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { ShopOnEbayButton, type EbaySearchCardTarget } from "@/components/shop-ebay-button";
 import type { CardPricing, PriceObservation } from "@/types/card";
+import { mergeProviderHistory, providerSeriesName } from "@/lib/provider-history";
 import type { ChartPoint } from "@/components/price-history-chart";
 
 const PriceHistoryChart = dynamic(
@@ -251,31 +252,54 @@ function formatUpdatedDate(value: string | null): string {
   }
 }
 
-export function PriceDashboard({ pricing, cardMeta }: PriceDashboardProps) {
-  const [timeframe, setTimeframe] = useState<"1M" | "3M" | "1Y">("1Y");
+export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDashboardProps) {
+  const [listingGroup, setListingGroup] = useState<string | null>(null);
+  const selectedPrinting = originalPricing.selected_printing ?? "Standard";
+  const selectedCondition = originalPricing.selected_condition ?? "Near Mint";
+  const groupKey = listingGroup ?? JSON.stringify([selectedPrinting, selectedCondition]);
+  const group = originalPricing.listing_groups?.find((item) => JSON.stringify([item.printing, item.condition]) === groupKey);
+  const pricing = useMemo(() => ({
+    ...originalPricing,
+    ...(group ?? {}),
+    observations: originalPricing.observations.filter((item) => !group || !isEbayObservation(item) || item.grading_company ||
+      (item.printing === group.printing && item.condition === group.condition)),
+  }), [originalPricing, group]);
+  const [timeframe, setTimeframe] = useState<"1M" | "3M" | "6M" | "1Y">("6M");
   const [sortBy, setSortBy] = useState<"date" | "price" | "printing" | "variant" | "name">("date");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [showAllVariants, setShowAllVariants] = useState(false);
 
   const latest = useMemo(() => latestByVariant(pricing.observations), [pricing.observations]);
   const primaryRaw = useMemo(() => choosePrimaryRaw(latest), [latest]);
-  const tcgPrimary = useMemo(
+  const tcgSnapshot = useMemo(
     () => choosePrimaryRaw((pricing.tcg_market_prices ?? []).filter((item) => item.provider === "tcgapi")),
     [pricing.tcg_market_prices],
   );
 
-  const psaTen = latest
+  // Historical observations also power the graph; use their newest raw TCG
+  // quote when a current provider snapshot is unavailable, without stale momentum.
+  const legacyTcgPrimary = useMemo(
+    () => tcgSnapshot ?? latest
+      .filter((item) => item.provider === "tcgapi" && !item.grading_company && Number.isFinite(item.price) && item.price > 0)
+      .sort((a, b) => timestamp(b) - timestamp(a))[0] ?? null,
+    [tcgSnapshot, latest],
+  );
+
+  const pptPrimary = pricing.provider_quotes?.find((quote) => quote.primary && !quote.grade && !quote.stale);
+  const tcgPrimary = pptPrimary ? { ...pptPrimary, provider_updated_at: pptPrimary.price_date, observed_at: pptPrimary.fetched_at ?? pptPrimary.price_date } : legacyTcgPrimary;
+  const pptPsaTen = pricing.provider_quotes?.find((quote) => quote.grade === "psa10" && quote.metric === "median_7d" && !quote.stale);
+  const pptPsaNine = pricing.provider_quotes?.find((quote) => quote.grade === "psa9" && quote.metric === "median_7d" && !quote.stale);
+  const psaTen = pricing.ppt_mapped ? pptPsaTen : latest
     .filter((item) => item.grading_company === "PSA" && item.grade === 10)
     .sort((a, b) => timestamp(b) - timestamp(a))[0] ?? null;
   const graded = latest.filter((item) => item.grading_company);
-  const matchedSources = pricing.provider_states.filter((item) => item.match_status === "matched").length;
-
+  const matchedSources = pricing.provider_states.filter((item) => item.match_status === "matched").length + (pricing.ppt_mapped ? 1 : 0);
   const gradedMin = graded.length ? Math.min(...graded.map((item) => item.price)) : null;
   const gradedMax = graded.length ? Math.max(...graded.map((item) => item.price)) : null;
-
-  const p24h = tcgPrimary?.price_change_24h;
-  const p7d = tcgPrimary?.price_change_7d;
-  const p30d = tcgPrimary?.price_change_30d;
+  const momentum = pptPrimary ?? tcgSnapshot;
+  const p24h = momentum?.price_change_24h;
+  const p7d = momentum?.price_change_7d;
+  const p30d = momentum?.price_change_30d;
 
   // --- STRICT RAW EBAY PRICES ONLY ---
   const rawEbayListings = latest.filter(
@@ -283,20 +307,15 @@ export function PriceDashboard({ pricing, cardMeta }: PriceDashboardProps) {
   );
   const rawEbayPrices = rawEbayListings.map((item) => item.price).sort((a, b) => a - b);
 
-  // 1. Lowest Verified (Raw eBay Only)
-  let lowestVerified: number | null = null;
-  let lowestVerifiedSubtitle = "No raw eBay listings recorded";
-  if (rawEbayPrices.length > 0) {
-    lowestVerified = rawEbayPrices[0];
-    lowestVerifiedSubtitle = `Lowest of ${rawEbayPrices.length} raw eBay listing${rawEbayPrices.length === 1 ? "" : "s"}`;
-  }
+  const lowestMatched = pricing.lowest_matched_price ?? null;
+  const lowestMatchedSubtitle = `Past 7 days · ${pricing.listing_sample_count ?? 0} matched listings · ${pricing.listing_seller_count ?? 0} sellers`;
 
   // Both summaries use the server's seven-day window and one price per listing.
   const avgListingPrice = pricing.avg_listing_price ?? null;
   const medianListing = pricing.median_listing_price ?? null;
   const sampleCount = pricing.listing_sample_count ?? 0;
-  const avgListingSubtitle = sampleCount ? `Mean of ${sampleCount} raw USD eBay listings observed in the past 7 days` : "No raw USD eBay listings observed in the past 7 days";
-  const medianListingSubtitle = sampleCount ? `Median of ${sampleCount} raw USD eBay listings observed in the past 7 days` : "No raw USD eBay listings observed in the past 7 days";
+  const avgListingSubtitle = avgListingPrice == null ? "Insufficient comparable listings (need 3 listings and 2 sellers)" : sampleCount ? `Mean of ${sampleCount} raw USD eBay listings observed in the past 7 days` : "No raw USD eBay listings observed in the past 7 days";
+  const medianListingSubtitle = medianListing == null ? "Insufficient comparable listings (need 3 listings and 2 sellers)" : sampleCount ? `Median of ${sampleCount} raw USD eBay listings observed in the past 7 days` : "No raw USD eBay listings observed in the past 7 days";
 
   // 4. Volatility Value (Replaces Store Buylist)
   // Calculates price dispersion (Coefficient of Variation CV = stdDev / mean) across active comps
@@ -323,32 +342,19 @@ export function PriceDashboard({ pricing, cardMeta }: PriceDashboardProps) {
   // --- Multi-series History & Timeframe Filtering ---
   const historyData = useMemo(() => buildMultiSeriesHistory(pricing.observations), [pricing.observations]);
 
-  const filteredHistory = useMemo(() => {
-    const { history } = historyData;
-    if (history.length === 0) return [];
-    const now = new Date();
-    const days = timeframe === "1M" ? 30 : timeframe === "3M" ? 90 : 365;
-    const cutoffDate = new Date(now.getTime() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-
-    // Find the last known point before or on cutoffDate to anchor the left edge
-    let baselinePoint: ChartPoint | null = null;
-    for (const p of history) {
-      if (p.date <= cutoffDate) {
-        baselinePoint = p;
-      } else {
-        break;
-      }
-    }
-
-    const inWindow = history.filter((p) => p.date >= cutoffDate);
-    if (inWindow.length === 0) return history;
-
-    // If first in-window point is after cutoffDate and baseline exists, anchor flush to cutoffDate
-    if (baselinePoint && inWindow[0].date > cutoffDate) {
-      return [{ ...baselinePoint, date: cutoffDate }, ...inWindow];
-    }
-    return inWindow;
-  }, [historyData, timeframe]);
+  const [selectedSeries, setSelectedSeries] = useState<string[] | null>(null);
+  const providerHistory = pricing.provider_history ?? [];
+  const defaultRawSeries = providerHistory.find((series) => !series.grade && series.printing === pptPrimary?.printing && series.condition === pptPrimary?.condition)
+    ?? providerHistory.find((series) => !series.grade && series.condition === "Near Mint")
+    ?? providerHistory.find((series) => !series.grade);
+  const visibleProviderHistory = providerHistory.filter((series) => selectedSeries
+    ? selectedSeries.includes(series.id)
+    : (series.grade === "psa10" || series.grade === "psa9" || (series.id === defaultRawSeries?.id)));
+  const colors = ["#e11d48", "#0891b2", "#d97706", "#4f46e5", "#16a34a"];
+  const extraSeries = visibleProviderHistory.map((series, index) => ({ key: series.id, name: providerSeriesName(series), color: colors[index % colors.length] }));
+  const days = timeframe === "1M" ? 30 : timeframe === "3M" ? 90 : timeframe === "6M" ? 180 : 365;
+  const filteredHistory = mergeProviderHistory(historyData.history, visibleProviderHistory,
+    new Date(Date.now() - days * 86400000).toISOString().slice(0, 10), new Date().toISOString().slice(0, 10));
 
   const historyCurrency = (rawEbayListings[0] ?? primaryRaw)?.currency ?? "USD";
 
@@ -400,7 +406,7 @@ export function PriceDashboard({ pricing, cardMeta }: PriceDashboardProps) {
 
   const displayedVariants = showAllVariants ? sortedVariants : sortedVariants.slice(0, 15);
 
-  if (pricing.observations.length === 0 && !tcgPrimary) {
+  if (pricing.observations.length === 0 && !tcgPrimary && !pricing.eligibility_version && !pricing.provider_history?.length) {
     return (
       <section className="mt-8 border-t border-stone-200 pt-6 sm:mt-10 sm:pt-8">
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-lime-700">Market data</p>
@@ -428,7 +434,7 @@ export function PriceDashboard({ pricing, cardMeta }: PriceDashboardProps) {
           <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-950">Price overview</h2>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <p className="text-xs text-slate-500">Exact card matches only · Live TCG API & eBay market pricing</p>
+          <p className="text-xs text-slate-500">Stored market prices and matched eBay asking listings</p>
           {cardMeta && <ShopOnEbayButton card={cardMeta} variant="compact" />}
         </div>
       </div>
@@ -448,6 +454,12 @@ export function PriceDashboard({ pricing, cardMeta }: PriceDashboardProps) {
           <p className="mt-2 text-2xl font-black tracking-tight text-slate-950">
             {tcgPrimary?.price != null ? <AnimatedNumber value={tcgPrimary.price} format={(value) => money(value, tcgPrimary.currency)} /> : "—"}
           </p>
+          {pptPrimary && <p className="mt-1 text-xs text-emerald-800">Pokémon Price Tracker · {pptPrimary.condition} · {formatUpdatedDate(pptPrimary.price_date)}</p>}
+          {tcgPrimary && !pptPrimary && (!tcgSnapshot || pricing.ppt_mapped) && (
+            <p className="mt-1 text-xs text-emerald-800">
+              Latest recorded TCGAPI price · {formatUpdatedDate(tcgPrimary.provider_updated_at ?? tcgPrimary.observed_at)}
+            </p>
+          )}
           {/* 24h / 7d / 30d Momentum Pills */}
           <div className="mt-3 flex flex-wrap gap-1.5">
             {p24h !== null && p24h !== undefined && (
@@ -483,14 +495,14 @@ export function PriceDashboard({ pricing, cardMeta }: PriceDashboardProps) {
           </div>
         </div>
 
-        {/* Lowest Verified Listing (Raw eBay only) */}
+        {/* Lowest Matched Listing (Raw eBay only) */}
         <div className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Lowest Verified (Raw)</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Lowest Matched Listing</p>
           <p className="mt-2 text-2xl font-bold tracking-tight text-slate-950">
-            {lowestVerified != null ? <AnimatedNumber value={lowestVerified} format={money} /> : "—"}
+            {lowestMatched != null ? <AnimatedNumber value={lowestMatched} format={money} /> : "—"}
           </p>
-          <p className="mt-2 truncate text-xs text-slate-400" title={lowestVerifiedSubtitle}>
-            {lowestVerifiedSubtitle}
+          <p className="mt-2 truncate text-xs text-slate-400" title={lowestMatchedSubtitle}>
+            {lowestMatchedSubtitle}
           </p>
         </div>
 
@@ -528,21 +540,46 @@ export function PriceDashboard({ pricing, cardMeta }: PriceDashboardProps) {
         </div>
       </div>
 
+      {pricing.eligibility_version && (
+        <div className="mt-4 rounded-xl border border-slate-200 p-4">
+          <label className="text-sm font-semibold" htmlFor="listing-comparison">eBay comparison group</label>
+          <select id="listing-comparison" className="ml-3 max-w-full rounded-lg border p-2 text-sm" value={groupKey} onChange={(event) => setListingGroup(event.target.value)}>
+            {(originalPricing.listing_groups ?? []).map((item) => (
+              <option key={JSON.stringify([item.printing, item.condition])} value={JSON.stringify([item.printing, item.condition])}>{item.printing} · {item.condition}</option>
+            ))}
+          </select>
+          <p className="mt-2 text-xs text-slate-500">Asking prices, not completed sales. Product matching does not authenticate physical cards.</p>
+          {!!pricing.excluded_listing_count && (
+            <details className="mt-3">
+              <summary className="cursor-pointer text-sm">Unconfirmed listings ({pricing.excluded_listing_count}) · Excluded from statistics</summary>
+              <ul className="mt-2 max-h-72 space-y-2 overflow-auto">
+                {pricing.unconfirmed_listings?.map((item) => (
+                  <li key={item.item_id} className="rounded border p-2 text-sm">
+                    {item.listing_url?.startsWith("https://") ? <a href={item.listing_url} target="_blank" rel="noopener noreferrer" className="underline">{item.title}</a> : item.title}
+                    <p className="text-xs text-slate-500">{item.status} · {item.reasons.map((reason) => reason.replaceAll("_", " ")).join(", ")}</p>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
+
       {/* Graded & Coverage Summary */}
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <Metric
-          label="PSA 10 Comps"
+          label={pricing.ppt_mapped ? "PSA 10 · 7-day median" : "PSA 10 Comps"}
           value={money(psaTen?.price ?? null, psaTen?.currency)}
-          note={psaTen ? providerName(psaTen.provider) : "No recent exact match"}
+          note={pricing.ppt_mapped ? "Provider-reported eBay / Fanatics Collect sales" : psaTen ? providerName(psaTen.provider) : "No recent exact match"}
         />
         <Metric
-          label="Graded Range"
-          value={gradedMin === null ? "—" : `${money(gradedMin)}–${money(gradedMax)}`}
-          note={`${graded.length} graded variants`}
+          label={pricing.ppt_mapped ? "PSA 9 · 7-day median" : "Graded Range"}
+          value={pricing.ppt_mapped ? money(pptPsaNine?.price ?? null, pptPsaNine?.currency) : gradedMin === null ? "—" : `${money(gradedMin)}–${money(gradedMax)}`}
+          note={pricing.ppt_mapped ? "Provider-reported eBay / Fanatics Collect sales" : `${graded.length} graded variants`}
         />
         <Metric
           label="Source Coverage"
-          value={`${matchedSources}/${pricing.provider_states.length || 1}`}
+          value={`${matchedSources}/${pricing.provider_states.length + (pricing.ppt_mapped ? 1 : 0) || 1}`}
           note={`${pricing.observations.length} observations`}
         />
       </div>
@@ -552,19 +589,29 @@ export function PriceDashboard({ pricing, cardMeta }: PriceDashboardProps) {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-bold text-slate-950">
-                eBay listings price history
+                Price history
               </h3>
               <p className="mt-1 text-xs leading-5 text-slate-500">
-                Daily averages for Raw eBay, TCG API, PSA 10, and PSA 9 comps
+                Legacy TCGAPI and eBay listings alongside Pokémon Price Tracker market prices and graded daily sales averages
               </p>
             </div>
           </div>
           <div className="mt-5">
+            {providerHistory.length > 0 && <fieldset className="mb-3 flex flex-wrap gap-3 text-xs">
+              <legend className="mb-2 font-semibold">Pokémon Price Tracker series</legend>
+              {providerHistory.map((series) => <label key={series.id} className="flex items-center gap-1">
+                <input type="checkbox" checked={visibleProviderHistory.some((item) => item.id === series.id)} onChange={(event) => {
+                  const ids = visibleProviderHistory.map((item) => item.id);
+                  setSelectedSeries(event.target.checked ? [...ids, series.id] : ids.filter((id) => id !== series.id));
+                }} />{providerSeriesName(series)}
+              </label>)}
+            </fieldset>}
             <PriceHistoryChart
               data={filteredHistory}
               currency={historyCurrency}
               label="eBay listings"
               obsCounts={historyData.obsCounts}
+              extraSeries={extraSeries}
             />
           </div>
 
@@ -572,8 +619,8 @@ export function PriceDashboard({ pricing, cardMeta }: PriceDashboardProps) {
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-stone-100 pt-4">
             <span className="text-xs font-medium text-slate-500">History timeframe:</span>
             <div className="flex items-center gap-2">
-              {(["1M", "3M", "1Y"] as const).map((range) => {
-                const label = range === "1M" ? "1 Month" : range === "3M" ? "3 Months" : "1 Year";
+              {(["1M", "3M", "6M", "1Y"] as const).map((range) => {
+                const label = range === "1M" ? "1 Month" : range === "3M" ? "3 Months" : range === "6M" ? "6 Months" : "1 Year";
                 const active = timeframe === range;
                 return (
                   <button

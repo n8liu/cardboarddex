@@ -1,3 +1,4 @@
+from app.services.price_sources import market_observation
 """Period-specific rankings of stored TCG observations. Never fetches providers."""
 import math
 from datetime import UTC, datetime
@@ -20,12 +21,12 @@ def stored_movers(response: Response, db: Session, game: str, period: str) -> di
         order_by=(PriceObservation.provider_updated_at.desc().nullslast(),
                   PriceObservation.observed_at.desc(), PriceObservation.id.desc()),
     ).label('position')).where(
-        PriceObservation.provider == 'tcgapi', PriceObservation.currency == 'USD',
+        market_observation(), PriceObservation.currency == 'USD',
         PriceObservation.grading_company.is_(None), PriceObservation.observed_at <= datetime.now(UTC),
     ).subquery()
     # Only select needed scalars, not the historical provider payloads.
     query = select(Card.id, Card.name, Card.number, Set.name.label('set_name'), Card.set_id,
-        PriceObservation.price, PriceObservation.observed_at,
+        PriceObservation.price, PriceObservation.observed_at, PriceObservation.provider, PriceObservation.printing,
         PriceObservation.payload[f'price_change_{period}'].as_string().label('change'),
     ).join(Set, Set.id == Card.set_id).join(PriceObservation, PriceObservation.card_id == Card.id).join(
         latest, and_(latest.c.id == PriceObservation.id, latest.c.position == 1),
@@ -43,10 +44,13 @@ def stored_movers(response: Response, db: Session, game: str, period: str) -> di
         if not math.isfinite(price) or not math.isfinite(change) or price <= 0 or change == 0 or change <= -100:
             continue
         direction = 'up' if change > 0 else 'down'
+        comparison = estimated_price_change(price, change)
+        if row.provider == "pokemonpricetracker":
+            comparison["comparison_source"] = "pokemonpricetracker_history"
         result['gainers' if direction == 'up' else 'losers'].append(MarketMoverItem(
-            card_id=row.id, name=row.name, set_name=row.set_name, set_id=row.set_id,
-            number=row.number, image_url=card_image_url(row.id), market_price=price,
-            price_change_percentage=change, **estimated_price_change(price, change),
+            card_id=row.id, market_source=row.provider, name=row.name, set_name=row.set_name, set_id=row.set_id,
+            number=row.number, printing=row.printing, image_url=card_image_url(row.id), market_price=price,
+            price_change_percentage=change, **comparison,
             period=period, direction=direction, last_updated_at=row.observed_at,
         ))
     result['gainers'].sort(key=lambda item: (-item.price_change_percentage, item.card_id))

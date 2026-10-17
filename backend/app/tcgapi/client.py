@@ -268,7 +268,7 @@ class TCGAPIClient:
         parsed = urlparse(source_url)
         hostname = (parsed.hostname or "").lower()
         allowed_domains = (
-            "tcgplayer.com",
+            "tcgplayer.com", "cdn.pokemonpricetracker.com",
             "tcgapi.dev",
             "pokemontcg.io",
             "pokemon.com",

@@ -1,3 +1,6 @@
+from app.config import get_settings
+from app.services.price_sources import market_observation
+from app.services.listing_quality import eligible_observation
 from app.services.image_delivery import card_image_url, image_generation
 from app.common.cache import TTLCache
 import logging
@@ -8,7 +11,7 @@ from typing import Any, Literal
 
 from fastapi import HTTPException, status
 from redis.exceptions import RedisError
-from sqlalchemy import case, func, not_, or_, select
+from sqlalchemy import and_, case, func, not_, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.common.formatters import escape_like
@@ -273,7 +276,7 @@ def query_pokemon_cards(
             func.min(PriceObservation.price),
         ).where(
             PriceObservation.card_id.in_(matching_cards_subquery),
-            PriceObservation.provider == "tcgapi",
+            market_observation(),
             PriceObservation.grading_company.is_(None),
             PriceObservation.price > 0,
         )
@@ -304,7 +307,7 @@ def query_pokemon_cards(
         select(PriceObservation.price)
         .where(
             PriceObservation.card_id == Card.id,
-            PriceObservation.provider == "tcgapi",
+            market_observation(),
             PriceObservation.grading_company.is_(None),
         )
         .order_by(
@@ -320,7 +323,7 @@ def query_pokemon_cards(
         select(PriceObservation.currency)
         .where(
             PriceObservation.card_id == Card.id,
-            PriceObservation.provider == "tcgapi",
+            market_observation(),
             PriceObservation.grading_company.is_(None),
         )
         .order_by(
@@ -407,6 +410,8 @@ def query_pokemon_cards(
         for card, card_set, card_price, card_curr, card_sync in rows
     ]
 
+    from app.services.ppt_prices import label_market_sources
+    label_market_sources(db, cards)
     return PokemonCardsResponse(
         pokemon_name=clean_name,
         total_cards=total_cards,
@@ -430,7 +435,7 @@ def _bulk_pokemon_window_stats(
             func.sum(PriceObservation.price).label("vol"),
             func.count(PriceObservation.id).label("sales_cnt"),
         )
-        .join(PriceObservation, PriceObservation.card_id == Card.id)
+        .join(PriceObservation, and_(PriceObservation.card_id == Card.id, eligible_observation(), PriceObservation.provider != "pokemonpricetracker"))
         .where(name_filter, Card.name.not_ilike("%code card%"))
         .group_by(Card.name)
     )
@@ -459,7 +464,8 @@ def calculate_top_pokemon_volume(
     clean_q = (q or "").strip().lower()
     cache_key = f"{timeframe}:{sort_by}:{clean_q}"
     cache_key = f"{image_generation()}:{cache_key}"
-    redis_key = f"cardboarddex:top_volume:{cache_key}"
+    source_key = "ppt" if get_settings().ppt_primary_enabled else "legacy"
+    redis_key = f"cardboarddex:{source_key}:identity-v1:top_volume:{cache_key}"
     now = datetime.now(UTC)
 
     # 1. Try Redis cache first
@@ -518,7 +524,7 @@ def calculate_top_pokemon_volume(
             func.count(PriceObservation.price),
             func.max(PriceObservation.price),
         )
-        .outerjoin(PriceObservation, PriceObservation.card_id == Card.id)
+        .outerjoin(PriceObservation, and_(PriceObservation.card_id == Card.id, eligible_observation(), PriceObservation.provider != "pokemonpricetracker"))
         .where(name_filter, Card.name.not_ilike("%code card%"))
         .group_by(Card.id, Card.name)
     ).all()
@@ -675,7 +681,8 @@ def get_set_statistics(
     """Calculate aggregate total price and card counts for a set (or filtered set)."""
     clean_q = q.strip()
     cache_key = f"{set_id}:{game}:{hide_sealed}:{sealed_only}:{clean_q}:{min_price}:{max_price}"
-    redis_key = f"cardboarddex:set_stats:{cache_key}"
+    source_key = "ppt" if get_settings().ppt_primary_enabled else "legacy"
+    redis_key = f"cardboarddex:{source_key}:identity-v1:set_stats:{cache_key}"
 
     r = get_redis() if use_cache else None
     if r is not None:
@@ -696,7 +703,7 @@ def get_set_statistics(
         select(PriceObservation.price)
         .where(
             PriceObservation.card_id == Card.id,
-            PriceObservation.provider == "tcgapi",
+            market_observation(),
             PriceObservation.grading_company.is_(None),
         )
         .order_by(
@@ -713,7 +720,7 @@ def get_set_statistics(
         select(PriceObservation.currency)
         .where(
             PriceObservation.card_id == Card.id,
-            PriceObservation.provider == "tcgapi",
+            market_observation(),
             PriceObservation.grading_company.is_(None),
         )
         .order_by(

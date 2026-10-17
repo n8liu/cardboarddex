@@ -139,7 +139,7 @@ function MoverCard({ item }: { item: MarketMoverItem }) {
       </div>
 
       <div className="mt-2 text-[10px] text-slate-400">
-        Updated {formatRelativeTime(item.last_updated_at)}
+        {item.market_source === "pokemonpricetracker" ? "PPT" : "Legacy TCGAPI"} · Updated {formatRelativeTime(item.last_updated_at)}
       </div>
     </Link>
   );

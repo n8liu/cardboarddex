@@ -142,6 +142,10 @@ def historical_returns(db: Session, card_ids, days):
 
 
 def sales_activity(db: Session, days=30, q=""):
+    from app.config import get_settings
+    if get_settings().ppt_primary_enabled:
+        from app.services.ppt_prices import sales_activity as ppt_sales_activity
+        return ppt_sales_activity(db, days, q)
     today = datetime.now(UTC).date()
     start = today - timedelta(days=days - 1)
     base = select(MarketHistory.card_id, Card.name, Set.name.label("set_name"),

@@ -20,7 +20,7 @@ from app.services.image_delivery import CARD_ID, validate_manifest
 logger = logging.getLogger(__name__)
 MAX_BYTES = 10 * 1024 * 1024
 CAP_BYTES = 8_000_000_000
-ALLOWED = ('tcgplayer.com', 'tcgapi.dev', 'pokemontcg.io', 'pokemon.com', 'githubusercontent.com', 'pokeapi.co')
+ALLOWED = ('tcgplayer.com', 'cdn.pokemonpricetracker.com', 'tcgapi.dev', 'pokemontcg.io', 'pokemon.com', 'githubusercontent.com', 'pokeapi.co')
 TYPES = {'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'image/avif': 'avif'}
 PLACEHOLDER = b'<svg xmlns="http://www.w3.org/2000/svg" width="400" height="560" viewBox="0 0 400 560"><rect width="400" height="560" rx="20" fill="#f1f5f9"/><text x="200" y="280" text-anchor="middle" fill="#64748b" font-family="sans-serif" font-size="22">Image pending</text></svg>'
 

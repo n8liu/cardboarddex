@@ -273,7 +273,8 @@ def cached_read(namespace, *, fresh, maximum):
             bind = db.get_bind()
             # Database identity prevents cache reuse between isolated test databases.
             identity = str(bind.url) if bind.dialect.name != 'sqlite' else str(id(bind))
-            canonical = json.dumps([namespace, image_generation(), identity, values], sort_keys=True, default=str)
+            from app.config import get_settings
+            canonical = json.dumps([namespace, image_generation(), get_settings().ppt_primary_enabled, identity, values], sort_keys=True, default=str)
             key = 'cardboarddex:responses:v1:' + namespace + ':' + hashlib.sha256(canonical.encode()).hexdigest()
             def build():
                 with Session(bind, expire_on_commit=False) as session:

@@ -1,3 +1,5 @@
+from app.services.listing_quality import eligible_observation, listing_summary, MATCHER_VERSION
+from app.models import ListingAssessment
 import logging
 import math
 import re
@@ -136,7 +138,13 @@ def get_card(
     latest_synced = db.scalar(
         select(func.max(ProviderCardState.last_synced_at)).where(ProviderCardState.card_id == card_id)
     )
-    summary = _summary(card, card_set, last_updated_at=latest_synced)
+    from app.services.price_sources import market_observation
+    quote = db.scalar(select(PriceObservation).where(PriceObservation.card_id == card_id,
+        market_observation(), PriceObservation.grading_company.is_(None)).order_by(
+        PriceObservation.provider_updated_at.desc().nullslast(), PriceObservation.observed_at.desc(), PriceObservation.id.desc()).limit(1))
+    summary = _summary(card, card_set, quote.price if quote else None, quote.currency if quote else None,
+                       quote.provider_updated_at if quote else latest_synced)
+    summary.market_source = quote.provider if quote else None
     return CardDetail(
         **summary.model_dump(),
         series=card_set.series,
@@ -151,7 +159,7 @@ def get_card_prices(
     days: int = Query(default=365, ge=1, le=730),
     db: Session = Depends(get_db),
 ) -> CardPricingResponse:
-    response.headers["Cache-Control"] = "public, max-age=60, s-maxage=300, stale-while-revalidate=600"
+    response.headers["Cache-Control"] = "no-store"
     if db.get(Card, card_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Card not found")
     cutoff = datetime.now(UTC) - timedelta(days=days)
@@ -234,6 +242,10 @@ def get_card_prices(
             total_listings=int(listings) if listings is not None else None,
         )
 
+    eligible_ids = set(db.scalars(select(PriceObservation.id).where(
+        PriceObservation.card_id == card_id, eligible_observation())))
+    excluded_observations = [item for item in observations if item.id not in eligible_ids]
+    observations = [item for item in observations if item.id in eligible_ids]
     obs_items = [_build_obs_item(item) for item in observations]
 
     # Current provider snapshots are separate from deduplicated historical comps.
@@ -272,22 +284,51 @@ def get_card_prices(
             ))
 
     now = datetime.now(UTC)
-    recent_listings = db.scalars(select(PriceObservation).where(
+    recent_listings = list(db.scalars(select(PriceObservation).where(
         PriceObservation.card_id == card_id, PriceObservation.provider.ilike("%ebay%"),
-        PriceObservation.grading_company.is_(None), PriceObservation.currency == "USD",
-        PriceObservation.price > 0, PriceObservation.observed_at >= now - timedelta(days=7),
-        PriceObservation.observed_at <= now,
-    ).order_by(PriceObservation.observed_at.desc(), PriceObservation.id.desc()))
-    # Count each listing once, using its latest observed price within the window.
-    prices_by_listing = {}
-    for listing in recent_listings:
-        prices_by_listing.setdefault((listing.provider, listing.provider_card_id), float(listing.price))
-    prices = sorted(prices_by_listing.values())
-    count = len(prices)
-    avg_listing_price = round(sum(prices) / count, 2) if count else None
-    median_listing_price = (prices[count // 2] if count % 2 else (prices[count // 2 - 1] + prices[count // 2]) / 2) if count else None
+        eligible_observation(), PriceObservation.grading_company.is_(None),
+        PriceObservation.currency == "USD", PriceObservation.price > 0,
+        PriceObservation.observed_at >= now - timedelta(days=7), PriceObservation.observed_at <= now,
+    ).order_by(PriceObservation.observed_at.desc(), PriceObservation.id.desc())))
+    assessments = {a.fingerprint: a for a in db.scalars(select(ListingAssessment).where(
+        ListingAssessment.card_id == card_id, ListingAssessment.version == MATCHER_VERSION))}
+    primary = sorted(tcg_market_prices, key=lambda x: (2 if "unlimited" in (x.printing or "").lower() else 0,
+        x.observed_at), reverse=True)
+    fallback_tcg = sorted((x for x in observations if x.provider == "tcgapi" and not x.grading_company),
+                          key=lambda x: x.observed_at, reverse=True)
+    selected_printing = (primary[0].printing if primary else fallback_tcg[0].printing if fallback_tcg else None) or "Standard"
+    selected_condition = "Near Mint"
+    from app.services.ppt_prices import pricing_data
+    ppt_pricing = pricing_data(db, card_id, days)
+    ppt_primary = next((q for q in ppt_pricing["provider_quotes"] if q.get("primary") and not q.get("grade") and not q["stale"]), None)
+    if ppt_primary:
+        selected_printing = ppt_primary["printing"] or "Unknown"
+        selected_condition = ppt_primary["condition"] or "Unknown"
+    pairs = {(x.printing, x.condition) for x in [*recent_listings, *observations] if "ebay" in x.provider.lower() and not x.grading_company and x.printing and x.condition}
+    pairs.add((selected_printing, selected_condition))
+    groups = [dict(printing=p, condition=c, **listing_summary(recent_listings, assessments, p, c))
+              for p, c in sorted(pairs)]
+    summary = next(g for g in groups if g["printing"] == selected_printing and g["condition"] == selected_condition)
+    unconfirmed = {}
+    for row in excluded_observations:
+        payload = row.payload or {}
+        a = assessments.get(payload.get("assessment_fingerprint"))
+        unconfirmed.setdefault(row.provider_card_id, dict(item_id=row.provider_card_id,
+            title=payload.get("title") or (payload.get("item") or {}).get("title") or "Unconfirmed listing",
+            price=float(row.price), listing_url=_extract_listing_url(row),
+            status=a.status if a else "unchecked", reasons=a.reasons if a else ["not_assessed"]))
+    # Include text-rejected candidates that never became observations.
+    for a in assessments.values():
+        if a.status not in {"matched", "superseded"}:
+            unconfirmed[a.item_id] = dict(item_id=a.item_id, title=a.source.get("title") or "Unconfirmed listing",
+                listing_url=a.source.get("itemWebUrl"), status=a.status, reasons=a.reasons)
+
+    for a in assessments.values():
+        if a.status == "matched":
+            unconfirmed.pop(a.item_id, None)
 
     return CardPricingResponse(
+        **ppt_pricing,
         card_id=card_id,
         provider_states=[ProviderPricingState(
             provider=item.provider,
@@ -295,9 +336,14 @@ def get_card_prices(
             last_synced_at=item.last_synced_at,
         ) for item in states],
         observations=obs_items,
-        avg_listing_price=avg_listing_price,
-        median_listing_price=median_listing_price,
-        listing_sample_count=count,
+        avg_listing_price=summary["avg_listing_price"],
+        median_listing_price=summary["median_listing_price"],
+        listing_sample_count=summary["listing_sample_count"],
+        lowest_matched_price=summary["lowest_matched_price"],
+        listing_seller_count=summary["listing_seller_count"],
+        selected_printing=selected_printing, selected_condition=selected_condition,
+        listing_groups=groups, unconfirmed_listings=list(unconfirmed.values())[:100],
+        excluded_listing_count=len(unconfirmed),
         tcg_market_prices=tcg_market_prices,
     )
 

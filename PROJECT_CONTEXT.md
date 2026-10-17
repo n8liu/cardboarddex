@@ -91,6 +91,15 @@ Catalog image responses use `/cards/{id}/image`. The backend downloads provider 
 | Pokédex data and species details | [frontend/lib/pokedex-data.ts](frontend/lib/pokedex-data.ts), [frontend/lib/pokeapi.ts](frontend/lib/pokeapi.ts) |
 | Deployment workflows | [.github/workflows/backend-ci-cd.yml](.github/workflows/backend-ci-cd.yml), [.github/workflows/frontend-ci-cd.yml](.github/workflows/frontend-ci-cd.yml) |
 
+## Pokémon Price Tracker migration (local implementation, 2026-10-16)
+
+- Additive migration `0009_pokemon_price_tracker` follows the local `0008_listing_assessments` work. It adds product mapping/current quote/monthly history/checkpoint tables. Cards/Sets schema and existing TCGAPI data are preserved. No production migration, provider cutover, or deployment was performed.
+- New adapter, atomic daily/weighted-minute limiter, and bounded Celery ingestion cover English/Japanese cards and sealed products. Exact identity matching quarantines ambiguous products. A bounded legacy-ID index avoids rescanning provider JSON for every discovery. History is requested for 180 days and merged idempotently by source/printing/condition/grade/metric; backfilled points do not enter Live Comps.
+- `PPT_INGESTION_ENABLED=false`, `PPT_PRIMARY_ENABLED=false`, `TCGAPI_INGESTION_ENABLED=true` preserve existing operation. `PPT_API_KEY` is private backend configuration. Limits default to 20,000 credits/day and 55 weighted requests/minute; unused lane capacity is shared after 22:00 UTC. Direct eBay ingestion and listing screening are retained.
+- When primary mode is enabled, shared price selection prefers current PPT quotes across catalog, movers, sealed, grading, binder and trending. Raw fallback uses legacy TCGAPI. PSA headlines/comparisons use recent seven-day medians; daily graded averages remain separately labeled graph series. Card history adds six months and selectable PPT lines. Live Comps distinguishes market updates, graded aggregates and matched asking listings.
+- Read-only diagnostics: `python -m jobs.ppt_report`. Full behavior, quota allocation, pilot/cutover/rollback steps and API references: [docs/pokemon-price-tracker.md](docs/pokemon-price-tracker.md).
+- Local validation: 337 backend tests passed, 27 infrastructure/live tests skipped after authenticated testing on October 16. Earlier frontend validation: 137 tests, typecheck and build passed. A bounded live pilot used 16 credits across eight requests, confirming English/Japanese cards and sealed history plus PSA medians. Isolated PostgreSQL 16/Redis 7 verified migration, five-product ingestion, 2,829 dimensioned history points, repeat-import idempotence, legacy-history preservation and card-profile response serialization. Fixed real provider condition-label suffixes so quotes match their historical baselines. Receipts: `.system_generated/ppt-pilot/`; runner: `backend/scripts/ppt_live_pilot.py`. PPT ingestion/primary remain disabled. Real existing-catalog matching coverage, target-host memory/storage and sustained throughput still need a shadow pilot; no production changes. Existing production observation windows above are unchanged.
+
 ## Card-profile pricing corrections and Live Comps grid (local, 2026-10-15)
 
 - Card pricing now returns `tcg_market_prices` from the latest matched `ProviderCardState.payload.prices.data` snapshot. The market price and 24h/7d/30d changes come from the same printing in that response. This fixes stale momentum when unchanged prices suppress new historical observations. Null/missing percentages are not backfilled; eBay observations never substitute for TCG market data. Existing historical observations remain unchanged, and opening a profile makes no provider requests.
@@ -810,3 +819,22 @@ Production has been upgraded to `cardboarddex-1gb` ($7/month `micro_3_0`) and th
 - **Operator report:** `python -m jobs.passive_refresh_report` outputs comprehensive JSON metrics (cycle deadlines, checked/remaining/overdue cards, cursor positions, retries, and quota usage).
 - **Validation:** 59 unit tests passed across config, client, and passive refresh suites; full backend suite passed 251 tests; all 8 integration tests passed against real disposable PostgreSQL/Redis (verifying 7-day healthy operation, outage reporting, crash recovery, and Redis restarts).
 - **Production status:** Canaries succeeded, ingestion pause marker removed, single Celery worker (192/256 MiB) and Beat (64/96 MiB) resumed. 48-hour stability observation active with minute-by-minute systemd health monitoring.
+
+## Pokédex artwork sizing (local, 2026-10-16)
+
+- Pokémon grid artwork is 10% larger at rest, preserving existing tile dimensions and a further 10% hover zoom.
+
+## Card profile TCG price fallback (local, 2026-10-16)
+
+- The TCG market tile prefers the current provider snapshot, falling back to the newest positive raw TCGAPI observation from graph data when the snapshot is absent or empty. The fallback displays its recorded date and excludes eBay and graded observations.
+- Momentum percentages remain sourced only from the current snapshot to avoid restoring stale historical changes.
+- Validation: four focused dashboard tests and frontend TypeScript passed. Not deployed or verified against a production card.
+
+## eBay listing eligibility (local, 2026-10-16)
+
+- Added migration `0008_listing_assessments`, strict ingestion matching, versioned identity assessments, and bounded local OpenCV/Tesseract image checks for raw cards. Cards/Sets schemas are unchanged. Original observations and source payloads are retained.
+- Shared eligibility filters now protect card pricing/history, Live Comps and shared collection totals, grading comparisons, Trending and Pokémon observation-volume aggregates. Unchecked/uncertain listings are excluded immediately; TCGAPI remains independent.
+- Card profiles offer printing/condition comparison groups, seven-day matched lowest/mean/median, distinct listing/seller counts, and an expandable unconfirmed-listing section. Mean/median require three listings and two named sellers. “Lowest Verified” is renamed “Lowest Matched Listing.” Other existing “Verified Comps” labels are unchanged.
+- Image scheduling and automatic acceptance default off. Follow [the rollout and backfill guide](docs/ebay-listing-quality.md) before activation. New backend code requires the migration first. No production migration/deployment/backfill or provider ingestion was performed. Real eBay-photo accuracy and production resource usage remain unmeasured; local image matches do not establish physical authenticity.
+- Validation: 310 backend tests passed (27 skipped), 133 frontend tests passed, TypeScript and production frontend build passed, and `git diff --check` passed. Image tests include actual local Tesseract OCR, wrong artwork/number, rotation, glare, blur, and multi-card fixtures.
+- Applied `0008_listing_assessments` to verified localhost PostgreSQL only. Read-only card-pricing and shared eligible-count queries passed against that database. No historical backfill or image schedule was enabled.

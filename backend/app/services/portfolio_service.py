@@ -150,6 +150,9 @@ def calculate_portfolio_valuation(
         if obs.card_id not in latest_price_map and obs.price is not None:
             latest_price_map[obs.card_id] = float(obs.price)
 
+    from app.services.ppt_prices import primary_quotes
+    ppt_quotes = primary_quotes(db, clean_ids)
+
     # 4. Build PortfolioCardItem list
     portfolio_cards: list[PortfolioCardItem] = []
     card_current_prices: dict[str, float] = {}
@@ -181,6 +184,11 @@ def calculate_portfolio_valuation(
         if market_price is None or market_price <= 0:
             market_price = latest_price_map.get(cid)
 
+        if cid in ppt_quotes:
+            quote = ppt_quotes[cid]
+            market_price = quote["price"]
+            p_24h, p_7d, p_30d = (quote.get("price_change_" + period) for period in ("24h", "7d", "30d"))
+
         if market_price is not None:
             card_current_prices[cid] = market_price
 
@@ -192,6 +200,7 @@ def calculate_portfolio_valuation(
                 number=f"{card.number}/{card.printed_total}" if card.printed_total else card.number,
                 rarity=card.rarity,
                 image_url=card_image_url(card.id),
+                market_source="pokemonpricetracker" if cid in ppt_quotes else "tcgapi" if market_price is not None else None,
                 market_price=round(market_price, 2) if market_price is not None else None,
                 market_currency="USD",
                 price_change_24h=round(p_24h, 2) if p_24h is not None else None,
@@ -240,6 +249,19 @@ def calculate_portfolio_valuation(
             card_date_prices[cid][d] = price
             all_dates.add(d)
 
+    # A PPT-valued card uses its own dimensioned history, never legacy baselines.
+    from app.services.ppt_prices import pricing_data
+    for cid, quote in ppt_quotes.items():
+        card_date_prices[cid] = {}
+        for series in pricing_data(db, cid, days)["provider_history"]:
+            if series["metric"] != "market" or series["printing"] != quote["printing"] or series["condition"] != quote["condition"]:
+                continue
+            for point in series["points"]:
+                if point["price"] is not None:
+                    d = date.fromisoformat(point["date"])
+                    card_date_prices[cid][d] = point["price"]
+                    all_dates.add(d)
+
     # Generate daily chronological sequence
     history_points: list[PortfolioHistoryPoint] = []
     if all_dates or total_current_val > 0:
@@ -257,7 +279,7 @@ def calculate_portfolio_valuation(
             for cid in clean_ids:
                 if current_step_date in card_date_prices.get(cid, {}):
                     running_prices[cid] = card_date_prices[cid][current_step_date]
-                elif cid not in running_prices and cid in card_current_prices:
+                elif cid not in running_prices and cid in card_current_prices and cid not in ppt_quotes:
                     # If card has no prior historical points, seed with current price
                     running_prices[cid] = card_current_prices[cid]
 
@@ -291,6 +313,19 @@ def calculate_portfolio_valuation(
     # 6. Calculate Combined Deltas (24h, 7d, 30d)
     # Prefer delta computed from historical points if available
     def _calc_delta(days_back: int) -> tuple[float | None, float | None]:
+        if ppt_quotes:
+            field = {1: "price_change_24h", 7: "price_change_7d", 30: "price_change_30d"}[days_back]
+            previous = 0.0
+            for card in portfolio_cards:
+                if card.market_price is None:
+                    continue
+                change = getattr(card, field)
+                if change is None or change <= -100:
+                    return None, None
+                previous += card.market_price / (1 + change / 100)
+            if previous > 0:
+                return round(total_current_val - previous, 2), round((total_current_val / previous - 1) * 100, 2)
+            return None, None
         target_date = (now_date - timedelta(days=days_back)).isoformat()
         past_point = None
         for pt in reversed(history_points):

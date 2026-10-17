@@ -27,7 +27,8 @@ from app.database import SessionLocal
 from app.ebay import EbayClient, EbayConfigurationError
 from app.models import Card, PriceObservation, ProviderCardState, RawEbayListing, Set
 from app.providers import ProviderRequestLimitExceeded
-from parsers.title_matcher import parse_ebay_title
+from parsers.title_matcher import parse_ebay_title, is_sealed_product
+from app.services.listing_quality import assess_text
 
 logger = logging.getLogger(__name__)
 POPULAR_NAMES = ("Charizard", "Blastoise", "Venusaur", "Pikachu", "Lugia", "Umbreon", "Gengar", "Mewtwo", "Rayquaza")
@@ -77,7 +78,7 @@ def _observation(
     if amount is None or amount <= 0:
         return False
     timestamp_key = (provider_updated_at or datetime.now(UTC)).date().isoformat()
-    raw_key = "|".join((provider, card_id, provider_card_id, variant_id, timestamp_key, str(amount)))
+    raw_key = "|".join((provider, card_id, provider_card_id, variant_id, timestamp_key, str(amount), str((payload or {}).get("assessment_fingerprint") or "")))
     fingerprint = hashlib.sha256(raw_key.encode()).hexdigest()
     pending_fingerprints = session.info.setdefault("price_observation_fingerprints", set())
     if fingerprint in pending_fingerprints:
@@ -197,7 +198,7 @@ def _collect_ebay_for_card(
     observations_created = 0
     all_results: list[dict[str, Any]] = []
 
-    is_sealed = (card.rarity is None or card.rarity == "") and "code card" not in card.name.lower()
+    is_sealed = is_sealed_product(card.name)
     for item in raw_items:
         item_id = str(item.get("itemId") or "")
         if not item_id:
@@ -211,15 +212,14 @@ def _collect_ebay_for_card(
         feedback = int(seller.get("feedbackScore", 0)) if seller.get("feedbackScore") else None
         item_date = _parse_datetime(item.get("itemCreationDate") or item.get("itemEndDate"))
 
-        # Parse title conservatively
-        match_result = parse_ebay_title(
-            title,
-            target_card_name=card.name,
-            target_card_number=card.number or "",
-            target_set_name=set_name,
-            is_target_sealed=is_sealed,
-            is_target_japanese=is_japanese,
-        )
+        # Dry runs do not persist assessments or schedule image work.
+        assessment = None
+        if dry_run:
+            match_result = parse_ebay_title(title, card.name, card.number or "", set_name,
+                is_target_sealed=is_sealed, is_target_japanese=is_japanese, strict=True,
+                target_printed_total=card.printed_total or (card.set.printed_total if card.set else None))
+        else:
+            assessment, match_result = assess_text(session, card, _json_safe(item))
 
         all_results.append({
             "item_id": item_id,
@@ -281,7 +281,7 @@ def _collect_ebay_for_card(
                     grade=grade,
                     currency=currency,
                     provider_updated_at=item_date,
-                    payload=_json_safe({"item": item, "title": title, "match": match_result.__dict__}),
+                    payload=_json_safe({"item": item, "title": title, "match": match_result.__dict__, "assessment_fingerprint": assessment.fingerprint if assessment else None}),
                 )
                 if created:
                     observations_created += 1

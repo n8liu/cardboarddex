@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 
 class CardSummary(BaseModel):
+    market_source: str | None = None
     id: str
     name: str
     set_id: str
@@ -24,6 +25,7 @@ class CardDetail(CardSummary):
 
 
 class MarketMoverItem(BaseModel):
+    market_source: str | None = None
     card_id: str
     name: str
     set_id: str | None = None
@@ -117,7 +119,69 @@ class PriceObservationItem(BaseModel):
     price_change_30d: float | None = None
 
 
+class ListingGroup(BaseModel):
+    printing: str
+    condition: str
+    lowest_matched_price: float | None = None
+    avg_listing_price: float | None = None
+    median_listing_price: float | None = None
+    listing_sample_count: int = 0
+    listing_seller_count: int = 0
+
+
+class UnconfirmedListing(BaseModel):
+    item_id: str
+    title: str
+    price: float | None = None
+    listing_url: str | None = None
+    status: str
+    reasons: list[str] = Field(default_factory=list)
+
+
+class ProviderQuote(BaseModel):
+    provider: str
+    language: str
+    currency: str
+    printing: str | None
+    condition: str | None
+    grade: str | None
+    metric: str
+    price: float
+    price_date: str
+    fetched_at: datetime | None
+    stale: bool
+    primary: bool = False
+    price_change_24h: float | None = None
+    price_change_7d: float | None = None
+    price_change_30d: float | None = None
+    last_sale_date: str | None = None
+    smart_price_outlier: bool = False
+    sources: dict = Field(default_factory=dict)
+
+
+class ProviderHistoryPoint(BaseModel):
+    date: str
+    price: float | None
+    sales_count: int | None = None
+
+
+class ProviderHistorySeries(BaseModel):
+    id: str
+    provider: str
+    language: str
+    currency: str
+    printing: str | None
+    condition: str | None
+    grade: str | None
+    metric: str
+    fetched_at: datetime
+    points: list[ProviderHistoryPoint]
+
+
 class CardPricingResponse(BaseModel):
+    provider_quotes: list[ProviderQuote] = Field(default_factory=list)
+    provider_history: list[ProviderHistorySeries] = Field(default_factory=list)
+    ppt_mapped: bool = False
     card_id: str
     provider_states: list[ProviderPricingState]
     observations: list[PriceObservationItem]
@@ -125,9 +189,19 @@ class CardPricingResponse(BaseModel):
     median_listing_price: float | None = None
     listing_sample_count: int = 0
     tcg_market_prices: list[PriceObservationItem] = Field(default_factory=list)
+    lowest_matched_price: float | None = None
+    listing_seller_count: int = 0
+    selected_printing: str = "Standard"
+    selected_condition: str = "Near Mint"
+    listing_groups: list[ListingGroup] = Field(default_factory=list)
+    unconfirmed_listings: list[UnconfirmedListing] = Field(default_factory=list)
+    excluded_listing_count: int = 0
+    eligibility_version: str = "identity-v1"
 
 
 class GradingProfitItem(BaseModel):
+    graded_source: str | None = None
+    graded_metric: str | None = None
     card_id: str
     name: str
     set_id: str | None = None
@@ -161,6 +235,7 @@ class GradingProfitResponse(BaseModel):
 
 
 class SealedSignalItem(BaseModel):
+    market_source: str | None = None
     card_id: str
     name: str
     clean_name: str | None = None
@@ -294,6 +369,9 @@ class TrackActionRequest(BaseModel):
 
 
 class LiveUpdateItem(BaseModel):
+    update_type: str = "market_update"
+    price_date: datetime | None = None
+    metric: str | None = None
     id: str
     card_id: str
     card_name: str
@@ -334,6 +412,7 @@ class PortfolioValuationRequest(BaseModel):
 
 
 class PortfolioCardItem(BaseModel):
+    market_source: str | None = None
     id: str
     name: str
     set_name: str

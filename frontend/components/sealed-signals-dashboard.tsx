@@ -71,7 +71,7 @@ function ProductCard({ item, rank, period }: { item: SealedSignalItem; rank: num
           {item.history?.coverage_start && <p>History: {item.history.coverage_start} – {item.history.coverage_end}</p>}
           <p className="mt-3 font-semibold text-slate-700">Estimate return on your purchase</p>
           <PurchaseReturn price={item.market_price} />
-          <p className="mt-2 text-[10px]">{item.total_listings > 0 ? `${item.total_listings} active listings` : "Listing count unavailable"}{item.last_updated_at ? ` · Observed ${item.last_updated_at.slice(0, 10)}` : ""}</p>
+          <p className="mt-2 text-[10px]">{item.market_source === "pokemonpricetracker" ? "Pokémon Price Tracker · " : "Legacy TCGAPI · "}{item.total_listings > 0 ? `${item.total_listings} active listings` : "Listing count unavailable"}{item.last_updated_at ? ` · Observed ${item.last_updated_at.slice(0, 10)}` : ""}</p>
         </div>
       </details>
     </li>
@@ -217,7 +217,7 @@ export function SealedSignalsDashboard({ initialData }: { initialData: Record<Er
               {([30, 90] as const).map((days) => <button key={days} type="button" aria-pressed={period === days} onClick={() => setPeriod(days)} className="min-h-9 rounded-lg px-3 text-xs font-bold text-slate-600 transition hover:bg-slate-200 focus-visible:outline-slate-900 aria-pressed:bg-slate-900 aria-pressed:text-white aria-pressed:shadow-xs">{days} days</button>)}
             </div>
           </div>
-          <span className="text-[10px] text-slate-400">USD source prices · TCG API</span>
+          <span className="text-[10px] text-slate-400">USD market prices · Source shown per product</span>
         </div>
         {expanded && <div id="sealed-more-filters" className="mt-3 grid gap-3 border-t border-slate-100 pt-3 sm:grid-cols-2"><label className="text-xs font-medium text-slate-600">Signal<select className={`${selectClass} mt-1`} value={signal} onChange={(e) => setSignal(e.target.value as SealedSignalType)}>{Object.entries(signals).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label className="text-xs font-medium text-slate-600">Rank by<select className={`${selectClass} mt-1`} value={sortBy} onChange={(e) => setSortBy(e.target.value as SealedSortOption)}>{Object.entries(sorts).map(([value, label]) => <option key={value} value={value}>{value === "momentum_desc" ? `${period}-day growth` : label}</option>)}</select></label></div>}
         {!defaults && <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 text-xs text-slate-600"><span>{[game !== "all" && languages[game], period !== 30 && `${period}-day growth`, debounced && `“${debounced}”`, productType !== "all" && products[productType], signal !== "all" && signals[signal], sortBy !== "momentum_desc" && sorts[sortBy]].filter(Boolean).join(" · ")}</span><button type="button" onClick={reset} className="ml-auto min-h-8 font-semibold text-slate-700 hover:text-slate-950 hover:underline">Reset filters</button></div>}

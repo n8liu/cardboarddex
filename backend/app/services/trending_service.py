@@ -1,3 +1,5 @@
+from app.config import get_settings
+from app.services.listing_quality import eligible_observation
 from app.services.image_delivery import card_image_url, image_generation
 from app.common.cache import TTLCache
 import logging
@@ -6,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from redis.exceptions import RedisError
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.common.redis import get_redis
@@ -188,7 +190,7 @@ def calculate_trending_cards(
             func.max(PriceObservation.price).label("max_price"),
         )
         .join(Set, Card.set_id == Set.id)
-        .outerjoin(PriceObservation, PriceObservation.card_id == Card.id)
+        .outerjoin(PriceObservation, and_(PriceObservation.card_id == Card.id, eligible_observation(), PriceObservation.provider != "pokemonpricetracker"))
         .where(Card.name.not_ilike("%code card%"))
         .group_by(Card.id, Card.name, Card.number, Card.rarity, Set.id, Set.name)
     )
@@ -225,6 +227,8 @@ def calculate_trending_cards(
             if pl and isinstance(pl, dict):
                 payload_map[cid] = pl
 
+    from app.services.ppt_prices import primary_quotes
+    ppt_quotes = primary_quotes(db, card_ids)
     candidates: list[dict[str, Any]] = []
     for r in rows:
         cid = r.id
@@ -250,6 +254,10 @@ def calculate_trending_cards(
                 price_change_7d = float(pl["price_change_7d"])
             except (ValueError, TypeError):
                 price_change_7d = 0.0
+
+        if cid in ppt_quotes:
+            market_price = ppt_quotes[cid]["price"]
+            price_change_7d = ppt_quotes[cid].get("price_change_7d")
 
         # Algorithmic Trending Score
         price_factor = min(market_price or 0, 500.0) * 0.08
@@ -332,7 +340,7 @@ def calculate_trending_pokemon(
     name_filter = or_(*[Card.name.ilike(f"%{n}%") for n in active_pokemon_names])
     enrichment_rows = db.execute(
         select(Card.id, Card.name, func.max(PriceObservation.price))
-        .outerjoin(PriceObservation, PriceObservation.card_id == Card.id)
+        .outerjoin(PriceObservation, and_(PriceObservation.card_id == Card.id, eligible_observation(), PriceObservation.provider != "pokemonpricetracker"))
         .where(name_filter, Card.name.not_ilike("%code card%"))
         .group_by(Card.id, Card.name)
     ).all()
@@ -439,7 +447,8 @@ def get_trending_dashboard(
     clean_q = (q or "").strip().lower()
     cache_key = f"{timeframe}:{clean_q}:observations={include_observation_volume}"
     cache_key = f"{image_generation()}:{cache_key}"
-    redis_key = f"cardboarddex:trending:{cache_key}"
+    source_key = "ppt" if get_settings().ppt_primary_enabled else "legacy"
+    redis_key = f"cardboarddex:{source_key}:trending:identity-v1:{cache_key}"
     now = datetime.now(UTC)
 
     # 1. Redis Cache

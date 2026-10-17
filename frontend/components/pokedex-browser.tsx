@@ -790,7 +790,7 @@ function PokemonCard({
           }}
           className="relative mt-2 flex h-32 w-full items-center justify-center overflow-hidden rounded-xl bg-slate-50/70 p-2 transition-colors duration-300 group-hover:bg-slate-100/80"
         >
-          <div className="relative h-28 w-28 transition-transform duration-300 ease-out group-hover:scale-110">
+          <div className="relative h-28 w-28 scale-120 transition-transform duration-300 ease-out group-hover:scale-[1.21]">
             <Image
               src={pokemon.artwork}
               alt={pokemon.name}

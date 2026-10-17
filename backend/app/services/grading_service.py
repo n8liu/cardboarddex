@@ -1,3 +1,5 @@
+from app.services.price_sources import grading_observation
+from app.services.listing_quality import eligible_observation
 from app.services.image_delivery import card_image_url, image_generation
 from app.common.cache import TTLCache
 import hashlib
@@ -56,7 +58,8 @@ def calculate_grading_profit(
         f"{min_spread}:{psa9_safe_only}:{set_id}:{q.strip().lower()}:{page}:{per_page}"
     )
     cache_hash = hashlib.md5(cache_key_raw.encode()).hexdigest()
-    redis_key = f"cardboarddex:grading_profit:{cache_hash}"
+    source_key = "ppt" if get_settings().ppt_primary_enabled else "legacy"
+    redis_key = f"cardboarddex:{source_key}:grading_profit:identity-v1:{cache_hash}"
     redis_key = f"{image_generation()}:{redis_key}"
 
     # 1. Try Redis cache first
@@ -79,7 +82,7 @@ def calculate_grading_profit(
 
     # Query all card IDs with at least one graded comp
     graded_card_ids_stmt = select(PriceObservation.card_id).where(
-        PriceObservation.grading_company.is_not(None)
+        PriceObservation.grading_company.is_not(None), grading_observation()
     ).distinct()
     graded_card_ids = list(db.scalars(graded_card_ids_stmt))
 
@@ -140,7 +143,7 @@ def calculate_grading_profit(
                 order_by=(PriceObservation.observed_at.desc(), PriceObservation.id.desc()),
             ).label("position"),
         )
-        .where(PriceObservation.card_id.in_(filtered_card_ids))
+        .where(PriceObservation.card_id.in_(filtered_card_ids), grading_observation())
         .subquery()
     )
     all_obs = db.scalars(
@@ -150,7 +153,7 @@ def calculate_grading_profit(
         .options(load_only(
             PriceObservation.card_id, PriceObservation.price,
             PriceObservation.grading_company, PriceObservation.grade,
-            PriceObservation.observed_at,
+            PriceObservation.observed_at, PriceObservation.provider,
         ))
         .order_by(PriceObservation.observed_at.desc(), PriceObservation.id.desc())
     ).all()
@@ -271,6 +274,8 @@ def calculate_grading_profit(
                 number=card.number,
                 rarity=card.rarity,
                 image_url=card_image_url(card.id),
+                graded_source="pokemonpricetracker" if any(o.provider == "pokemonpricetracker" and o.grading_company for o in c_obs) else "ebay",
+                graded_metric="median_7d" if any(o.provider == "pokemonpricetracker" and o.grading_company for o in c_obs) else "asking_listing",
                 raw_price=round(raw_price, 2),
                 psa10_price=round(psa10_price, 2) if psa10_price is not None else None,
                 psa10_profit=psa10_profit,

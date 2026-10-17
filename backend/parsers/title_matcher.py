@@ -333,6 +333,8 @@ def extract_printing_from_title(title: str) -> str:
         return "Reverse Holofoil"
     if RE_UNLIMITED.search(title):
         return "Unlimited"
+    if re.search(r"\b(?:non[-\s]*(?:holo|foil)|normal)\b", title, re.IGNORECASE):
+        return "Normal"
     if RE_HOLO.search(title):
         return "Holofoil"
     return "Standard"
@@ -592,6 +594,8 @@ def parse_ebay_title(
     *,
     is_target_japanese: bool = False,
     is_target_sealed: bool = False,
+    strict: bool = False,
+    target_printed_total: int | None = None,
 ) -> TitleMatchResult:
     """
     Parse an eBay listing title against a target canonical card or sealed product.
@@ -605,6 +609,12 @@ def parse_ebay_title(
             status="rejected",
             rejection_reason=RejectionReason.INSUFFICIENT_EVIDENCE.value,
         )
+
+    if strict:
+        issue = strict_identity_issue(clean_title, target_card_number, target_set_name,
+                                      target_printed_total, is_target_sealed, target_card_name)
+        if issue:
+            return TitleMatchResult(status=issue[0], rejection_reason=issue[1])
 
     if is_target_sealed:
         return parse_sealed_ebay_title(
@@ -792,3 +802,75 @@ def parse_ebay_title(
         confidence=0.90 if matched_number else 0.80,
         details={"condition": raw_condition, "printing": printing},
     )
+
+
+def strict_identity_issue(title: str, number: str, set_name: str,
+                          printed_total: int | None, sealed: bool = False, card_name: str = ""):
+    """Require positive identity evidence; never use a slab grade as a card number."""
+    if re.search(r"\b(choose|pick|select)\s+(your|a|the)|\byou\s+choose\b", title, re.I):
+        return "rejected", "multi_product_offer"
+    normalized = normalize_tokens(title)
+    set_tokens = normalize_tokens(set_name).split()
+    if not set_tokens or not all(token in normalized.split() for token in set_tokens):
+        return "uncertain", "set_identity_unconfirmed"
+    if sealed:
+        return None
+    target_name = normalize_tokens(extract_core_card_name(card_name))
+    for suffix in ("ex", "gx", "v", "vmax", "vstar", "lv x"):
+        if target_name and re.search(rf"\b{re.escape(target_name)}\s+{suffix}\b", normalized) and not target_name.endswith(suffix):
+            return "rejected", "card_name_mismatch"
+    # Remove grading expressions before searching numeric identity.
+    identity = re.sub(r"\b(?:PSA|BGS|CGC|SGC|Beckett)\s*(?:GEM[- ]?MT|GEM[- ]?MINT|MINT)?\s*\d+(?:\.\d+)?", "", title, flags=re.I)
+    expected = normalize_card_number(number)
+    found = extract_numbers_from_title(identity)
+    if not expected or (expected not in found and expected not in normalize_tokens(identity).split()):
+        return ("rejected", "card_number_mismatch") if found else ("uncertain", "card_number_unconfirmed")
+    totals = re.findall(r"[A-Za-z0-9]+\s*/\s*([A-Za-z0-9]+)", identity)
+    expected_total = str(number).split("/", 1)[1] if "/" in str(number) else str(printed_total or "")
+    if expected_total and totals and any(normalize_card_number(t) != normalize_card_number(expected_total) for t in totals):
+        return "rejected", "card_number_denominator_mismatch"
+    return None
+
+
+def is_sealed_product(name: str) -> bool:
+    """Identify packaging explicitly; missing rarity alone does not imply sealed."""
+    return bool(re.search(r"\b(booster (?:box|pack|bundle)|elite trainer box|etb|tin|blister|collection box|premium collection|sealed case|build.*battle|theme deck|battle deck)\b", name, re.I))
+
+
+def image_number_matches(text: str, number: str, printed_total: int | None):
+    """OCR identity evidence shares the title parser's number normalization."""
+    numbers = extract_numbers_from_title(text)
+    expected = normalize_card_number(number)
+    expected_total = str(number).split("/", 1)[1] if "/" in str(number) else str(printed_total or "")
+    fractions = re.findall(r"([A-Za-z0-9]+)\s*/\s*([A-Za-z0-9]+)", text)
+    if expected_total and fractions and not any(normalize_card_number(n) == expected and normalize_card_number(d) == normalize_card_number(expected_total) for n, d in fractions):
+        return "rejected", "image_card_number_mismatch", numbers
+    if numbers and expected not in numbers:
+        return "rejected", "image_card_number_mismatch", numbers
+    if expected not in numbers:
+        return "uncertain", "image_identifier_unreadable", numbers
+    return "matched", "artwork_and_number_match", numbers
+
+
+def listing_specifics_issue(item: dict, number: str, set_name: str, result: TitleMatchResult, japanese=False):
+    """Check structured evidence when present; missing fields confer no assurance."""
+    if item.get("itemGroupType") or item.get("itemGroupHref"):
+        return "multi_product_offer"
+    options = item.get("buyingOptions") or []
+    if "AUCTION" in options:
+        return "auction_not_comparable_asking_price"
+    aspects = {normalize_tokens(str(x.get("name", ""))): str(x.get("value", ""))
+               for x in (item.get("localizedAspects") or []) if isinstance(x, dict)}
+    if aspects.get("card number") and normalize_card_number(aspects["card number"]) != normalize_card_number(number):
+        return "item_specifics_number_conflict"
+    if aspects.get("set") and normalize_tokens(aspects["set"]) != normalize_tokens(set_name):
+        return "item_specifics_set_conflict"
+    language = aspects.get("language", "").lower()
+    if language and language != ("japanese" if japanese else "english"):
+        return "item_specifics_language_conflict"
+    graded = aspects.get("graded", "").lower()
+    if (graded == "yes" and not result.is_graded) or (graded == "no" and result.is_graded):
+        return "item_specifics_grade_conflict"
+    if str(item.get("condition", "")).lower() == "graded" and not result.is_graded:
+        return "item_specifics_grade_conflict"
+    return None

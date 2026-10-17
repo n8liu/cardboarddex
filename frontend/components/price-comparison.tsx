@@ -6,7 +6,7 @@ type Comparison = {
   previous_price?: number | null;
   comparison_price?: number | null;
   price_change_amount?: number | null;
-  comparison_source?: "history" | "estimated" | null;
+  comparison_source?: "history" | "estimated" | "pokemonpricetracker_history" | null;
 };
 
 export function PriceComparison({ value, period }: { value: Comparison; period: string }) {
@@ -20,7 +20,7 @@ export function PriceComparison({ value, period }: { value: Comparison; period: 
       <div className="text-slate-500">{value.comparison_source === "estimated" ? "Est. previous" : "Previous"}: {formatPrice(previous)} → {formatPrice(current)}</div>
       <div className={change > 0 ? "text-emerald-700" : change < 0 ? "text-rose-700" : "text-slate-500"}>
         {change > 0 ? "+" : ""}{formatPrice(change)} ({period})
-        {value.comparison_source === "history" && <span className="text-slate-500"> · Historical prices</span>}
+        {(value.comparison_source === "history" || value.comparison_source === "pokemonpricetracker_history") && <span className="text-slate-500"> · Historical prices</span>}
       </div>
     </div>
   );

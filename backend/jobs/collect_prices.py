@@ -298,6 +298,9 @@ def run_price_collection(
     card_id: str | None = None,
     card_ids: list[str] | None = None,
 ) -> dict[str, int]:
+    if not get_settings().tcgapi_ingestion_enabled:
+        return {"status": "disabled"}
+
     global _BULK_PRICES_SUPPORTED
     configured_limit = limit if limit is not None else (len(card_ids) if card_ids is not None else get_settings().price_collection_card_limit)
     tcgapi_client = tcgapi or TCGAPIClient()

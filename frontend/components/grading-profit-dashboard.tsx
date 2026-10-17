@@ -582,6 +582,7 @@ export function GradingProfitDashboard({ initialData }: GradingProfitDashboardPr
                       {/* Compact Raw + Fee summary */}
                       <div className="mt-2 text-[10px] text-slate-500 font-mono">
                         <span>Raw: ${item.raw_price.toFixed(2)}</span>
+                        {item.graded_source === "pokemonpricetracker" && <p>PPT · PSA 7-day median · eBay / Fanatics sales</p>}
                         <span className="text-slate-300"> · </span>
                         <span>Total: ${totalBuyIn.toFixed(2)}</span>
                       </div>

@@ -1,5 +1,6 @@
 import type { MarketHistory, PriceFreshness } from "@/types/market-data";
 export type CardSummary = {
+  market_source?: string | null;
   id: string;
   name: string;
   set_id: string;
@@ -19,6 +20,7 @@ export type CardDetail = CardSummary & {
 };
 
 export type MarketMoverItem = {
+  market_source?: string | null;
   card_id: string;
   name: string;
   set_id?: string | null;
@@ -32,7 +34,7 @@ export type MarketMoverItem = {
   price_change_amount?: number | null;
   previous_price?: number | null;
   comparison_price?: number | null;
-  comparison_source?: "history" | "estimated" | null;
+  comparison_source?: "history" | "estimated" | "pokemonpricetracker_history" | null;
 
   period: string;
   direction: "up" | "down";
@@ -103,7 +105,41 @@ export type PriceObservation = {
   price_change_30d?: number | null;
 };
 
+export type ListingGroup = {
+  printing: string;
+  condition: string;
+  lowest_matched_price: number | null;
+  avg_listing_price: number | null;
+  median_listing_price: number | null;
+  listing_sample_count: number;
+  listing_seller_count: number;
+};
+
+export type ProviderQuote = {
+  provider: string; language: string; currency: string; printing: string | null;
+  condition: string | null; grade: string | null; metric: string; price: number;
+  price_date: string; fetched_at: string | null; stale: boolean; primary: boolean;
+  price_change_24h?: number | null; price_change_7d?: number | null; price_change_30d?: number | null;
+  smart_price_outlier?: boolean;
+};
+export type ProviderHistorySeries = {
+  id: string; provider: string; language: string; currency: string;
+  printing: string | null; condition: string | null; grade: string | null; metric: string;
+  fetched_at: string; points: { date: string; price: number | null; sales_count: number | null }[];
+};
+
 export type CardPricing = {
+  provider_quotes?: ProviderQuote[];
+  provider_history?: ProviderHistorySeries[];
+  ppt_mapped?: boolean;
+  lowest_matched_price?: number | null;
+  listing_seller_count?: number;
+  selected_printing?: string;
+  selected_condition?: string;
+  listing_groups?: ListingGroup[];
+  eligibility_version?: string;
+  excluded_listing_count?: number;
+  unconfirmed_listings?: { item_id: string; title: string; price?: number | null; listing_url?: string | null; status: string; reasons: string[] }[];
   card_id: string;
   provider_states: ProviderPricingState[];
   observations: PriceObservation[];
@@ -114,6 +150,8 @@ export type CardPricing = {
 };
 
 export type GradingProfitItem = {
+  graded_source?: string | null;
+  graded_metric?: string | null;
   card_id: string;
   name: string;
   set_id?: string | null;
@@ -157,11 +195,12 @@ export type GradingProfitResponse = {
 };
 
 export type SealedSignalItem = PriceFreshness & {
+  market_source?: string | null;
   return_days?: number;
   price_change_amount?: number | null;
   previous_price?: number | null;
   comparison_price?: number | null;
-  comparison_source?: "history" | "estimated" | null;
+  comparison_source?: "history" | "estimated" | "pokemonpricetracker_history" | null;
 
   return_percent?: number | null;
   history?: MarketHistory;
@@ -308,10 +347,13 @@ export type TrackActionPayload = {
   action?: "click" | "search" | "view";
 };
 
-export type LiveUpdateProviderFilter = "all" | "ebay" | "tcgapi";
+export type LiveUpdateProviderFilter = "all" | "ebay" | "tcgapi" | "pokemonpricetracker";
 export type LiveUpdateGradeFilter = "all" | "graded" | "psa10" | "psa9" | "raw";
 
 export type LiveUpdateItem = {
+  update_type?: string;
+  price_date?: string | null;
+  metric?: string | null;
   id: string;
   card_id: string;
   card_name: string;

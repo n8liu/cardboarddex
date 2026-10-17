@@ -10,6 +10,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=PROJECT_ROOT / ".env", extra="ignore")
 
+    listing_image_checks_enabled: bool = False
+    listing_image_acceptance_enabled: bool = False
+
     database_url: str = "sqlite:///./cardboarddex.db"
     redis_url: str = "redis://localhost:6379/0"
     cache_redis_url: str | None = None
@@ -34,6 +37,13 @@ class Settings(BaseSettings):
             password=self.postgres_password, host=self.postgres_host,
             port=5432, database=self.postgres_db,
         ).render_as_string(hide_password=False)
+    ppt_api_key: str | None = None
+    ppt_ingestion_enabled: bool = False
+    ppt_primary_enabled: bool = False
+    tcgapi_ingestion_enabled: bool = True
+    ppt_daily_credit_limit: int = Field(default=20000, ge=1, le=20000)
+    ppt_minute_weight_limit: int = Field(default=55, ge=1, le=55)
+    ppt_batch_size: int = Field(default=8, ge=1, le=15)
     tcgapi_api_key: str | None = None
     tcgapi_base_url: str = "https://api.tcgapi.dev/v1"
     tcgapi_daily_request_limit: int = 2000

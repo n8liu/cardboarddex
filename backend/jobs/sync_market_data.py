@@ -62,6 +62,9 @@ def record_failure(db, card_id, status):
 
 @shared_task(name="jobs.sync_market_data.sync_market_data")
 def sync_market_data(limit=5, card_ids=None, discover=False):
+    from app.config import get_settings
+    if not get_settings().tcgapi_ingestion_enabled:
+        return {"status": "disabled"}
     if not 1 <= limit <= 50 or (card_ids and len(card_ids) > limit):
         raise ValueError("limit must be 1–50 and bound the requested card IDs")
     client = TCGAPIClient()

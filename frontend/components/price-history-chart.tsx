@@ -13,6 +13,7 @@ import {
 } from "recharts";
 
 export type ChartPoint = {
+  [key: string]: string | number | null | undefined;
   date: string;
   price?: number | null;
   rawPrice?: number | null;
@@ -28,7 +29,10 @@ export type SeriesCounts = {
   psa9?: number;
 };
 
+export type ExtraSeries = { key: string; name: string; color: string };
+
 type PriceHistoryChartProps = {
+  extraSeries?: ExtraSeries[];
   data: ChartPoint[];
   currency: string;
   label?: string;
@@ -54,12 +58,14 @@ function MultiLineTooltip({
   hasPsa10,
   hasPsa9,
   customLabel,
+  extraSeries = [],
 }: any) {
   if (!active || !label) return null;
   const point: ChartPoint | undefined = payload?.[0]?.payload;
   if (!point) return null;
 
   const seriesConfigs = [
+    ...extraSeries.map((s: ExtraSeries) => ({ ...s, val: point[s.key], active: true })),
     { key: "psa10Price", name: "PSA 10 eBay", color: "#f59e0b", val: point.psa10Price, active: hasPsa10 },
     { key: "psa9Price", name: "PSA 9 eBay", color: "#0284c7", val: point.psa9Price, active: hasPsa9 },
     { key: "tcgPrice", name: "TCG API", color: "#8b5cf6", val: point.tcgPrice, active: hasTcg },
@@ -109,7 +115,7 @@ function MultiLineTooltip({
   );
 }
 
-export function PriceHistoryChart({ data, currency, label = "eBay listings", obsCounts }: PriceHistoryChartProps) {
+export function PriceHistoryChart({ data, currency, label = "eBay listings", obsCounts, extraSeries = [] }: PriceHistoryChartProps) {
   const hasRaw = data.some((d) => d.rawPrice !== null && d.rawPrice !== undefined);
   const hasTcg = data.some((d) => d.tcgPrice !== null && d.tcgPrice !== undefined);
   const hasPsa10 = data.some((d) => d.psa10Price !== null && d.psa10Price !== undefined);
@@ -127,7 +133,7 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
       (d.tcgPrice !== null && d.tcgPrice !== undefined) ||
       (d.psa10Price !== null && d.psa10Price !== undefined) ||
       (d.psa9Price !== null && d.psa9Price !== undefined) ||
-      (d.price !== null && d.price !== undefined),
+      (d.price !== null && d.price !== undefined) || extraSeries.some((s) => typeof d[s.key] === "number"),
   );
 
   if (validPoints.length === 0) {
@@ -141,31 +147,16 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
     );
   }
 
-  // If only 1 observation date exists, synthesize a 24h baseline so Recharts renders the initial price level
-  const chartData =
-    validPoints.length === 1
-      ? [
-          {
-            ...validPoints[0],
-            date: new Date(new Date(`${validPoints[0].date}T00:00:00Z`).getTime() - 86400000)
-              .toISOString()
-              .slice(0, 10),
-          },
-          validPoints[0],
-        ]
-      : data;
+  const chartData = data;
 
   // Compute Y-axis domain based on currently displayed lines with 2 or more points
-  const qualifyingKeys: (keyof ChartPoint)[] = [];
+  const qualifyingKeys: (keyof ChartPoint)[] = extraSeries.map((s) => s.key);
   if ((obsCounts?.raw ?? 0) >= 2) qualifyingKeys.push("rawPrice");
   if ((obsCounts?.tcg ?? 0) >= 2) qualifyingKeys.push("tcgPrice");
   if ((obsCounts?.psa10 ?? 0) >= 2) qualifyingKeys.push("psa10Price");
   if ((obsCounts?.psa9 ?? 0) >= 2) qualifyingKeys.push("psa9Price");
 
-  const activeKeys =
-    qualifyingKeys.length > 0
-      ? qualifyingKeys
-      : (["rawPrice", "tcgPrice", "psa10Price", "psa9Price", "price"] as (keyof ChartPoint)[]);
+  const activeKeys: (keyof ChartPoint)[] = ["rawPrice", "tcgPrice", "psa10Price", "psa9Price", "price", ...extraSeries.map((s) => s.key)];
 
   const scaleValues: number[] = [];
   for (const d of chartData) {
@@ -236,6 +227,7 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
                 hasPsa10={hasPsa10}
                 hasPsa9={hasPsa9}
                 customLabel={label}
+                extraSeries={extraSeries}
               />
             }
           />
@@ -246,6 +238,7 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
             iconType="circle"
             iconSize={8}
           />
+          {extraSeries.map((s) => <Line key={s.key} dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} connectNulls={false} dot={data.filter((point) => typeof point[s.key] === "number").length <= 5 ? { r: 3 } : false} type="linear" />)}
           {hasRaw && (
             <Area
               connectNulls

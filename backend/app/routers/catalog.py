@@ -1,3 +1,4 @@
+from app.services.price_sources import market_observation
 from app.common.response_cache import cached_read, response_cache
 from app.services.image_delivery import card_image_url
 from app.common.cache import TTLCache
@@ -84,7 +85,7 @@ def search_cards(
         select(PriceObservation.price)
         .where(
             PriceObservation.card_id == Card.id,
-            PriceObservation.provider == "tcgapi",
+            market_observation(),
             PriceObservation.grading_company.is_(None),
         )
         .order_by(
@@ -104,7 +105,7 @@ def search_cards(
         select(PriceObservation.provider_updated_at)
         .where(
             PriceObservation.card_id == Card.id,
-            PriceObservation.provider == "tcgapi",
+            market_observation(),
             PriceObservation.grading_company.is_(None),
         )
         .order_by(
@@ -140,7 +141,7 @@ def search_cards(
                 ).label("position"),
             )
             .where(
-                PriceObservation.provider == "tcgapi",
+                market_observation(),
                 PriceObservation.grading_company.is_(None),
             )
             .subquery()
@@ -219,6 +220,8 @@ def search_cards(
         for card, card_set, market_price, market_currency, latest_synced in rows
     ]
 
+    from app.services.ppt_prices import label_market_sources
+    label_market_sources(db, results)
     return results
 
 

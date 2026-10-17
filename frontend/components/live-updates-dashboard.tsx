@@ -158,7 +158,8 @@ function LiveUpdateRow({ item, grid = false }: { item: LiveUpdateItem; grid?: bo
                 isEbay ? "bg-sky-500" : "bg-emerald-500"
               }`}
             />
-            <span>{isEbay ? "eBay Verified Comp" : "TCG API Sync"}</span>
+            <span>{isEbay ? "eBay matched asking listing" : item.provider === "pokemonpricetracker" ? (item.update_type === "graded_aggregate" ? "PPT graded aggregate · 7-day median" : "PPT market update") : "TCG API Sync"}</span>
+            {item.provider === "pokemonpricetracker" && item.price_date && <span className="text-[10px] text-slate-500">Price date {item.price_date.slice(0, 10)}</span>}
             <span>•</span>
             <span>{formatRelativeTime(item.observed_at)}</span>
           </div>
@@ -198,7 +199,7 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
       ? new URLSearchParams(window.location.search)
       : searchParams;
     const p = (params.get("provider") as LiveUpdateProviderFilter) || "all";
-    const validProviders: LiveUpdateProviderFilter[] = ["all", "ebay", "tcgapi"];
+    const validProviders: LiveUpdateProviderFilter[] = ["all", "ebay", "tcgapi", "pokemonpricetracker"];
     const provider = validProviders.includes(p) ? p : "all";
 
     const gf = (params.get("grade") as LiveUpdateGradeFilter) || "all";
@@ -407,7 +408,7 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
             Live Updated Items &amp; Comps
           </h1>
           <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-600">
-            Streaming feed of verified market comps, eBay sold listings, graded slab submissions, and TCG API price syncs in real-time chronological order.
+            Current market updates, matched eBay asking listings, and provider-reported graded sales aggregates. History backfills are excluded.
           </p>
         </div>
 
@@ -461,6 +462,10 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
               }`}
             >
               eBay Comps
+            </button>
+            <button type="button" onClick={() => handleProviderChange("pokemonpricetracker")}
+              className={`rounded-lg px-3 py-2 text-xs font-semibold ${provider === "pokemonpricetracker" ? "bg-emerald-100 text-emerald-800" : "text-slate-600"}`}>
+              Pokémon Price Tracker
             </button>
             <button
               type="button"

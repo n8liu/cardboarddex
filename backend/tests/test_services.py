@@ -158,6 +158,13 @@ def test_calculate_grading_profit_with_comps(memory_db):
         price=Decimal("250.00"),
         observed_at=datetime.now(UTC),
     )
+    from app.models import ListingAssessment
+    from app.services.listing_quality import MATCHER_VERSION
+    for obs in (obs_psa10, obs_psa9):
+        memory_db.add(ListingAssessment(fingerprint=obs.fingerprint, card_id=obs.card_id,
+            item_id=obs.provider_card_id, version=MATCHER_VERSION, status="matched",
+            text_status="matched", image_status="not_applicable", reasons=[], evidence={}, source={}))
+        obs.payload = {"assessment_fingerprint": obs.fingerprint}
     memory_db.add_all([obs_raw, obs_psa10, obs_psa9])
     memory_db.commit()
 

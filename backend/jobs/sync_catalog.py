@@ -315,6 +315,9 @@ def run_catalog_sync(
     resume: bool = False,
     redis_client: Any = None,
 ) -> dict[str, int]:
+    if not get_settings().tcgapi_ingestion_enabled:
+        return {"status": "disabled"}
+
     tcgapi_client = client or TCGAPIClient()
     configured_limit = set_limit if set_limit is not None else get_settings().tcgapi_sync_set_limit
     set_count = 0

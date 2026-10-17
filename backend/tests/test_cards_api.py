@@ -676,6 +676,16 @@ def test_get_grading_profit_endpoint() -> None:
             price=Decimal("40.00"),
             observed_at=datetime(2026, 8, 29, 11, 0, tzinfo=UTC),
         ))
+        session.flush()
+        from app.models import ListingAssessment
+        from sqlalchemy import select
+        from app.services.listing_quality import MATCHER_VERSION
+        for obs in session.scalars(select(PriceObservation).where(PriceObservation.provider == "ebay")):
+            assessment = ListingAssessment(fingerprint=obs.fingerprint, card_id=obs.card_id,
+                item_id=obs.provider_card_id, version=MATCHER_VERSION, status="matched",
+                text_status="matched", image_status="not_applicable", reasons=[], evidence={}, source={})
+            session.add(assessment)
+            obs.payload = {"assessment_fingerprint": obs.fingerprint}
         session.commit()
 
     def override_db() -> Generator[Session, None, None]:
@@ -1055,7 +1065,7 @@ def test_get_pokemon_cards_nonexistent(client: TestClient) -> None:
     assert data["cards"] == []
 
 
-def test_get_card_prices_computes_avg_listing_price() -> None:
+def test_get_card_prices_excludes_unchecked_listing_prices() -> None:
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -1109,7 +1119,8 @@ def test_get_card_prices_computes_avg_listing_price() -> None:
             res = test_client.get("/cards/char-1/prices")
             assert res.status_code == 200
             data = res.json()
-            assert data["avg_listing_price"] == 250.0
+            assert data["avg_listing_price"] is None
+            assert data["excluded_listing_count"] == 3
     finally:
         app.dependency_overrides.clear()
 

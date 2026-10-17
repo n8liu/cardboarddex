@@ -1,3 +1,4 @@
+from app.services.price_sources import market_observation
 """A small, cached homepage snapshot. Never calls an upstream provider."""
 import math
 from datetime import UTC, datetime, timedelta
@@ -32,7 +33,7 @@ def build_home_overview(db: Session) -> HomeOverview:
         partition_by=PriceObservation.card_id,
         order_by=(PriceObservation.observed_at.desc(), PriceObservation.id.desc()),
     ).label('position')).where(
-        PriceObservation.provider == 'tcgapi', PriceObservation.currency == 'USD',
+        market_observation(), PriceObservation.currency == 'USD',
         PriceObservation.observed_at <= now, PriceObservation.grading_company.is_(None),
     ).subquery()
     product_type = func.coalesce(
@@ -80,13 +81,15 @@ def build_home_overview(db: Session) -> HomeOverview:
             MarketHistory.card_id == row['id'], MarketHistory.printing == printing,
             MarketHistory.day >= today - timedelta(days=30), MarketHistory.day <= today,
         ).order_by(MarketHistory.day)).all()
+        from app.services.ppt_prices import market_history as ppt_market_history
+        ppt_history = ppt_market_history(db, row["id"], 30)
         dated = freshness({'market_price_as_of': row['price_date']}, today=today)
         highlights[kind] = HomeHighlight(
             card_id=row['id'], name=row['name'], set_name=row['set_name'], image_url=card_image_url(row['id']),
             printing=row['printing'], market_price=float(row['price']), change_percent=row['change'],
             market_price_as_of=dated['market_price_as_of'], price_freshness=dated['price_freshness'],
             observed_at=row['observed_at'],
-            history=[{'date': h.day.isoformat(), 'market_price': float(h.market_price) if h.market_price is not None else None,
+            history=ppt_history['points'] if ppt_history else [{'date': h.day.isoformat(), 'market_price': float(h.market_price) if h.market_price is not None else None,
                       'sales_volume': None, 'avg_sales_price': None} for h in history],
         )
 

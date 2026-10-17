@@ -35,6 +35,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Install minimal runtime libraries (libpq for postgresql client)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
+    tesseract-ocr \
     curl \
     && rm -rf /var/lib/apt/lists/*
 

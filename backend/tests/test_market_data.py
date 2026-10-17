@@ -340,7 +340,8 @@ def test_profile_seven_day_raw_usd_listing_sample(db):
             observed_at=now - timedelta(days=days), currency=currency, grading_company="PSA" if graded else None))
     db.commit()
     result = get_card_prices("box", Response(), days=1, db=db)
-    assert result.listing_sample_count == 2
-    assert result.avg_listing_price == 30
-    assert result.median_listing_price == 30
+    assert result.listing_sample_count == 0
+    assert result.avg_listing_price is None
+    assert result.median_listing_price is None
+    assert result.excluded_listing_count > 0
     assert result.tcg_market_prices == []

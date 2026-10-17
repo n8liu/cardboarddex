@@ -1,3 +1,5 @@
+from app.config import get_settings
+from app.services.price_sources import market_observation
 from app.services.image_delivery import card_image_url, image_generation
 from app.common.cache import TTLCache
 import hashlib
@@ -82,7 +84,8 @@ def calculate_sealed_signals(
     now = time.time()
     cache_key_raw = f"v5:{game}:{period}:{era}:{signal}:{product_type}:{sort_by}:{set_id}:{q.strip().lower()}:{page}:{per_page}"
     cache_hash = hashlib.md5(cache_key_raw.encode()).hexdigest()
-    redis_key = f"cardboarddex:sealed_signals:{cache_hash}"
+    source_key = "ppt" if get_settings().ppt_primary_enabled else "legacy"
+    redis_key = f"cardboarddex:{source_key}:sealed_signals:{cache_hash}"
     redis_key = f"{image_generation()}:{redis_key}"
 
     # 1. Try Redis cache first
@@ -166,7 +169,7 @@ def calculate_sealed_signals(
                 order_by=(PriceObservation.observed_at.desc(), PriceObservation.id.desc()),
             ).label("position"),
         )
-        .where(PriceObservation.card_id.in_(card_ids), PriceObservation.provider == "tcgapi")
+        .where(PriceObservation.card_id.in_(card_ids), market_observation())
         .subquery()
     )
     obs_list = db.scalars(
@@ -177,6 +180,8 @@ def calculate_sealed_signals(
     obs_map: dict[str, PriceObservation] = {o.card_id: o for o in obs_list}
 
     returns = historical_returns(db, card_ids, period)
+    from app.services.ppt_prices import primary_quotes, market_history as ppt_market_history
+    ppt_quotes = primary_quotes(db, card_ids)
     today = datetime.now(UTC).date()
     all_scored_items: list[tuple[SealedSignalItem, str]] = []
     strong_buy_count = 0
@@ -311,11 +316,12 @@ def calculate_sealed_signals(
             release_date=cset.release_date,
             image_url=card_image_url(card.id),
             product_type=disp_type,
+            market_source=obs.provider if obs else None,
             market_price=round(market_price, 2),
             **freshness(p),
             checked_at=obs.provider_updated_at if obs else None,
             return_days=period,
-            return_percent=returns.get((card.id, "Normal" if obs.printing in (None, "Standard") else obs.printing)) if obs else None,
+            return_percent=(ppt_quotes[card.id].get(f"price_change_{period}d") if card.id in ppt_quotes else returns.get((card.id, "Normal" if obs.printing in (None, "Standard") else obs.printing)) if obs else None),
 
             low_price=round(low_price, 2) if low_price is not None else None,
             median_price=round(median_price, 2) if median_price is not None else None,
@@ -396,6 +402,8 @@ def calculate_sealed_signals(
     for item in paged_items:
         item.history = summarize_history(history_by_card.get(item.card_id, []), item.card_id, period,
                                          selected_printings.get(item.card_id, "Normal"), today=today)
+        if item.card_id in ppt_quotes:
+            item.history = ppt_market_history(db, item.card_id, period) or item.history
         comparison = item.history if item.history["complete_return_window"] else estimated_price_change(item.market_price, item.return_percent)
         for field in ("previous_price", "comparison_price", "price_change_amount", "comparison_source"):
             setattr(item, field, comparison.get(field))

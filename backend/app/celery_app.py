@@ -9,7 +9,7 @@ celery_app = Celery(
     "cardboarddex",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["jobs.sync_catalog", "jobs.collect_prices", "jobs.collect_ebay_prices", "jobs.cycle_prices", "jobs.sync_market_data"],
+    include=["jobs.sync_catalog", "jobs.collect_prices", "jobs.collect_ebay_prices", "jobs.cycle_prices", "jobs.sync_market_data", "jobs.check_listing_images", "jobs.sync_ppt"],
 )
 
 celery_app.conf.update(
@@ -68,4 +68,23 @@ if settings.market_history_enabled:
         "schedule": crontab(minute=40, hour=4),
         "kwargs": {"limit": 1, "discover": True},
         "options": {"expires": 1800, "time_limit": 600},
+    }
+
+
+if settings.listing_image_checks_enabled:
+    celery_app.conf.beat_schedule["check-listing-images"] = {
+        "task": "jobs.check_listing_images.check_listing_images",
+        "schedule": 180.0,
+        "options": {"expires": 120, "time_limit": 120},
+    }
+
+
+if not settings.tcgapi_ingestion_enabled:
+    for name in ("collect-tcgapi-prices-alternating", "sync-catalog-daily", "sync-market-history", "discover-market-catalog"):
+        celery_app.conf.beat_schedule.pop(name, None)
+
+if settings.ppt_ingestion_enabled:
+    celery_app.conf.beat_schedule["sync-pokemon-price-tracker"] = {
+        "task": "jobs.sync_ppt.sync_ppt", "schedule": 15.0,
+        "options": {"expires": 14, "time_limit": 180},
     }
