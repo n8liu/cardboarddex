@@ -73,3 +73,29 @@ Before and after rollout, record a small sequential sample for catalog, movers, 
 Use cache status headers and structured `Response cache route=... status=... duration_ms=...` logs to compare hit rate and application latency. Rebuild logs include elapsed time and serialized bytes, without search text. Observe errors, 503/retry rates, Redis evictions, available memory, swap, and CPU burst capacity. A 50% improvement in repeat-navigation data wait is a rollout target, not a claimed production result. Cold SQL work and image delivery can still dominate initial visits.
 
 Rollback to the previous application releases if latency, correctness, or resource use regresses. Old and new response namespaces are separate; let disposable entries expire rather than flushing broker/quota data. R2 cutover, thumbnails, broader query/index redesign, and paid capacity remain separate work.
+
+## Trending and volume follow-up — October 18
+
+Operator CI output showed 15-second read timeouts for `/cards/trending` and
+`/cards/top-pokemon-volume`; 11 other smoke checks passed. This is a post-deployment
+verification failure, not a successful full rollout. Do not increase the smoke-test
+read timeout to hide the failing routes.
+
+The local fix introduces `card_observation_stats`: disjoint non-eBay and matched
+assessment joins aggregate narrow observation columns per card. PPT aggregates
+remain excluded from observation-volume metrics. Top Pokémon Volume calculates
+current/prior windows and catalog enrichment in one pass instead of three; Trending
+joins per-card aggregates instead of grouping wide catalog/history joins. Existing
+ranking formulas, immediate click updates and explicit reset behavior are preserved.
+Process cache keys now include pricing mode, and explicit Trending invalidation
+matches the actual source-prefixed Redis namespace.
+
+On the isolated October 17 production restore (395,797 observations including
+1,500 synthetic PPT quotes and 500 synthetic matched assessments), uncached Volume
+completed in 0.546–0.613s and Trending in 1.124–1.148s with PPT both off and on. Redis
+and process caches were bypassed/cleared; each SQL statement had a five-second
+limit. These local measurements do not establish production latency. Full backend
+regression tests passed, including evidence exclusions, half-open time windows,
+PPT-volume exclusion and immediate click-ranking tests. No new migration is needed;
+retain schema 0010. No commit/deployment was performed for this follow-up. Re-run
+production smoke tests and observe both cold and warm requests after release.

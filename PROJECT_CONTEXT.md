@@ -868,3 +868,16 @@ Production has been upgraded to `cardboarddex-1gb` ($7/month `micro_3_0`) and th
 - Image scheduling and automatic acceptance default off. Follow [the rollout and backfill guide](docs/ebay-listing-quality.md) before activation. New backend code requires the migration first. No production migration/deployment/backfill or provider ingestion was performed. Real eBay-photo accuracy and production resource usage remain unmeasured; local image matches do not establish physical authenticity.
 - Validation: 310 backend tests passed (27 skipped), 133 frontend tests passed, TypeScript and production frontend build passed, and `git diff --check` passed. Image tests include actual local Tesseract OCR, wrong artwork/number, rotation, glare, blur, and multi-card fixtures.
 - Applied `0008_listing_assessments` to verified localhost PostgreSQL only. Read-only card-pricing and shared eligible-count queries passed against that database. No historical backfill or image schedule was enabled.
+
+### Trending/volume smoke-test follow-up — October 18
+
+Operator reported post-deployment 15-second read timeouts on Trending and Top
+Pokémon Volume (11 other deployment checks passed). A local code-only correction
+uses per-card aggregates over disjoint non-eBay/matched-listing branches; volume
+windows and catalog enrichment now share one aggregation. PPT aggregates stay out
+of observation-volume counts. Ranking formulas and immediate click updates remain.
+Local restored-data checks: Volume 0.546–0.613s, Trending 1.124–1.148s, with caches
+bypassed and five-second per-statement limits. Full backend suite passed. See
+`docs/performance.md`; private receipt `.system_generated/ppt-rehearsal/dashboard-results.json`.
+This follow-up is not committed or deployed; schema remains 0010. Production
+cold/warm verification is required; do not treat local latency as production proof.

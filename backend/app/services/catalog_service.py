@@ -1,3 +1,4 @@
+from app.services.observation_stats import card_observation_stats
 from app.config import get_settings
 from app.services.price_sources import market_observation
 from app.services.listing_quality import eligible_observation
@@ -463,7 +464,7 @@ def calculate_top_pokemon_volume(
     """Calculate top 50 Pokémon ranked by aggregated observed market value, sales count, or momentum."""
     clean_q = (q or "").strip().lower()
     cache_key = f"{timeframe}:{sort_by}:{clean_q}"
-    cache_key = f"{image_generation()}:{cache_key}"
+    cache_key = f"{image_generation()}:{get_settings().ppt_primary_enabled}:{cache_key}"
     source_key = "ppt" if get_settings().ppt_primary_enabled else "legacy"
     redis_key = f"cardboarddex:{source_key}:identity-v1:top_volume:{cache_key}"
     now = datetime.now(UTC)
@@ -511,34 +512,30 @@ def calculate_top_pokemon_volume(
         prior_start = now - timedelta(days=30)
         prior_end = now
 
-    # Current window stats & prior window stats
-    curr_stats = _bulk_pokemon_window_stats(db, cur_start, cur_end)
-    prior_stats = _bulk_pokemon_window_stats(db, prior_start, prior_end)
-
-    # Bulk Database Enrichment: card counts, top card, catalog average price
+    # One history pass supplies both windows and catalog enrichment.
+    stats = card_observation_stats(cur_start, cur_end, prior_start, prior_end)
     name_filter = or_(*[Card.name.ilike(f"%{n}%") for n in POKEMON_TOP_50_NAMES])
-    enrichment_rows = db.execute(
-        select(
-            Card.id, Card.name,
-            func.sum(PriceObservation.price),
-            func.count(PriceObservation.price),
-            func.max(PriceObservation.price),
-        )
-        .outerjoin(PriceObservation, and_(PriceObservation.card_id == Card.id, eligible_observation(), PriceObservation.provider != "pokemonpricetracker"))
-        .where(name_filter, Card.name.not_ilike("%code card%"))
-        .group_by(Card.id, Card.name)
-    ).all()
+    enrichment_rows = db.execute(select(
+        Card.id, Card.name, stats.c.total_price, stats.c.price_count, stats.c.max_price,
+        stats.c.current_volume, stats.c.current_count, stats.c.prior_volume,
+    ).outerjoin(stats, stats.c.card_id == Card.id)
+      .where(name_filter, Card.name.not_ilike("%code card%"))).all()
+    curr_stats = {n: (0.0, 0) for n in POKEMON_TOP_50_NAMES}
+    prior_stats = {n: (0.0, 0) for n in POKEMON_TOP_50_NAMES}
 
     cards_per_pokemon: dict[str, set[str]] = {n: set() for n in POKEMON_TOP_50_NAMES}
     price_totals: dict[str, float] = {n: 0.0 for n in POKEMON_TOP_50_NAMES}
     price_counts: dict[str, int] = {n: 0 for n in POKEMON_TOP_50_NAMES}
     top_cards: dict[str, tuple[str, str, float] | None] = {n: None for n in POKEMON_TOP_50_NAMES}
 
-    for card_id, card_name, total_price, observation_count, obs_price in enrichment_rows:
+    for card_id, card_name, total_price, observation_count, obs_price, cur_volume, cur_count, prior_volume in enrichment_rows:
         poke = match_to_pokemon(card_name)
         if poke is None or poke not in cards_per_pokemon:
             continue
         cards_per_pokemon[poke].add(card_id)
+        volume, count = curr_stats[poke]
+        curr_stats[poke] = (volume + float(cur_volume or 0), count + int(cur_count or 0))
+        prior_stats[poke] = (prior_stats[poke][0] + float(prior_volume or 0), 0)
         if obs_price is not None:
             price_flt = float(obs_price)
             price_totals[poke] += float(total_price)

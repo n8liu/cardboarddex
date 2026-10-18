@@ -1,5 +1,5 @@
+from app.services.observation_stats import card_observation_stats
 from app.config import get_settings
-from app.services.listing_quality import eligible_observation
 from app.services.image_delivery import card_image_url, image_generation
 from app.common.cache import TTLCache
 import logging
@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from redis.exceptions import RedisError
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.common.redis import get_redis
@@ -56,7 +56,7 @@ def invalidate_trending_cache() -> None:
     r = get_redis()
     if r is not None:
         try:
-            keys = list(r.scan_iter(match="cardboarddex:trending:*", count=100))
+            keys = list(r.scan_iter(match="cardboarddex:*:trending:identity-v1:*", count=100))
             if keys:
                 r.delete(*keys)
         except (RedisError, Exception) as exc:
@@ -148,7 +148,7 @@ def record_action(
                     exc,
                 )
 
-    # Invalidate cached dashboard so counts reflect immediately
+    # Preserve immediate click/search ranking updates.
     invalidate_trending_cache()
 
 
@@ -176,6 +176,7 @@ def calculate_trending_cards(
     """Calculate the top trending/most searched or clicked cards."""
     card_clicks = _get_redis_scores(REDIS_KEY_CARD_CLICKS, _IN_MEMORY_CARD_CLICKS)
 
+    stats = card_observation_stats()
     # Base query template
     base_stmt = (
         select(
@@ -185,18 +186,17 @@ def calculate_trending_cards(
             Card.rarity,
             Set.id.label("set_id"),
             Set.name.label("set_name"),
-            func.count(PriceObservation.id).label("obs_cnt"),
-            func.avg(PriceObservation.price).label("avg_price"),
-            func.max(PriceObservation.price).label("max_price"),
+            func.coalesce(stats.c.obs_cnt, 0).label("obs_cnt"),
+            stats.c.avg_price,
+            stats.c.max_price,
         )
         .join(Set, Card.set_id == Set.id)
-        .outerjoin(PriceObservation, and_(PriceObservation.card_id == Card.id, eligible_observation(), PriceObservation.provider != "pokemonpricetracker"))
+        .outerjoin(stats, stats.c.card_id == Card.id)
         .where(Card.name.not_ilike("%code card%"))
-        .group_by(Card.id, Card.name, Card.number, Card.rarity, Set.id, Set.name)
     )
 
     # 1. Top cards by observation count
-    obs_stmt = base_stmt.order_by(func.count(PriceObservation.id).desc()).limit(200)
+    obs_stmt = base_stmt.order_by(func.coalesce(stats.c.obs_cnt, 0).desc(), Card.id).limit(200)
     if q and q.strip():
         clean_q = q.strip().lower()
         obs_stmt = obs_stmt.where(or_(Card.name.ilike(f"%{clean_q}%"), Set.name.ilike(f"%{clean_q}%")))
@@ -337,12 +337,12 @@ def calculate_trending_pokemon(
         if cnt > 0 and cap_s not in active_pokemon_names:
             active_pokemon_names.append(cap_s)
 
+    stats = card_observation_stats()
     name_filter = or_(*[Card.name.ilike(f"%{n}%") for n in active_pokemon_names])
     enrichment_rows = db.execute(
-        select(Card.id, Card.name, func.max(PriceObservation.price))
-        .outerjoin(PriceObservation, and_(PriceObservation.card_id == Card.id, eligible_observation(), PriceObservation.provider != "pokemonpricetracker"))
+        select(Card.id, Card.name, stats.c.max_price)
+        .outerjoin(stats, stats.c.card_id == Card.id)
         .where(name_filter, Card.name.not_ilike("%code card%"))
-        .group_by(Card.id, Card.name)
     ).all()
 
     cards_per_pokemon: dict[str, set[str]] = {n: set() for n in active_pokemon_names}
@@ -446,7 +446,7 @@ def get_trending_dashboard(
     """Calculate all three trending columns in a single unified payload with caching."""
     clean_q = (q or "").strip().lower()
     cache_key = f"{timeframe}:{clean_q}:observations={include_observation_volume}"
-    cache_key = f"{image_generation()}:{cache_key}"
+    cache_key = f"{image_generation()}:{get_settings().ppt_primary_enabled}:{cache_key}"
     source_key = "ppt" if get_settings().ppt_primary_enabled else "legacy"
     redis_key = f"cardboarddex:{source_key}:trending:identity-v1:{cache_key}"
     now = datetime.now(UTC)

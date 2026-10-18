@@ -290,3 +290,27 @@ def test_identity_rechecks_old_images_and_does_not_treat_non_holo_as_holo(db):
     db.commit()
     a, _ = assess_text(db, db.get(Card, "c"), item(title="Charizard Base Set 4/102 Non-Holo Near Mint"))
     assert a.status == "pending" and a.attempts == 0
+
+
+def test_analytics_windows_exclude_unmatched_and_ppt(db):
+    from app.services.observation_stats import card_observation_stats
+    now = datetime.now(UTC)
+    start = now - timedelta(days=7)
+    for label, value, at, status in (
+        ('current', 10, start, 'matched'),
+        ('prior', 20, start-timedelta(seconds=1), 'matched'),
+        ('end', 30, now, 'matched'),
+        ('fake-window', 9999, now-timedelta(days=1), 'rejected'),
+    ):
+        row = add_quote(db, label, value, status=status)
+        row.observed_at = at
+    db.add(PriceObservation(fingerprint='ppt-window', card_id='c', provider='pokemonpricetracker',
+        provider_card_id='x', variant_id='raw', price=5000, currency='USD', observed_at=start))
+    db.commit()
+    stats = card_observation_stats(start, now, start-timedelta(days=7), start)
+    row = db.execute(select(stats)).mappings().one()
+    assert row['obs_cnt'] == 3
+    assert row['total_price'] == 60
+    assert row['current_volume'] == 10 and row['current_count'] == 1
+    assert row['prior_volume'] == 20
+    assert row['max_price'] == 30
