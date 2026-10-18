@@ -152,6 +152,10 @@ class PPTClient:
         graded = bool(params.get("includeEbay"))
         if path != "cards" and graded:
             raise ValueError("Graded sales are only available for cards")
+        if path != "cards":
+            # Workers pass includeEbay=False for sealed products. Even a false
+            # value is an unsupported query parameter on non-card endpoints.
+            params.pop("includeEbay", None)
         if history or graded:
             params["days"] = 180
             if path == "cards":

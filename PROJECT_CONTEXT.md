@@ -93,6 +93,27 @@ Catalog image responses use `/cards/{id}/image`. The backend downloads provider 
 
 ## Pokémon Price Tracker migration (local implementation, 2026-10-16)
 
+October 17 operator-reported update (supersedes the original local-only rollout
+status below): production migration 0009 and release `4f4482798b16891814056159c1f248e8d11a8f46`
+passed deployment/readiness. Manual PPT trial batches completed legacy indexing and
+began set/product discovery with primary pricing disabled and a 100-credit trial
+cap. Sealed refreshes then returned HTTP 400. A local adapter fix omits unsupported
+`includeEbay=false` on sealed requests; the earlier successful sealed pilot did not
+send that parameter. Production confirmation of this fix is pending a new release
+and bounded retry; do not treat the trial as complete or enable primary yet.
+
+Subsequent operator evidence: production has 1,496 current PPT quotes and 1,498 feed
+updates; both card languages refresh, while sealed success timestamps remain null.
+PPT-primary catalog validation times out; legacy catalog and PPT Live Comps take
+4.06/4.73 seconds respectively. A manually created legacy latest-price index restored
+the public legacy catalog. Local follow-up replaces correlated PPT preference checks
+with a shared current-quote CTE, separates Live Comps count aggregates, and adds
+`0010_ppt_query_indexes` (including adoption of the existing legacy index).
+Restored-backup validation with 1,500 synthetic PPT quotes: PPT catalog 0.425s,
+PPT Live Comps 0.395s; PostgreSQL migration/adoption and backend regression suite
+passed. These local timings are not production guarantees. New release/migration
+and read-only production validation remain required before enabling primary pricing.
+
 - Additive migration `0009_pokemon_price_tracker` follows the local `0008_listing_assessments` work. It adds product mapping/current quote/monthly history/checkpoint tables. Cards/Sets schema and existing TCGAPI data are preserved. No production migration, provider cutover, or deployment was performed.
 - New adapter, atomic daily/weighted-minute limiter, and bounded Celery ingestion cover English/Japanese cards and sealed products. Exact identity matching quarantines ambiguous products. A bounded legacy-ID index avoids rescanning provider JSON for every discovery. History is requested for 180 days and merged idempotently by source/printing/condition/grade/metric; backfilled points do not enter Live Comps.
 - `PPT_INGESTION_ENABLED=false`, `PPT_PRIMARY_ENABLED=false`, `TCGAPI_INGESTION_ENABLED=true` preserve existing operation. `PPT_API_KEY` is private backend configuration. Limits default to 20,000 credits/day and 55 weighted requests/minute; unused lane capacity is shared after 22:00 UTC. Direct eBay ingestion and listing screening are retained.

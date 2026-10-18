@@ -24,14 +24,22 @@ def ppt_current(observation=PriceObservation):
 def market_observation():
     if not get_settings().ppt_primary_enabled:
         return PriceObservation.provider == "tcgapi"
+    from app.models import PPTCurrentQuote
     other = aliased(PriceObservation)
-    primary = and_(PriceObservation.provider == PROVIDER,
-                   PriceObservation.payload["primary"].as_boolean().is_(True),
-                   PriceObservation.grading_company.is_(None), ppt_current())
-    preferred_exists = exists(select(other.id).where(other.card_id == PriceObservation.card_id,
-        other.provider == PROVIDER, other.payload["primary"].as_boolean().is_(True),
-        other.grading_company.is_(None), ppt_current(other))).correlate(PriceObservation)
-    return or_(primary, and_(PriceObservation.provider == "tcgapi", ~preferred_exists))
+    # Independent set, shared by both branches: do not re-probe historical rows
+    # for every legacy observation in a broad catalog sort.
+    preferred = (select(other.card_id, other.fingerprint)
+        .join(PPTCurrentQuote, PPTCurrentQuote.fingerprint == other.fingerprint)
+        .where(other.provider == PROVIDER,
+               other.payload["primary"].as_boolean().is_(True),
+               other.grading_company.is_(None), other.card_id.is_not(None),
+               PPTCurrentQuote.price_date >= datetime.now(UTC).date() - timedelta(days=7))
+        .correlate(None).cte())
+    return or_(
+        and_(PriceObservation.provider == PROVIDER,
+             PriceObservation.fingerprint.in_(select(preferred.c.fingerprint))),
+        and_(PriceObservation.provider == "tcgapi",
+             PriceObservation.card_id.not_in(select(preferred.c.card_id))))
 
 
 def source_priority():

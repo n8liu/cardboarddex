@@ -173,6 +173,29 @@ def test_client_bounded_request_and_exact_header_reconciliation(monkeypatch):
         client.request("cards", limit=200)
 
 
+def test_worker_sealed_request_omits_cards_only_parameters(monkeypatch):
+    monkeypatch.setattr(get_settings(), "ppt_api_key", "test-only")
+    quota = Mock()
+
+    def handler(request):
+        assert "includeEbay" not in request.url.params
+        assert "maxDataPoints" not in request.url.params
+        assert request.url.params["includeHistory"] == "true"
+        assert request.url.params["days"] == "180"
+        return httpx.Response(200, json={"data": {"tcgPlayerId": "712093"}})
+
+    client = PPTClient(quota=quota, client=httpx.Client(transport=httpx.MockTransport(handler)))
+    try:
+        assert client.request("sealed-products", language="english", tcgPlayerId="712093",
+                              includeHistory=True, includeEbay=False)[0]["tcgPlayerId"] == "712093"
+        quota.reserve.assert_called_once_with(2, 1, "rotation", bonus=0)
+        with pytest.raises(ValueError, match="Graded sales"):
+            client.request("sealed-products", tcgPlayerId="712093", includeEbay=True)
+        assert quota.reserve.call_count == 1
+    finally:
+        client.close()
+
+
 @pytest.fixture
 def quota(monkeypatch):
     import fakeredis
@@ -397,7 +420,7 @@ def test_disposable_migration_preserves_existing_tables(tmp_path, monkeypatch):
     assert str(before) == str(after)
     with engine.connect() as conn:
         assert conn.execute(text("SELECT id FROM cards")).scalar() == "keep"
-        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0009_pokemon_price_tracker"
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0010_ppt_query_indexes"
     engine.dispose()
 
 
@@ -413,3 +436,24 @@ def test_explicit_external_id_supports_set_alias_but_never_guesses_local_ids(db,
     product = map_product(db, payload, "english", "cards")
     assert product.card_id == "legacy-card"
     assert product.match_method == "verified_tcgplayer_id"
+
+
+def test_live_counts_preserve_shadow_and_listing_exclusion(db, payload, now, monkeypatch):
+    from fastapi import Response
+    from app.routers import market
+    monkeypatch.setattr(market, "_get_redis", lambda: None)
+    db.add(PriceObservation(fingerprint="legacy-kpi", card_id="legacy-card", provider="tcgapi",
+        provider_card_id="x", variant_id="raw", price=90, currency="USD"))
+    db.add(PriceObservation(fingerprint="unmatched-kpi", card_id="legacy-card", provider="ebay",
+        provider_card_id="x", variant_id="raw", price=1, currency="USD"))
+    product = map_product(db, payload, "english", "cards")
+    ingest(db, product, payload, now)
+    db.commit()
+    for enabled, expected_items, expected_graded in ((False, 0, 0), (True, 3, 1)):
+        monkeypatch.setattr(get_settings(), "ppt_primary_enabled", enabled)
+        result = market.get_live_updates(response=Response(), provider="pokemonpricetracker",
+            grade_filter="all", set_id=None, q=None, page=1, per_page=48, db=db)
+        assert len(result.items) == expected_items
+        assert result.total_tcg_updates == 1
+        assert result.total_ebay_updates == 0
+        assert result.graded_updates_count == expected_graded

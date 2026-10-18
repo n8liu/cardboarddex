@@ -366,12 +366,17 @@ def get_live_updates(
             logger.warning("Redis live-updates KPI read failed: %s", exc)
 
     if total_ebay is None or total_tcg is None or total_graded is None:
+        # Keep the common non-listing provider count index-only. A combined
+        # aggregate forces eligibility/JSON evaluation over the entire history.
+        def count_where(*conditions):
+            return select(func.count()).select_from(PriceObservation).where(*conditions).scalar_subquery()
+
         kpi_stmt = select(
-            func.count(case((PriceObservation.provider == "ebay", 1))),
-            func.count(case((PriceObservation.provider == "tcgapi", 1))),
-            func.count(case((PriceObservation.grading_company.is_not(None), 1))),
+            count_where(PriceObservation.provider == "ebay", eligible_observation()),
+            count_where(PriceObservation.provider == "tcgapi"),
+            count_where(PriceObservation.grading_company.is_not(None), eligible_observation()),
         )
-        kpi_result = db.execute(kpi_stmt.where(eligible_observation())).one()
+        kpi_result = db.execute(kpi_stmt).one()
         total_ebay, total_tcg, total_graded = kpi_result[0] or 0, kpi_result[1] or 0, kpi_result[2] or 0
         if r is not None:
             try:

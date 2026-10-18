@@ -2,7 +2,8 @@
 
 Implementation is additive and disabled by default. Existing TCGAPI observations,
 `market_history`, cards, sets, eBay observations, and eBay quality screening remain.
-There is no production cutover or authenticated provider verification in this change.
+The initial implementation was disabled by default. See dated rollout results
+below for authenticated testing and operator-reported production deployment.
 
 ## Data contract
 
@@ -130,6 +131,55 @@ graded aggregates and matched asking listings. Existing direct eBay screening is
 not applied to aggregate history, nor is it claimed to authenticate those aggregates.
 
 ## Validation and limits
+
+### Catalog/Live Comps query correction (local follow-up)
+
+Operator read-only checks showed the production legacy catalog taking 4.06 seconds,
+PPT catalog exceeding the five-second statement deadline, and PPT Live Comps
+returning 48 records in 4.73 seconds. Primary pricing remains disabled pending
+validation of the correction. Ingestion and public price selection are independent.
+
+Current-primary selection now builds one independent CTE of valid PPT fingerprints
+and card IDs, shared by the PPT and legacy fallback branches. It removes the
+per-legacy-observation correlated preferred-price lookup. Live Comps KPI counts
+use separate scalar aggregates; TCGAPI counts no longer evaluate listing JSON
+eligibility. eBay and graded eligibility rules remain in effect.
+
+Migration `0010_ppt_query_indexes` builds PostgreSQL indexes concurrently for legacy
+latest pricing, primary PPT lookup, and provider-filtered feed ordering. It adopts
+the exact `ix_price_observations_tcgapi_latest` index already created during the
+incident and rejects invalid/incomplete indexes. Before adopting an independently
+created index, confirm its definition matches the migration. Cards/Sets are untouched.
+Do not remove quota data or increase API statement timeouts for this change.
+
+Local validation used the October 17 production backup plus 1,500 synthetic current
+PPT quotes (395,797 observations total). With new indexes, PPT catalog returned 24
+items in 0.425 seconds; PPT Live Comps returned 48 items in 0.395 seconds, without
+response/Redis caches and with five-second per-statement limits. The prior catalog
+predicate on the same indexed database took 0.759 seconds. These are single local
+measurements with synthetic PPT coverage, not cold-cache or production benchmarks.
+The backend regression suite passed under explicit default test settings. PostgreSQL
+migration and existing-index adoption passed; Cards/Sets columns were preserved.
+Private benchmark receipt: `.system_generated/ppt-rehearsal/query-results.json`.
+
+Deploy a new immutable release containing the sealed adapter correction and these
+queries. Apply migration 0010 separately using that release's image, then validate
+PPT-on catalog and Live Comps with a process-only flag and read-only transactions
+before enabling `PPT_PRIMARY_ENABLED` for public API processes. No commit, push,
+production migration 0010, or production flag change was performed by this local work.
+
+Production trial follow-up, October 17 (operator-reported): migration 0009 and
+release 4f4482798b16891814056159c1f248e8d11a8f46 deployed successfully. PPT primary
+remains disabled; manual batches indexed legacy identifiers and saved set discovery.
+Sealed refreshes for 712093/712094/712096 returned HTTP 400 with `includeEbay=false`
+in their query strings. The published sealed endpoint does not support this
+cards-only parameter. The adapter now strips it for non-card endpoints while still
+rejecting attempts to request graded sealed data. A regression test covers the
+worker's exact argument shape and two-credit reservation. This correction is local;
+the cause still needs confirmation through a bounded production retry after release.
+Do not raise the trial budget to work around these errors. The local environment's
+minute setting of 100 exceeds the current configuration maximum of 55; targeted
+tests override it to 55 without modifying the private environment file.
 
 Fixtures cover actual published field shapes, exact baselines, missing medians,
 EN/JP identity separation, quarantine, corrections, idempotence, source preference,
