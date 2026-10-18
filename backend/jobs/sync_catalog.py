@@ -27,6 +27,7 @@ from app.common.formatters import (
 )
 from app.common.redis import get_durable_redis as get_redis
 from app.config import get_settings
+from app.services.catalog_prices import commit_prices
 from app.database import SessionLocal
 from app.providers.limiter import ProviderRequestLimitExceeded
 from app.models import Card, PriceObservation, ProviderCardState, Set
@@ -84,7 +85,7 @@ def _upsert_sets(session: Session, payloads: Iterable[dict[str, Any]]) -> int:
                     updated_at=datetime.now(UTC),
                 )
             )
-        session.commit()
+        commit_prices(session)
         count += len(batch)
         logger.info("Catalog set batch committed batch_size=%s total=%s", len(batch), count)
     return count
@@ -199,6 +200,7 @@ def _upsert_cards(
                 )
 
         if candidate_observations:
+            session.info.setdefault("catalog_price_cards", set()).update(obs.card_id for _, obs in candidate_observations)
             fps = [fp for fp, _ in candidate_observations]
             existing_fps = set(
                 session.scalars(
@@ -247,7 +249,7 @@ def _upsert_cards(
                     st.payload = {**(st.payload or {}), "card": c_item}
                     st.last_synced_at = datetime.now(UTC)
 
-        session.commit()
+        commit_prices(session)
         card_count += len(batch)
         logger.info("Catalog card batch committed batch_size=%s total_cards=%s total_prices=%s",
                     len(batch), card_count, price_count)

@@ -51,6 +51,13 @@ async def lifespan(app: FastAPI):
     previous_limit = limiter.total_tokens
     limiter.total_tokens = settings.api_thread_limit
     try:
+        if settings.catalog_current_prices_enabled:
+            from app.database import SessionLocal
+            from app.services.catalog_prices import require_ready
+            def check_projection():
+                with SessionLocal() as db:
+                    require_ready(db)
+            await to_thread.run_sync(check_projection)
         yield
     finally:
         await to_thread.run_sync(response_cache.shutdown)

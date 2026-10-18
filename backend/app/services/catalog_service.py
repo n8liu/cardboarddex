@@ -1,6 +1,6 @@
 from app.services.observation_stats import card_observation_stats, observation_windows
 from app.config import get_settings
-from app.services.price_sources import market_observation
+from app.services.price_sources import market_observation, catalog_price_join
 from app.services.listing_quality import eligible_observation
 from app.services.image_delivery import card_image_url, image_generation
 from app.common.cache import TTLCache
@@ -304,38 +304,8 @@ def query_pokemon_cards(
     if set_id:
         detail_conditions.append(Card.set_id == set_id)
 
-    latest_price = (
-        select(PriceObservation.price)
-        .where(
-            PriceObservation.card_id == Card.id,
-            market_observation(),
-            PriceObservation.grading_company.is_(None),
-        )
-        .order_by(
-            PriceObservation.provider_updated_at.desc().nullslast(),
-            PriceObservation.observed_at.desc(),
-            PriceObservation.id.desc(),
-        )
-        .limit(1)
-        .correlate(Card)
-        .scalar_subquery()
-    )
-    latest_currency = (
-        select(PriceObservation.currency)
-        .where(
-            PriceObservation.card_id == Card.id,
-            market_observation(),
-            PriceObservation.grading_company.is_(None),
-        )
-        .order_by(
-            PriceObservation.provider_updated_at.desc().nullslast(),
-            PriceObservation.observed_at.desc(),
-            PriceObservation.id.desc(),
-        )
-        .limit(1)
-        .correlate(Card)
-        .scalar_subquery()
-    )
+    selected, price_rows, price_join = catalog_price_join(dialect=db.get_bind().dialect.name)
+    latest_price, latest_currency = selected.price, selected.currency
     latest_synced = (
         select(func.max(ProviderCardState.last_synced_at))
         .where(ProviderCardState.card_id == Card.id)
@@ -346,6 +316,7 @@ def query_pokemon_cards(
     query_stmt = (
         select(Card, Set, latest_price, latest_currency, latest_synced)
         .join(Set, Card.set_id == Set.id)
+        .outerjoin(price_rows, price_join)
         .where(*detail_conditions)
     )
 
@@ -658,7 +629,7 @@ def get_set_statistics(
     """Calculate aggregate total price and card counts for a set (or filtered set)."""
     clean_q = q.strip()
     cache_key = f"{set_id}:{game}:{hide_sealed}:{sealed_only}:{clean_q}:{min_price}:{max_price}"
-    source_key = "ppt" if get_settings().ppt_primary_enabled else "legacy"
+    source_key = ("ppt" if get_settings().ppt_primary_enabled else "legacy") + (":projection-v1" if get_settings().catalog_current_prices_enabled else ":history")
     redis_key = f"cardboarddex:{source_key}:identity-v1:set_stats:{cache_key}"
 
     r = get_redis() if use_cache else None
@@ -676,39 +647,8 @@ def get_set_statistics(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Set '{set_id}' not found")
     set_name = target_set.name
 
-    latest_price = (
-        select(PriceObservation.price)
-        .where(
-            PriceObservation.card_id == Card.id,
-            market_observation(),
-            PriceObservation.grading_company.is_(None),
-        )
-        .order_by(
-            PriceObservation.provider_updated_at.desc().nullslast(),
-            PriceObservation.observed_at.desc(),
-            PriceObservation.id.desc(),
-        )
-        .limit(1)
-        .correlate(Card)
-        .scalar_subquery()
-    )
-
-    latest_currency = (
-        select(PriceObservation.currency)
-        .where(
-            PriceObservation.card_id == Card.id,
-            market_observation(),
-            PriceObservation.grading_company.is_(None),
-        )
-        .order_by(
-            PriceObservation.provider_updated_at.desc().nullslast(),
-            PriceObservation.observed_at.desc(),
-            PriceObservation.id.desc(),
-        )
-        .limit(1)
-        .correlate(Card)
-        .scalar_subquery()
-    )
+    selected, price_rows, price_join = catalog_price_join(dialect=db.get_bind().dialect.name)
+    latest_price, latest_currency = selected.price, selected.currency
 
     subq = (
         select(
@@ -717,6 +657,7 @@ def get_set_statistics(
             latest_currency.label("currency"),
         )
         .join(Set, Card.set_id == Set.id)
+        .outerjoin(price_rows, price_join)
         .where(
             Card.set_id == set_id,
             Card.name.not_ilike("%code card%"),

@@ -61,3 +61,27 @@ def grading_observation():
         and_(PriceObservation.grading_company.is_not(None),
              or_(and_(PriceObservation.provider == PROVIDER, ppt_current()),
                  and_(~mapped, PriceObservation.provider != PROVIDER)))))
+
+
+def catalog_price_join(*, broad=False, dialect=None):
+    """Return a row relation and join condition; select every field once."""
+    from sqlalchemy import func
+    from app.models import Card
+    if get_settings().catalog_current_prices_enabled:
+        from app.services.catalog_prices import candidate_join
+        return candidate_join(broad=broad, dialect=dialect)
+    order = (PriceObservation.provider_updated_at.desc().nullslast(),
+             PriceObservation.observed_at.desc(), PriceObservation.id.desc())
+    if broad:
+        rows = select(PriceObservation.card_id, PriceObservation.id,
+            PriceObservation.price, PriceObservation.currency,
+            PriceObservation.provider_updated_at,
+            func.row_number().over(partition_by=PriceObservation.card_id, order_by=order).label("position")
+        ).where(market_observation(), PriceObservation.grading_company.is_(None)).subquery()
+        return rows.c, rows, and_(rows.c.card_id == Card.id, rows.c.position == 1)
+    row = aliased(PriceObservation)
+    selected_id = select(PriceObservation.id).where(
+        PriceObservation.card_id == Card.id, market_observation(),
+        PriceObservation.grading_company.is_(None)
+    ).order_by(*order).limit(1).correlate(Card).scalar_subquery()
+    return row, row, row.id == selected_id

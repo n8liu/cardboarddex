@@ -39,6 +39,7 @@ class Settings(BaseSettings):
         ).render_as_string(hide_password=False)
     ppt_api_key: str | None = None
     ppt_ingestion_enabled: bool = False
+    catalog_current_prices_enabled: bool = False
     ppt_primary_enabled: bool = False
     tcgapi_ingestion_enabled: bool = True
     ppt_daily_credit_limit: int = Field(default=20000, ge=1, le=20000)

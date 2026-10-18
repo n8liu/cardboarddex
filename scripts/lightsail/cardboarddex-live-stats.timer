@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh stored Live Comps totals every minute
+
+[Timer]
+OnBootSec=60
+OnUnitActiveSec=60
+AccuracySec=5
+Unit=cardboarddex-live-stats.service
+
+[Install]
+WantedBy=timers.target

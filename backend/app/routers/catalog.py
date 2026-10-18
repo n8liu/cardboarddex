@@ -1,4 +1,4 @@
-from app.services.price_sources import market_observation
+from app.services.price_sources import market_observation, catalog_price_join
 from app.common.response_cache import cached_read, response_cache
 from app.services.image_delivery import card_image_url
 from app.common.cache import TTLCache
@@ -79,75 +79,11 @@ def search_cards(
     db: Session = Depends(get_db),
 ) -> list[CardSummary]:
     clean_q = q.strip()
-    # The response-cache decorator calls this only for a rebuild.
-    # Aligned with ix_price_observations_search_lookup: (card_id, provider, grading_company, provider_updated_at, observed_at)
-    latest_price = (
-        select(PriceObservation.price)
-        .where(
-            PriceObservation.card_id == Card.id,
-            market_observation(),
-            PriceObservation.grading_company.is_(None),
-        )
-        .order_by(
-            PriceObservation.provider_updated_at.desc().nullslast(),
-            PriceObservation.observed_at.desc(),
-            PriceObservation.id.desc(),
-        )
-        .limit(1)
-        .correlate(Card)
-        .scalar_subquery()
-    )
-
-    # Query Optimization: TCG API observations are uniformly in USD; derive directly without duplicate 60k-row correlated subquery
+    selected, price_rows, price_join = catalog_price_join(dialect=db.get_bind().dialect.name, broad=not clean_q and not set_id and (
+        sort_by in {"price_asc", "price_desc"} or min_price is not None or max_price is not None))
+    latest_price = selected.price
     latest_currency = literal("USD").label("market_currency")
-
-    latest_synced = (
-        select(PriceObservation.provider_updated_at)
-        .where(
-            PriceObservation.card_id == Card.id,
-            market_observation(),
-            PriceObservation.grading_company.is_(None),
-        )
-        .order_by(
-            PriceObservation.provider_updated_at.desc().nullslast(),
-            PriceObservation.observed_at.desc(),
-            PriceObservation.id.desc(),
-        )
-        .limit(1)
-        .correlate(Card)
-        .scalar_subquery()
-    )
-
-    ranked_prices = None
-    if not clean_q and not set_id and (
-        sort_by in {"price_asc", "price_desc"}
-        or min_price is not None or max_price is not None
-    ):
-        # Broad price sorts must inspect every matching card. Rank history once
-        # instead of running tens of thousands of random index scans and sorts.
-        # Selective searches retain the cheaper per-card index lookup above.
-        ranked_prices = (
-            select(
-                PriceObservation.card_id,
-                PriceObservation.price,
-                PriceObservation.provider_updated_at,
-                func.row_number().over(
-                    partition_by=PriceObservation.card_id,
-                    order_by=(
-                        PriceObservation.provider_updated_at.desc().nullslast(),
-                        PriceObservation.observed_at.desc(),
-                        PriceObservation.id.desc(),
-                    ),
-                ).label("position"),
-            )
-            .where(
-                market_observation(),
-                PriceObservation.grading_company.is_(None),
-            )
-            .subquery()
-        )
-        latest_price = ranked_prices.c.price
-        latest_synced = ranked_prices.c.provider_updated_at
+    latest_synced = selected.provider_updated_at
 
     statement = (
         select(
@@ -160,11 +96,7 @@ def search_cards(
         .join(Set, Card.set_id == Set.id)
         .where(Card.name.not_ilike("%code card%"))
     )
-    if ranked_prices is not None:
-        statement = statement.outerjoin(
-            ranked_prices,
-            and_(ranked_prices.c.card_id == Card.id, ranked_prices.c.position == 1),
-        )
+    statement = statement.outerjoin(price_rows, price_join)
 
     # Language/series filtering
     if game == "pokemon":

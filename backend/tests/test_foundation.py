@@ -9,7 +9,8 @@ from app.main import app
 def test_alembic_has_one_linear_head_with_catalog_foundation() -> None:
     config = Config("alembic.ini")
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["0010_ppt_query_indexes"]
+    assert script.get_heads() == ["0011_catalog_prices"]
+    assert script.get_revision("0011_catalog_prices").down_revision == "0010_ppt_query_indexes"
     assert script.get_revision("0010_ppt_query_indexes").down_revision == "0009_pokemon_price_tracker"
     assert script.get_revision("0009_pokemon_price_tracker").down_revision == "0008_listing_assessments"
     assert script.get_revision("0008_listing_assessments").down_revision == "0007_market_data"

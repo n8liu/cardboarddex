@@ -7,3 +7,5 @@ from app.models.analytics import AdminSession, AnalyticsDay, AnalyticsEvent, Ana
 from app.models.market_data import MarketHistory, CatalogSnapshot  # noqa: F401
 from app.models.listing_assessment import ListingAssessment  # noqa: F401
 from app.models.ppt import PPTProduct, PPTHistory, PPTCheckpoint, PPTCurrentQuote  # noqa: F401
+
+from app.models.catalog_prices import CatalogPriceCandidate, CatalogPriceProjectionState  # noqa: F401

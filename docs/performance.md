@@ -160,10 +160,19 @@ polling. Hidden tabs pause polling; obsolete filter responses are ignored.
 Pagination displays loaded counts instead of exact filtered totals.
 
 Deploy backend/API, worker, and Beat before frontend. Seed the snapshot with
-`python -m jobs.refresh_live_stats` in the configured backend environment, then
+`python -m jobs.refresh_live_stats` in a separate configured one-off container, then
 verify both new routes before deploying frontend. To roll back the backend,
 first restore the older frontend that uses the retained legacy route. No data
 migration or destructive rollback is necessary.
+
+Production incident, October 18: paused ingestion stopped both the worker and
+Beat, leaving no totals snapshot. Seeding via `docker exec` in the 160 MiB API
+container exhausted its memory budget and killed Uvicorn. A separate container
+using the deployed worker service's memory limits successfully published totals.
+For paused ingestion, use the dedicated systemd timer documented in
+`scripts/lightsail/README.md`; it never starts provider jobs and yields to the
+normal Celery schedule when the pause marker is removed. Do not run the extra
+Python process inside the API container.
 
 Validation: full isolated backend suite and all 143 frontend tests passed;
 TypeScript and production build passed. Tests cover cold/missing totals, no
@@ -182,3 +191,14 @@ and snapshot age separately. `Live feed query` logs include acquisition/query
 elapsed time, while `Live stats refresh` logs report total refresh duration.
 These are not separate connection-wait/SQL/serialization measurements. No
 production performance improvement is claimed from fixture tests.
+
+
+## Catalog current-price projection (local, 2026-10-18)
+
+The catalog family now shares selected-price lookups and has an optional
+transactionally maintained current-price projection. Reads remain disabled by
+default until migration 0011, backfill, and parity verification complete. Local
+restored-data benchmarks passed the 50% broad-sort improvement gate in both
+provider modes; PostgreSQL 16 production validation remains pending. See
+[catalog-price-projection.md](catalog-price-projection.md) for exact semantics,
+commands, measurements, limitations, and rollout/rollback requirements.

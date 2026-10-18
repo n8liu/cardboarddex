@@ -25,6 +25,7 @@ from app.common.formatters import (
     to_decimal as _decimal,
 )
 from app.config import get_settings
+from app.services.catalog_prices import commit_prices
 from app.database import SessionLocal
 from app.models import Card, PriceObservation, ProviderCardState, Set
 from app.providers import ProviderRequestLimitExceeded
@@ -99,6 +100,8 @@ def _observation(session: Session, *, card_id: str, provider: str,
         latest.grading_company, latest.grade,
     ) == (amount, currency[:3].upper(), condition, printing, grading_company, parsed_grade):
         return False
+    if provider == "tcgapi":
+        session.info.setdefault("catalog_price_cards", set()).add(card_id)
     session.add(PriceObservation(
         fingerprint=fingerprint, card_id=card_id, provider=provider,
         provider_card_id=provider_card_id, variant_id=variant_id,
@@ -364,7 +367,7 @@ def run_price_collection(
                         result["tcgapi_observations"] += _collect_tcgapi(
                             session, card, card.set.name, tcgapi_client
                         )
-                session.commit()
+                commit_prices(session)
             except httpx.HTTPStatusError as exc:
                 session.rollback()
                 session.info.pop("price_observation_fingerprints", None)
@@ -385,7 +388,7 @@ def run_price_collection(
                             result["tcgapi_observations"] += _collect_tcgapi(
                                 session, card, card.set.name, tcgapi_client
                             )
-                            session.commit()
+                            commit_prices(session)
                         except (
                             httpx.HTTPError,
                             KeyError,
@@ -439,7 +442,7 @@ def run_price_collection(
                 result["tcgapi_observations"] += _collect_tcgapi(
                     session, card, card.set.name, tcgapi_client
                 )
-                session.commit()
+                commit_prices(session)
             except (
                 httpx.HTTPError,
                 KeyError,

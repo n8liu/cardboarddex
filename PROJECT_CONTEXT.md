@@ -1,10 +1,45 @@
 # CardboardDex Project Context
 
-Updated: 2026-10-14. This handoff retains detailed product and implementation context, with dated deployment records and explicit known limitations. Repository: [n8liu/cardboarddex](https://github.com/n8liu/cardboarddex).
+Updated: 2026-10-18. This handoff retains detailed product and implementation context, with dated deployment records and explicit known limitations. Repository: [n8liu/cardboarddex](https://github.com/n8liu/cardboarddex).
 
 Read [AGENTS.md](AGENTS.md) before changing code, including the installed Next.js documentation requirement. Treat source code and dated verification as authoritative when older documents disagree. [ARCHITECTURE.md](ARCHITECTURE.md) describes the system boundaries but still contains outdated deployment and eBay implementation notes.
 
-## Active production: 1 GB Lightsail, release 519dd23, schema 0007 — 2026-10-14 UTC
+## Current handoff — 2026-10-18
+
+- **Repository:** local HEAD is `8cb630109f6c43dcc9dee43313afdfcd43d52d5b` (`live comps fix`). The shared Trending aggregation correction is committed in `a5a0cbd`; independent Live Comps loading is committed in `8cb6301`. Commit presence does not establish deployment.
+- **Production evidence:** the operator confirmed migration through `0010_ppt_query_indexes`. The latest supplied smoke run had 12 passes, 2 skips, and one remaining 15-second timeout on `/cards/trending`. On October 18 at 17:29 UTC, the active release was verified as `8cb6301`; ingestion remained paused, with worker/Beat stopped. Public Live Comps totals returned 200 after the recovery below. This does not establish full smoke-suite or Trending success.
+- **Trending correction:** default unfiltered sections and supplementary clicked cards share one per-card history aggregate, fetched in batches. Backend tests passed, including parity across five timeframes and a single-history-query assertion. Isolated read-only checks against production data completed in 8.724s with PPT primary off and 9.923s with it on, returning 50 items per section; peak process RSS was approximately 145 MiB. These are service-call measurements, not public HTTP or concurrent-load verification. No new migration or increased timeout is needed.
+- **Next rollout checks:** backend `8cb6301` is deployed; worker/Beat remain subject to the ingestion pause gate. Seed totals only in a separate one-off container, never by adding a Python process inside the API container. Rerun the public deployment suite with its unchanged 15-second deadline, then observe cold/warm latency and memory. PPT primary visibility remains disabled. See `docs/performance.md`.
+- **Historical records below:** release `519dd23`, schema 0007, October 14 quotas, and ingestion/stability observations describe earlier snapshots, not current verified state. Preserve the retained rollback host and backup safeguards.
+
+## Live Comps production recovery — 2026-10-18
+
+The new stats endpoint returned 503 because its Redis snapshot was missing while
+ingestion was paused and Celery worker/Beat were stopped. Default feed requests
+returned 200 with items and correct CORS. The PPT-filtered feed was empty because
+`ppt_primary_enabled=false`, despite 1,498 stored PPT observations; that setting
+was not changed. Cloudflare analytics blocking was unrelated.
+
+The operator's seed using `docker exec app-backend-1` caused a cgroup OOM at
+07:57:31 UTC, killing Uvicorn inside the 160 MiB API container. Kernel logs and
+the backend restart timestamp confirmed this. At 17:27 UTC a separate one-off
+container using the active release's worker memory limits published successfully
+in 2.35 seconds. Public totals returned 200 with 347,516 eligible observations.
+
+Installed `/usr/local/sbin/cardboarddex-refresh-live-stats` and
+`cardboarddex-live-stats.{service,timer}` on the host from the matching files under
+`scripts/lightsail/`. The timer runs every minute only while the ingestion pause
+marker exists, using an isolated container and shared deployment lock. It does
+not start provider jobs. The API restart count stayed at one from the earlier
+OOM. This is an independently installed host fix, not a new application release;
+replacement hosts need the installation documented in `scripts/lightsail/README.md`.
+The full scheduled interval completed at 17:29:55 UTC, publishing in 1.38 seconds;
+the public endpoint returned 200 with `generated_at=2026-10-18T17:29:53.657420Z`.
+Shell syntax, systemd unit validation, and `git diff --check` passed. Long-term
+stability remains unobserved. The cause of the ingestion pause and PPT provider
+cutover remain unresolved.
+
+## Historical production snapshot: 1 GB Lightsail, release 519dd23, schema 0007 — 2026-10-14 UTC
 
 Production is successfully running on **`cardboarddex-1gb`, `micro_3_0`, $7/month, dual-stack, 1 GB RAM and 40 GB disk** in `us-west-2`. The previous AWS instance creation limit was cleared and destination creation completed with verified dual-stack network and hardware specifications.
 
@@ -24,7 +59,7 @@ Post-deployment backup `six-hourly/20261014T122001Z/manifest.json` passed checks
 
 Public endpoint verification of the initial passive release passed 13 tests; two legacy direct-AWS checks were skipped. `git diff --check` passed. Disposable local integration containers were removed; production and retained recovery resources were preserved.
 
-### Current backend deployment and migration — verified October 14 at 19:55 UTC
+### Historical backend deployment and migration — verified October 14 at 19:55 UTC
 
 - **Active release:** `/opt/cardboarddex/releases/519dd2311520b02c11a6548748a51eb53bb17b79`; `/opt/cardboarddex/current` points there. Immutable image: `349558247779.dkr-ecr.us-west-2.on.aws/cardboarddex-backend@sha256:21f25bca35cb60fa01448065d3730449dab3d5536018bfe20d3ee2235d1fe973`.
 - **Schema:** The user manually applied `0007_market_data`; a direct production query verified that revision. The migration adds `market_history`, its day index, and `catalog_snapshots`, without altering Cards/Sets. The earlier schema mismatch is resolved. A disposable rehearsal of this migration was recommended but was not completed or verified in this session; the earlier off-server restore receipt covers schema 0006, not 0007.
@@ -70,7 +105,26 @@ passed. Live/infrastructure tests and production latency checks remain pending.
 Deploy backend/worker/Beat first, seed with `python -m jobs.refresh_live_stats`,
 verify both routes, then deploy frontend. Backend rollback requires restoring
 the older frontend first. Details and test environment: `docs/performance.md`.
-No commit, push, or production deployment was performed for this phase.
+Implementation is committed in `8cb6301`; production deployment and public verification are not confirmed.
+
+## Catalog current-price projection — local, 2026-10-18
+
+Catalog search, Pokémon card-row prices, and set statistics share price selection
+and support a compact transactional projection behind
+`CATALOG_CURRENT_PRICES_ENABLED=false` (default). Additive migration
+`0011_catalog_prices` creates candidate/state tables without changing Cards/Sets.
+Deploy migration before maintaining writers; backfill and verify before enabling
+reads. API startup rejects incomplete/unverified projection state. Preserve
+historical Pokémon high/low summaries and all public response formats.
+
+Local restored-backup PostgreSQL 17 validation covered 54,990 cards, 395,797
+observations including 1,500 synthetic PPT quotes, zero candidate mismatches,
+and identical results for 20 benchmark cases. Broad-sort SQL medians improved
+about 55% in legacy mode and 81–83% in PPT mode; these are local measurements,
+not production latency. PostgreSQL 16 rehearsal and production rollout remain
+pending. Details: `docs/catalog-price-projection.md`. No commit/push/deployment
+was performed for this phase. Disable reads before rolling back maintaining
+writers; rebuild/verify after any period with old writers.
 
 ## Product and data boundaries
 
@@ -896,12 +950,13 @@ of observation-volume counts. Ranking formulas and immediate click updates remai
 Local restored-data checks: Volume 0.546–0.613s, Trending 1.124–1.148s, with caches
 bypassed and five-second per-statement limits. Full backend suite passed. See
 `docs/performance.md`; private receipt `.system_generated/ppt-rehearsal/dashboard-results.json`.
-This follow-up is not committed or deployed; schema remains 0010. Production
-cold/warm verification is required; do not treat local latency as production proof.
+This correction was committed before the subsequent smoke run, which passed
+Top Pokémon Volume but still timed out on Trending. Schema remains 0010; the
+remaining correction and validation are recorded below.
 
 ### Remaining Trending timeout follow-up — October 18
 
-The previous aggregation fix is now in local HEAD (`043b16c`); operator CI passed
+The previous aggregation fix was committed in `043b16c`; operator CI passed
 Top Pokémon Volume but still failed Trending. The new local correction shares one
 per-card aggregate across default Trending sections, including supplementary
 clicked cards, with batched result fetching. No migration or timeout increase.
@@ -910,5 +965,7 @@ history query. Final candidate was exercised in a separate temporary container o
 the production host with read-only transactions and caches bypassed: PPT off
 8.724s, PPT on 9.923s, 50 results per section, peak RSS approximately 145 MiB.
 Public HTTP/concurrent-load performance is still unverified for this candidate.
-No deployment, commit, or production configuration change was made this turn.
-See `docs/performance.md` for evidence and remaining rollout checks.
+The shared-aggregation correction is committed in `a5a0cbd` and included in
+current HEAD `8cb6301`. Deployment and public smoke-test success for this
+correction remain unconfirmed. See `docs/performance.md` for evidence and
+remaining rollout checks.

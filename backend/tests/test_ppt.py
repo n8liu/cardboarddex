@@ -107,6 +107,8 @@ def test_mapping_history_idempotence_and_legacy_preservation(db, payload, now):
     assert counts(PriceObservation) == observations  # correction isn't a new live feed item
     selected = db.scalar(select(PriceObservation).where(market_observation()))
     assert selected.payload["price_change_7d"] == 10
+    from app.services.catalog_prices import verify_projection
+    assert verify_projection(db)["mismatched_cards"] == []
     result = pricing_data(db, "legacy-card")
     assert result["ppt_mapped"] and len(result["provider_history"]) == 3
     assert db.get(Card, "legacy-card").set_id == "legacy-set"
@@ -295,6 +297,8 @@ def test_rotation_keeps_recent_graded_quotes_and_identity_change_quarantines(db,
     db.commit()
     assert product.status == "quarantined"
     assert not list(db.scalars(select(PPTCurrentQuote)))
+    from app.models import CatalogPriceCandidate
+    assert not list(db.scalars(select(CatalogPriceCandidate).where(CatalogPriceCandidate.provider == "pokemonpricetracker")))
     assert pricing_data(db, "legacy-card")["ppt_mapped"] is False
 
 
@@ -420,7 +424,7 @@ def test_disposable_migration_preserves_existing_tables(tmp_path, monkeypatch):
     assert str(before) == str(after)
     with engine.connect() as conn:
         assert conn.execute(text("SELECT id FROM cards")).scalar() == "keep"
-        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0010_ppt_query_indexes"
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0011_catalog_prices"
     engine.dispose()
 
 

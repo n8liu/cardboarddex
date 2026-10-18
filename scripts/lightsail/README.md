@@ -16,6 +16,34 @@ These scripts operate on production only when explicitly invoked with production
 
 Never use `docker compose down -v`. The database volume is external and explicitly named. SSH host keys must be verified independently; do not replace verification with `ssh-keyscan` alone.
 
+## Live Comps totals during ingestion pauses
+
+`refresh_live_stats.sh` runs only the stored-data totals job in a separate container
+using the current release's worker memory limits. Do not seed using `docker exec`
+inside the API: the extra Python process caused an API OOM on October 18.
+The script takes a shared deployment lock and skips a refresh during deployment.
+Install the script and units on the host from a reviewed copy of these files:
+
+```bash
+sudo install -m 755 scripts/lightsail/refresh_live_stats.sh /usr/local/sbin/cardboarddex-refresh-live-stats
+sudo install -m 644 scripts/lightsail/cardboarddex-live-stats.service /etc/systemd/system/
+sudo install -m 644 scripts/lightsail/cardboarddex-live-stats.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now cardboarddex-live-stats.timer
+sudo systemctl start cardboarddex-live-stats.service
+```
+
+The service runs only while `/opt/cardboarddex/ingestion.paused` exists; normal
+Celery scheduling owns refreshes after ingestion resumes. Neither the service nor
+the script starts provider ingestion. Inspect `journalctl -u cardboarddex-live-stats.service`
+and the public stats endpoint to verify advancing `generated_at` timestamps.
+The timer follows `/opt/cardboarddex/current`; disable it before rolling back to
+a release without `jobs.refresh_live_stats`. Disable with
+`sudo systemctl disable --now cardboarddex-live-stats.timer` and stop any active
+refresh with `sudo systemctl stop cardboarddex-live-stats.service`.
+These units are installed separately; existing release/bootstrap scripts do not
+install them automatically on replacement hosts.
+
 ## Delete-first recovery (explicitly authorized maintenance only)
 
 `delete_first_migration.py` handles the AWS deletion/restore phase, not host quiescing

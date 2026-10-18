@@ -202,9 +202,11 @@ def map_product(db, payload, language, kind, set_metadata=None):
 
 
 def ingest(db, product, payload, now=None):
+    from app.services.catalog_prices import refresh_candidates, lock_cards
     now = now or datetime.now(UTC)
     if product.status != "matched" or not product.card_id:
         return
+    lock_cards(db, [product.card_id])
     language, kind = product.segment.split(":")
     if str(payload.get("tcgPlayerId")) != product.provider_id:
         raise ValueError("PPT response identity differs from requested product")
@@ -212,6 +214,7 @@ def ingest(db, product, payload, now=None):
     if any(norm(payload.get(field)) != norm(prior.get(field)) for field in ("name", "setName", "cardNumber")):
         product.status, product.match_method = "quarantined", "provider_identity_changed"
         db.execute(delete(PPTCurrentQuote).where(PPTCurrentQuote.product_id == product.id))
+        refresh_candidates(db, [product.card_id])
         return
     quotes, series = normalize(payload, language, kind, now.date())
     if "ebay" not in payload:
@@ -256,7 +259,7 @@ def ingest(db, product, payload, now=None):
     if payload.get("ebay"):
         product.metadata_payload["ebay"] = {k: v for k, v in payload["ebay"].items() if k not in {"priceHistory", "soldListings"}}
     product.last_success_at, product.retry_at, product.failures = now, None, 0
-    db.flush()
+    refresh_candidates(db, [product.card_id])
 
 
 def index_legacy_identities(db, limit=500):
