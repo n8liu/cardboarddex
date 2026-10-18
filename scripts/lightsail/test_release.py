@@ -8,7 +8,7 @@ import sys
 import pytest
 
 
-@pytest.mark.parametrize('release_failure', ['', 'enable', 'inactive', 'pull'])
+@pytest.mark.parametrize('release_failure', ['', 'enable', 'inactive', 'pull', 'lock'])
 @pytest.mark.parametrize('paused', [False, True])
 def test_release_rolls_back_on_pull_or_backup_failure(tmp_path, release_failure, paused):
     root = tmp_path / 'cardboarddex'
@@ -48,6 +48,9 @@ if command == 'docker':
         print('sha256:runtime')
     elif 'ps' in args:
         print('beat' if args[-1] == 'celery-beat' else 'backend')
+elif command == 'flock':
+    if args == ['-w', '120', '9'] and os.environ['RELEASE_FAILURE'] == 'lock':
+        raise SystemExit(1)
 elif command == 'sudo':
     if args[:2] == ['-n', 'bash'] and args[-1].endswith('/scripts/lightsail/install_zram.sh'):
         raise SystemExit(0)
@@ -70,6 +73,15 @@ elif command == 'systemctl':
              'EVENTS': str(events), 'RELEASE_FAILURE': release_failure},
     )
     calls = [json.loads(line) for line in events.read_text().splitlines()]
+    assert calls[0] == ['flock', '-w', '120', '9']
+    if release_failure == 'lock':
+        assert result.returncode != 0
+        assert 'deployment/maintenance lock within 120 seconds' in result.stderr
+        assert 'no services changed' in result.stderr
+        assert (root / 'current').resolve() == old
+        assert calls == [['flock', '-w', '120', '9']]
+        return
+    assert calls[-1] == ['flock', '-u', '9']
     stopped = next(i for i, call in enumerate(calls) if call[-4:] == ['stop', '-t', '3600', 'celery-worker'])
     pulled = next(i for i, call in enumerate(calls) if call[-1] == 'pull')
     assert stopped < pulled
@@ -92,3 +104,52 @@ elif command == 'systemctl':
         assert (root / 'current').resolve() == new
         assert (root / 'previous').resolve() == old
         assert 'Verified deployment completed' in result.stdout
+
+
+def test_release_waits_for_shared_maintenance_lock(tmp_path):
+    """Exercise real advisory locking, not just mocked flock exit codes."""
+    import fcntl
+    import time
+    root = tmp_path / 'cardboarddex'
+    release = root / 'releases' / ('a' * 40)
+    release.mkdir(parents=True)
+    lock = root / 'deploy.lock'
+    attempted = tmp_path / 'attempted'
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    shim = bin_dir / 'flock'
+    shim.write_text(f'#!{sys.executable}\n' + '''
+import fcntl, os, sys
+from pathlib import Path
+fd = int(sys.argv[-1])
+if sys.argv[1] == '-u':
+    fcntl.flock(fd, fcntl.LOCK_UN)
+else:
+    assert sys.argv[1:3] == ['-w', '120']
+    Path(os.environ['ATTEMPTED']).touch()
+    fcntl.flock(fd, fcntl.LOCK_EX)
+''')
+    shim.chmod(0o755)
+    prefix = Path(__file__).with_name('release.sh').read_text().split('export APP_ENV_FILE', 1)[0]
+    script = tmp_path / 'locking.sh'
+    script.write_text(prefix.replace('/opt/cardboarddex', str(root)) + "echo acquired\n")
+    with lock.open('w') as holder:
+        fcntl.flock(holder, fcntl.LOCK_SH)
+        process = subprocess.Popen(['bash', str(script), str(release)], stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True, env={**os.environ, 'ATTEMPTED': str(attempted),
+            'PATH': str(bin_dir) + os.pathsep + os.environ['PATH']})
+        try:
+            deadline = time.monotonic() + 3
+            while not attempted.exists() and time.monotonic() < deadline:
+                time.sleep(.01)
+            assert attempted.exists()
+            assert process.poll() is None  # A refresh holds the shared lock.
+            fcntl.flock(holder, fcntl.LOCK_UN)
+            stdout, stderr = process.communicate(timeout=3)
+            assert process.returncode == 0, stderr
+            assert 'acquired' in stdout
+            fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()

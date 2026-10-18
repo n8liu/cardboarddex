@@ -4,6 +4,19 @@ Updated: 2026-10-18. This handoff retains detailed product and implementation co
 
 Read [AGENTS.md](AGENTS.md) before changing code, including the installed Next.js documentation requirement. Treat source code and dated verification as authoritative when older documents disagree. [ARCHITECTURE.md](ARCHITECTURE.md) describes the system boundaries but still contains outdated deployment and eBay implementation notes.
 
+## Deployment lock contention — local fix, 2026-10-18
+
+An operator CI log stopped at `Another deployment is running` after successful
+SSM/SSH and ECR login. The release script used an immediate exclusive lock while
+the paused-ingestion Live Comps timer uses the same file in shared mode; a normal
+refresh can therefore cause this failure. The actual production lock holder was
+not inspected in this session. Local release orchestration now waits up to 120
+seconds, reports deployment/maintenance contention accurately, and explicitly
+unlocks on exit (including rollback and early setup failures). Timeout occurs
+before service changes. Do not unlink the lock file to bypass contention.
+Tests cover shared-lock waiting, timeout without service mutation, success, and
+rollback. Production installation/CI rollout of this fix remains pending.
+
 ## Current handoff — 2026-10-18
 
 - **Repository:** local HEAD is `8cb630109f6c43dcc9dee43313afdfcd43d52d5b` (`live comps fix`). The shared Trending aggregation correction is committed in `a5a0cbd`; independent Live Comps loading is committed in `8cb6301`. Commit presence does not establish deployment.

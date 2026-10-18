@@ -5,7 +5,17 @@ set -euo pipefail
 release=$(realpath "$1")
 [[ "$release" == /opt/cardboarddex/releases/* ]] || { echo 'Invalid release path' >&2; exit 1; }
 exec 9>/opt/cardboarddex/deploy.lock
-flock -n 9 || { echo 'Another deployment is running' >&2; exit 1; }
+# Stored-data maintenance takes this same lock in shared mode. Give its short
+# refresh time to finish; never bypass a real deployment or unlink the lock file.
+echo 'Waiting up to 120 seconds for deployment/maintenance lock...'
+flock -w 120 9 || {
+  echo 'Could not acquire deployment/maintenance lock within 120 seconds; no services changed.' >&2
+  echo 'Inspect: sudo lslocks -o PID,COMMAND,MODE,PATH; systemctl status cardboarddex-live-stats.service' >&2
+  exit 1
+}
+# Explicit unlock also releases this open-file-description lock if a child
+# inherited FD 9. Install before setup so early failures release it too.
+trap 'flock -u 9' EXIT
 export APP_ENV_FILE=/etc/cardboarddex/app.env
 export BACKEND_IMAGE
 BACKEND_IMAGE=$(cat "$release/image.txt")
@@ -30,6 +40,7 @@ rollback() {
     fi
     docker compose -p app --env-file "$APP_ENV_FILE" -f "$old/docker-compose.prod.yml" up -d --remove-orphans "${restore_services[@]}" || true
   fi
+  flock -u 9 || echo 'Warning: failed to explicitly release deployment lock' >&2
   exit "$status"
 }
 trap rollback EXIT
@@ -72,5 +83,5 @@ if [[ -n "$old" && "$old" != "$release" ]]; then
   ln -sfn "$old" /opt/cardboarddex/previous
 fi
 ln -sfn "$release" /opt/cardboarddex/current
-trap - EXIT
+trap 'flock -u 9' EXIT
 echo 'Verified deployment completed'
