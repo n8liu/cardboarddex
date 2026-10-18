@@ -55,6 +55,23 @@ GitHub deployment/image-sync workflows were restored to active, targeting the ne
 5. Ask before committing or pushing unless already authorized.
 6. Update this handoff after implementation when behavior, configuration, verification, or outstanding work changes. Do not append repeated feature histories.
 
+## Independent Live Comps loading — local, 2026-10-18
+
+Live Comps now reads a count-free `/cards/live-updates/feed` and separately polls
+`/cards/live-updates/stats`. Global totals are published by a stored-data-only
+60-second Celery task; one minute is a target under the existing single worker.
+Snapshots are marked stale after 60 seconds and expire after 30 minutes. Missing
+totals return 503/Retry-After without running queries; cards and controls remain
+independent. Pagination uses `has_more` and loaded counts, retaining offset
+pagination. The legacy endpoint remains compatible. No schema changes.
+
+Full isolated backend suite, 143 frontend tests, TypeScript and production build
+passed. Live/infrastructure tests and production latency checks remain pending.
+Deploy backend/worker/Beat first, seed with `python -m jobs.refresh_live_stats`,
+verify both routes, then deploy frontend. Backend rollback requires restoring
+the older frontend first. Details and test environment: `docs/performance.md`.
+No commit, push, or production deployment was performed for this phase.
+
 ## Product and data boundaries
 
 CardboardDex provides an English/Japanese Pokémon card catalog, price comparisons, a National Pokédex, and a browser-based collection binder.

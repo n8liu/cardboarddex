@@ -9,7 +9,7 @@ celery_app = Celery(
     "cardboarddex",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["jobs.sync_catalog", "jobs.collect_prices", "jobs.collect_ebay_prices", "jobs.cycle_prices", "jobs.sync_market_data", "jobs.check_listing_images", "jobs.sync_ppt"],
+    include=["jobs.refresh_live_stats", "jobs.sync_catalog", "jobs.collect_prices", "jobs.collect_ebay_prices", "jobs.cycle_prices", "jobs.sync_market_data", "jobs.check_listing_images", "jobs.sync_ppt"],
 )
 
 celery_app.conf.update(
@@ -31,6 +31,11 @@ celery_app.conf.update(
 )
 
 celery_app.conf.beat_schedule = {
+    "refresh-live-stats": {
+        "task": "jobs.refresh_live_stats.refresh_live_stats",
+        "schedule": 60.0,
+        "options": {"expires": 55, "time_limit": 20},
+    },
     # Alternating 15-minute schedule:
     # Minute :00 and :30 -> TCG API market prices
     "collect-tcgapi-prices-alternating": {

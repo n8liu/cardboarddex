@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { LiveUpdatesDashboard } from "@/components/live-updates-dashboard";
-import type { LiveUpdatesResponse } from "@/types/card";
+import type { LiveFeedResponse } from "@/types/card";
 
 export const metadata: Metadata = {
   title: "Live Updated Items & Market Comps | CardboardDex",
@@ -11,16 +11,10 @@ export const dynamic = "force-dynamic";
 export const runtime = "edge";
 
 export default function LiveUpdatesPage() {
-  const initialData: LiveUpdatesResponse = {
+  const initialData: LiveFeedResponse = {
     page: 1,
     per_page: 24,
-    total_items: 0,
-    total_pages: 1,
-    provider_filter: "all",
-    grade_filter: "all",
-    total_ebay_updates: 0,
-    total_tcg_updates: 0,
-    graded_updates_count: 0,
+    has_more: false,
     items: [],
     updated_at: new Date().toISOString(),
   };

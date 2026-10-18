@@ -19,10 +19,10 @@ vi.mock("@/lib/api", async (original) => ({
   ...await original<typeof api>(),
   searchCards: vi.fn(), getCardSets: vi.fn(), getSetStats: vi.fn(),
   getSealedSignals: vi.fn(), getMarketMovers: vi.fn(), getGradingProfit: vi.fn(),
-  getTrendingDashboard: vi.fn(), getLiveUpdates: vi.fn(),
+  getTrendingDashboard: vi.fn(), getLiveFeed: vi.fn(), getLiveStats: vi.fn(),
 }));
 const requests = [api.searchCards, api.getCardSets, api.getSetStats, api.getSealedSignals,
-  api.getMarketMovers, api.getGradingProfit, api.getTrendingDashboard, api.getLiveUpdates];
+  api.getMarketMovers, api.getGradingProfit, api.getTrendingDashboard, api.getLiveFeed, api.getLiveStats];
 const pending = () => new Promise<never>(() => {});
 const card = (name: string): CardSummary => ({ id: name, name, set_id: "test", set_name: "Test", number: "1", printed_total: null, rarity: "Rare", image_url: "", market_price: 10, market_currency: "USD" });
 
@@ -38,7 +38,7 @@ it.each([
   ["market movers", MoversPage, /Loading market movers/, api.getMarketMovers],
   ["grading", GradingPage, /Loading grading opportunities/, api.getGradingProfit],
   ["trending", TrendingPage, /Loading trending cards/, api.getTrendingDashboard],
-  ["live updates", LivePage, /Loading latest market updates/, api.getLiveUpdates],
+  ["live updates", LivePage, /Loading latest market updates/, api.getLiveFeed],
 ] as const)("renders %s controls before the API responds", async (_name, Page, label, request) => {
   const page = Page();
   expect(request).not.toHaveBeenCalled();
@@ -115,21 +115,21 @@ it("pauses Live Comps in hidden tabs, resumes immediately, and avoids overlappin
   const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(false);
   const empty = { items: [], total_pages: 1, total_items: 0, page: 1, per_page: 24,
     total_ebay_updates: 0, total_tcg_updates: 0, graded_updates_count: 0, provider_filter: "all", grade_filter: "all", updated_at: "2026-10-12" };
-  vi.mocked(api.getLiveUpdates).mockResolvedValue(empty as never);
+  vi.mocked(api.getLiveFeed).mockResolvedValue(empty as never);
   try {
     render(LivePage());
     await act(async () => { await vi.advanceTimersByTimeAsync(300); });
-    expect(api.getLiveUpdates).toHaveBeenCalledTimes(1);
+    expect(api.getLiveFeed).toHaveBeenCalledTimes(1);
     hidden.mockReturnValue(true);
     fireEvent(document, new Event("visibilitychange"));
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
-    expect(api.getLiveUpdates).toHaveBeenCalledTimes(1);
-    vi.mocked(api.getLiveUpdates).mockImplementation(pending);
+    expect(api.getLiveFeed).toHaveBeenCalledTimes(1);
+    vi.mocked(api.getLiveFeed).mockImplementation(pending);
     hidden.mockReturnValue(false);
     fireEvent(document, new Event("visibilitychange"));
-    expect(api.getLiveUpdates).toHaveBeenCalledTimes(2);
+    expect(api.getLiveFeed).toHaveBeenCalledTimes(2);
     await act(async () => { await vi.advanceTimersByTimeAsync(45_000); });
-    expect(api.getLiveUpdates).toHaveBeenCalledTimes(2);
+    expect(api.getLiveFeed).toHaveBeenCalledTimes(2);
   } finally { cleanup(); hidden.mockRestore(); vi.useRealTimers(); }
 });
 
@@ -147,9 +147,8 @@ it("collapses catalog filters by default and again when mobile search is focused
 });
 
 it("renders Live Comps as a catalog grid and allows switching to the list", async () => {
-  vi.mocked(api.getLiveUpdates).mockResolvedValue({
-    page: 1, per_page: 24, total_items: 1, total_pages: 1, provider_filter: "all", grade_filter: "all",
-    total_ebay_updates: 1, total_tcg_updates: 0, graded_updates_count: 0, updated_at: "2026-10-15",
+  vi.mocked(api.getLiveFeed).mockResolvedValue({
+    page: 1, per_page: 24, has_more: false, updated_at: "2026-10-15",
     items: [{ id: "comp", card_id: "card", card_name: "Grid card", set_id: "set", set_name: "Test set", image_url: "/image", provider: "ebay", price: 20, currency: "USD", observed_at: "2026-10-15" }],
   });
   render(LivePage());
@@ -158,4 +157,56 @@ it("renders Live Comps as a catalog grid and allows switching to the list", asyn
   fireEvent.click(screen.getByRole("button", { name: "Full Width" }));
   expect(screen.getByRole("button", { name: "Full Width" })).toHaveAttribute("aria-pressed", "true");
   expect(screen.getByRole("link", { name: "Grid card" })).toHaveAttribute("href", "/cards/card");
+});
+
+const feedResult = (name: string, page = 1, has_more = false) => ({
+  page, per_page: 24, has_more, updated_at: new Date().toISOString(),
+  items: [{ id: name, card_id: name, card_name: name, set_id: "s", set_name: "Set",
+    image_url: "/image", provider: "tcgapi", price: 20, currency: "USD", observed_at: new Date().toISOString() }],
+});
+
+it("shows cards while totals fail, and keeps totals retry independent of the feed", async () => {
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.mocked(api.getLiveStats).mockRejectedValue(new Error("offline"));
+  vi.mocked(api.getLiveFeed).mockResolvedValue(feedResult("Visible card"));
+  try {
+    render(LivePage());
+    expect(await screen.findByRole("link", { name: "Visible card" })).toBeVisible();
+    expect(screen.getByRole("textbox")).toBeEnabled();
+    expect(screen.getByText("1 records loaded")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Retry totals" }));
+    await waitFor(() => expect(api.getLiveStats).toHaveBeenCalledTimes(2));
+    expect(api.getLiveFeed).toHaveBeenCalledTimes(1);
+  } finally { log.mockRestore(); }
+});
+
+it("ignores obsolete filter responses while totals remain pending", async () => {
+  let finish!: (value: ReturnType<typeof feedResult>) => void;
+  vi.mocked(api.getLiveFeed).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }))
+    .mockResolvedValue(feedResult("New card"));
+  render(LivePage());
+  await waitFor(() => expect(api.getLiveFeed).toHaveBeenCalledTimes(1));
+  fireEvent.change(screen.getByRole("textbox"), { target: { value: "new" } });
+  expect(await screen.findByRole("link", { name: "New card" })).toBeVisible();
+  await act(async () => finish(feedResult("Obsolete card")));
+  expect(screen.queryByRole("link", { name: "Obsolete card" })).not.toBeInTheDocument();
+  expect(screen.getAllByText("Loading totals…")).toHaveLength(2);
+});
+
+it("keeps final-page has_more after a first-page poll", async () => {
+  vi.useFakeTimers();
+  vi.mocked(api.getLiveFeed).mockResolvedValueOnce(feedResult("First", 1, true))
+    .mockResolvedValueOnce(feedResult("Last", 2, false))
+    .mockResolvedValue(feedResult("Newest", 1, true));
+  try {
+    render(LivePage());
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    fireEvent.click(screen.getByRole("button", { name: /Load more/ }));
+    await act(async () => {});
+    expect(screen.getByText("End of results")).toBeVisible();
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+    expect(screen.getByRole("link", { name: "Newest" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Last" })).toBeVisible();
+    expect(screen.getByText("End of results")).toBeVisible();
+  } finally { cleanup(); vi.useRealTimers(); }
 });

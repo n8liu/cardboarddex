@@ -130,3 +130,55 @@ windows, includes a clicked card outside the top 200, and asserts one history SQ
 statement per uncached default dashboard. Changes remain local and uncommitted.
 Deploy normally, then rerun the public smoke suite; retain the 15-second deadline
 and observe memory and cold/warm latency under normal traffic.
+
+
+## Independent Live Comps feed and totals (local, 2026-10-18)
+
+The dashboard now uses `/cards/live-updates/feed` and `/cards/live-updates/stats`
+independently. The feed preserves existing filters and offset pagination, requests
+one extra row for `has_more`, and never executes count/KPI queries. Its SQL has a
+five-second statement timeout. Both new routes use `Cache-Control: no-store`.
+The legacy `/cards/live-updates` response remains unchanged for older clients.
+
+Statistics are global, including when the feed is filtered. A stored-data-only
+Celery task runs every 60 seconds, expires queued work after 55 seconds, and has
+a 20-second hard limit. The existing single worker can delay refreshes behind
+other work; one minute is a target, not a guarantee. The task computes totals
+in one SQL statement within a read-only repeatable-read transaction, with a
+five-second statement timeout. A 30-second token-owned Redis lease prevents
+concurrent publication; a worker that loses its lease cannot overwrite totals.
+Keys include snapshot version, matcher version, and PPT visibility mode. No new
+provider requests, schema changes, or worker concurrency are introduced.
+
+Successful snapshots are fresh for 60 seconds and usable for 30 minutes.
+Refresh failure retains the last successful snapshot. Statistics requests only
+read Redis: missing, invalid, expired, or unavailable snapshots produce HTTP 503
+with `Retry-After: 60`, without database queries or refresh dispatch. The UI shows
+timestamps/staleness and stops displaying expired numeric values. Feed requests,
+errors, retries, and 15-second polling remain independent of 60-second totals
+polling. Hidden tabs pause polling; obsolete filter responses are ignored.
+Pagination displays loaded counts instead of exact filtered totals.
+
+Deploy backend/API, worker, and Beat before frontend. Seed the snapshot with
+`python -m jobs.refresh_live_stats` in the configured backend environment, then
+verify both new routes before deploying frontend. To roll back the backend,
+first restore the older frontend that uses the retained legacy route. No data
+migration or destructive rollback is necessary.
+
+Validation: full isolated backend suite and all 143 frontend tests passed;
+TypeScript and production build passed. Tests cover cold/missing totals, no
+feed aggregates, provider/grade/search parity, legacy compatibility, stale expiry,
+lease publication, failed refresh preservation, independent retry, cancellation,
+obsolete filters, and preserving final-page state during first-page polling.
+Backend tests require explicit default visibility/ingestion flags because local
+`.env` settings enable a different provider mode; the test-only environment uses
+`PPT_MINUTE_WEIGHT_LIMIT=55 PPT_PRIMARY_ENABLED=false PPT_INGESTION_ENABLED=false
+TCGAPI_INGESTION_ENABLED=true`, SQLite, and unreachable test Redis URLs. No local
+configuration was changed. Opt-in live/infrastructure tests were skipped.
+
+Production deployment and timing verification remain pending. Compare feed
+latency with missing versus available snapshots; record worker refresh duration
+and snapshot age separately. `Live feed query` logs include acquisition/query
+elapsed time, while `Live stats refresh` logs report total refresh duration.
+These are not separate connection-wait/SQL/serialization measurements. No
+production performance improvement is claimed from fixture tests.

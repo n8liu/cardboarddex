@@ -21,6 +21,8 @@ import type {
   TrendingDashboardResponse,
   TrackActionPayload,
   LiveUpdatesResponse,
+  LiveFeedResponse,
+  LiveStatsResponse,
   LiveUpdateProviderFilter,
   LiveUpdateGradeFilter,
   GameLanguage,
@@ -507,6 +509,31 @@ export function getLiveUpdates(options: CacheOptions & {
   return request<LiveUpdatesResponse>(`/cards/live-updates${qs}`, {
     cache: "no-store",
   }, options);
+}
+
+export function getLiveFeed(options: CacheOptions & {
+  provider?: LiveUpdateProviderFilter;
+  gradeFilter?: LiveUpdateGradeFilter;
+  setId?: string;
+  query?: string;
+  page?: number;
+  perPage?: number;
+} = {}): Promise<LiveFeedResponse> {
+  const qs = buildQueryString({
+    provider: options.provider ?? "all",
+    grade_filter: options.gradeFilter ?? "all",
+    page: options.page ?? 1,
+    per_page: options.perPage ?? 24,
+    set_id: options.setId,
+    q: options.query,
+  });
+  return request<LiveFeedResponse>(`/cards/live-updates/feed${qs}`, {
+    cache: "no-store",
+  }, options);
+}
+
+export function getLiveStats(options: CacheOptions = {}): Promise<LiveStatsResponse> {
+  return request<LiveStatsResponse>("/cards/live-updates/stats", { cache: "no-store" }, options);
 }
 
 export async function getPortfolioValuation(

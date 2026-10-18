@@ -390,3 +390,21 @@ export type LiveUpdatesResponse = {
 
 export type GameLanguage = "all" | "pokemon" | "pokemon-japan";
 
+
+export type LiveFeedResponse = {
+  page: number;
+  per_page: number;
+  has_more: boolean;
+  items: LiveUpdateItem[];
+  updated_at: string;
+};
+
+export type LiveStatsResponse = {
+  total_items: number;
+  total_ebay_updates: number;
+  total_tcg_updates: number;
+  total_ppt_updates: number;
+  graded_updates_count: number;
+  generated_at: string;
+  is_stale: boolean;
+};

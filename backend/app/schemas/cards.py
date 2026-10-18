@@ -447,3 +447,21 @@ class PortfolioValuationResponse(BaseModel):
     history: list[PortfolioHistoryPoint]
     updated_at: datetime
 
+
+
+class LiveFeedResponse(BaseModel):
+    page: int
+    per_page: int
+    has_more: bool
+    items: list[LiveUpdateItem]
+    updated_at: datetime
+
+
+class LiveStatsResponse(BaseModel):
+    total_items: int = Field(ge=0)
+    total_ebay_updates: int = Field(ge=0)
+    total_tcg_updates: int = Field(ge=0)
+    total_ppt_updates: int = Field(ge=0)
+    graded_updates_count: int = Field(ge=0)
+    generated_at: datetime
+    is_stale: bool

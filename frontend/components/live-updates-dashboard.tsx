@@ -1,5 +1,7 @@
 "use client";
 
+import { useLiveStats } from "@/lib/use-live-stats";
+
 import { AnimatedNumber } from "@/components/ui/animated-number";
 
 import { SectionLoadingBar } from "@/components/section-loading-bar";
@@ -8,7 +10,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { cardImageUrl, getLiveUpdates } from "@/lib/api";
+import { cardImageUrl, getLiveFeed } from "@/lib/api";
 import { BackToTop } from "@/components/ui/back-to-top";
 import { EmptyState } from "@/components/ui/empty-state";
 import { InfiniteScrollSentinel } from "@/components/ui/infinite-scroll-sentinel";
@@ -17,11 +19,11 @@ import type {
   LiveUpdateGradeFilter,
   LiveUpdateItem,
   LiveUpdateProviderFilter,
-  LiveUpdatesResponse,
+  LiveFeedResponse,
 } from "@/types/card";
 
 type LiveUpdatesDashboardProps = {
-  initialData: LiveUpdatesResponse;
+  initialData: LiveFeedResponse;
 };
 
 function formatMoney(value: number): string {
@@ -193,6 +195,7 @@ function LiveUpdateRow({ item, grid = false }: { item: LiveUpdateItem; grid?: bo
 
 export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps) {
   const searchParams = useSearchParams();
+  const { stats, loading: statsLoading, error: statsError, stale: statsStale, retry: retryStats } = useLiveStats();
 
   const getUrlParams = useCallback(() => {
     const params = typeof window !== "undefined"
@@ -216,7 +219,7 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
   const initialParams = getUrlParams();
   const [error, setError] = useState<string | null>(null);
   const requestVersion = useRef(0);
-  const [data, setData] = useState<LiveUpdatesResponse>(initialData);
+  const [data, setData] = useState<LiveFeedResponse>(initialData);
   const [items, setItems] = useState<LiveUpdateItem[]>(initialData.items);
   const [provider, setProvider] = useState<LiveUpdateProviderFilter>(initialParams.provider);
   const [gradeFilter, setGradeFilter] = useState<LiveUpdateGradeFilter>(initialParams.gradeFilter);
@@ -264,29 +267,38 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const activeRequests = useRef(0);
   const pollController = useRef<AbortController | null>(null);
+  const foregroundController = useRef<AbortController | null>(null);
+  const moreController = useRef<AbortController | null>(null);
 
   // Fetch fresh updates on filter change
   const fetchFresh = useCallback(
     async (prov: LiveUpdateProviderFilter, gf: LiveUpdateGradeFilter, q: string) => {
       pollController.current?.abort();
+      foregroundController.current?.abort();
+      moreController.current?.abort();
+      moreController.current = null;
+      setIsLoadingMore(false);
+      const controller = new AbortController();
+      foregroundController.current = controller;
       activeRequests.current++;
       const version = ++requestVersion.current;
       setError(null);
       setIsLoading(true);
       setPage(1);
       try {
-        const res = await getLiveUpdates({
+        const res = await getLiveFeed({
           provider: prov,
           gradeFilter: gf,
           query: q.trim() || undefined,
           page: 1,
           perPage: 24,
+          abortSignal: controller.signal,
         });
-        if (version !== requestVersion.current) return;
+        if (version !== requestVersion.current || controller.signal.aborted) return;
         setData(res);
         setItems(res.items);
       } catch (err) {
-        if (version !== requestVersion.current) return;
+        if (version !== requestVersion.current || controller.signal.aborted) return;
         setError("Could not load results. Please try again.");
         console.error("Failed fetching live updates:", err);
       } finally {
@@ -301,26 +313,34 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
   useEffect(() => {
     setIsLoading(true);
     const timer = window.setTimeout(() => void fetchFresh(provider, gradeFilter, searchQuery), 250);
-    return () => { window.clearTimeout(timer); requestVersion.current++; };
+    return () => {
+      window.clearTimeout(timer);
+      requestVersion.current++;
+      foregroundController.current?.abort();
+      moreController.current?.abort();
+    };
   }, [fetchFresh, provider, gradeFilter, searchQuery]);
 
-  const hasMore = page < data.total_pages;
+  const hasMore = data.has_more;
 
   const loadMore = useCallback(async () => {
     if (!hasMore || isLoading || isLoadingMore) return;
     const nextPage = page + 1;
+    const controller = new AbortController();
+    moreController.current = controller;
     const version = requestVersion.current;
     setIsLoadingMore(true);
     activeRequests.current++;
     try {
-      const res = await getLiveUpdates({
+      const res = await getLiveFeed({
         provider,
         gradeFilter,
         query: searchQuery.trim() || undefined,
         page: nextPage,
         perPage: 24,
+        abortSignal: controller.signal,
       });
-      if (version !== requestVersion.current) return;
+      if (version !== requestVersion.current || controller.signal.aborted) return;
       setItems((prev) => {
         const seen = new Set(prev.map((i) => i.id));
         const newItems = res.items.filter((i) => !seen.has(i.id));
@@ -329,10 +349,13 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
       setData(res);
       setPage(nextPage);
     } catch (err) {
-      console.error("Failed loading more live updates:", err);
+      if (!controller.signal.aborted) console.error("Failed loading more live updates:", err);
     } finally {
       activeRequests.current--;
-      setIsLoadingMore(false);
+      if (moreController.current === controller) {
+        moreController.current = null;
+        setIsLoadingMore(false);
+      }
     }
   }, [hasMore, isLoading, isLoadingMore, page, provider, gradeFilter, searchQuery]);
 
@@ -349,7 +372,7 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
       activeRequests.current++;
       const version = requestVersion.current;
       try {
-        const res = await getLiveUpdates({ provider, gradeFilter,
+        const res = await getLiveFeed({ provider, gradeFilter,
           query: searchQuery.trim() || undefined, page: 1, perPage: 24,
           abortSignal: controller.signal });
         if (disposed || controller.signal.aborted || version !== requestVersion.current) return;
@@ -357,7 +380,8 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
           const ids = new Set(existing.map((item) => item.id));
           return [...res.items.filter((item) => !ids.has(item.id)), ...existing];
         });
-        setData((previous) => ({ ...res, total_items: Math.max(previous.total_items, res.total_items) }));
+        // A first-page poll must not overwrite the pagination state of loaded later pages.
+        setData((previous) => previous.page === 1 ? res : previous);
       } catch (error) {
         if (!controller.signal.aborted) console.error("Auto-refresh live updates error:", error);
       } finally {
@@ -419,8 +443,8 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
               OBS
             </span>
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-sky-800">Total Observations</p>
-              <p className="text-xs font-black text-slate-950"><AnimatedNumber value={data.total_items} /> Comps</p>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-sky-800">Global Observations</p>
+              <p className="text-xs font-black text-slate-950">{stats ? <><AnimatedNumber value={stats.total_items} /> Comps</> : statsLoading ? "Loading totals…" : "Unavailable"}</p>
             </div>
           </div>
 
@@ -429,11 +453,17 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
               SLAB
             </span>
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-purple-800">Graded Slabs</p>
-              <p className="text-xs font-black text-purple-950"><AnimatedNumber value={data.graded_updates_count} /> Tracked</p>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-purple-800">Global Graded Updates</p>
+              <p className="text-xs font-black text-purple-950">{stats ? <><AnimatedNumber value={stats.graded_updates_count} /> Tracked</> : statsLoading ? "Loading totals…" : "Unavailable"}</p>
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="mt-2 text-xs text-slate-500" aria-live="polite">
+        Global totals cover all sources and filters.
+        {stats && <span> Updated {new Date(stats.generated_at).toLocaleTimeString()}{statsStale ? " · Stale" : ""}.</span>}
+        {statsError && <span> Totals temporarily unavailable. <button type="button" onClick={retryStats} className="underline">Retry totals</button></span>}
       </div>
 
       {/* Control Bar: Providers, Grades, Search & Auto-Refresh */}
@@ -450,7 +480,7 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
                   : "text-slate-600 hover:text-slate-900"
               }`}
             >
-              All Sources ({data.total_items.toLocaleString()})
+              All Sources
             </button>
             <button
               type="button"
@@ -623,6 +653,8 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
         )}
       </div>
 
+      <p className="mt-4 text-xs text-slate-500">{items.length.toLocaleString()} records loaded</p>
+
       {/* Infinite Scroll Sentinel */}
       <InfiniteScrollSentinel
         hasMore={hasMore}
@@ -630,7 +662,6 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
         onLoadMore={() => void loadMore()}
         itemName="records"
         totalLoaded={items.length}
-        totalItems={data.total_items}
       />
 
       {/* Floating Back To Top Button */}

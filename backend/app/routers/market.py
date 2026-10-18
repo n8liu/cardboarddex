@@ -29,6 +29,8 @@ from app.schemas.cards import (
     GradingProfitResponse,
     LiveUpdateItem,
     LiveUpdatesResponse,
+    LiveFeedResponse,
+    LiveStatsResponse,
     MarketMoverItem,
     MarketMoversResponse,
     SealedSignalsResponse,
@@ -272,21 +274,7 @@ def get_sealed_signals(
     )
 
 
-@router.get("/live-updates", response_model=LiveUpdatesResponse)
-def get_live_updates(
-    response: Response,
-    provider: Literal["all", "ebay", "tcgapi", "pokemonpricetracker"] = Query(default="all", description="Source provider filter"),
-    grade_filter: Literal["all", "graded", "psa10", "psa9", "raw"] = Query(
-        default="all", description="Grading filter"
-    ),
-    set_id: str | None = Query(default=None, description="Filter by set ID"),
-    q: str | None = Query(default=None, max_length=100, description="Search card by name or number"),
-    page: int = Query(default=1, ge=1, description="Page number"),
-    per_page: int = Query(default=30, ge=1, le=100, description="Items per page"),
-    db: Session = Depends(get_db),
-) -> LiveUpdatesResponse:
-    response.headers["Cache-Control"] = "public, max-age=5, s-maxage=10, stale-while-revalidate=30"
-
+def _live_feed_query(provider, grade_filter, set_id, q):
     stmt = select(PriceObservation, Card, Set).join(Card, PriceObservation.card_id == Card.id).join(Set, Card.set_id == Set.id)
 
     if provider == "ebay":
@@ -328,6 +316,74 @@ def get_live_updates(
         )
 
     stmt = stmt.where(eligible_observation())
+    return stmt
+
+
+def _live_feed_items(rows):
+    items: list[LiveUpdateItem] = []
+    for obs, card, card_set in rows:
+        listing_url = _extract_listing_url(obs)
+        listing_title: str | None = None
+        if isinstance(obs.payload, dict):
+            listing_title = (
+                obs.payload.get("listing_title")
+                or obs.payload.get("title")
+                or (obs.payload.get("item") or {}).get("title")
+            )
+        if not listing_title:
+            components = [card.name]
+            if card.number:
+                components.append(f"#{card.number}")
+            if obs.printing:
+                components.append(f"({obs.printing})")
+            if obs.grading_company and obs.grade is not None:
+                components.append(f"{obs.grading_company} {obs.grade}")
+            listing_title = " ".join(components)
+
+        price_val = float(obs.price) if obs.price is not None else 0.0
+        items.append(
+            LiveUpdateItem(
+                id=str(obs.id),
+                card_id=card.id,
+                card_name=card.name,
+                set_name=card_set.name,
+                set_id=card.set_id,
+                card_number=card.number,
+                image_url=card_image_url(card.id),
+                provider=obs.provider,
+                update_type=(obs.payload or {}).get("update_type") or ("asking_listing" if obs.provider == "ebay" else "market_update"),
+                price_date=obs.provider_updated_at,
+                metric=(obs.payload or {}).get("metric"),
+                price=price_val,
+                currency=obs.currency or "USD",
+                condition=obs.condition,
+                printing=obs.printing,
+                grading_company=obs.grading_company,
+                grade=str(obs.grade) if obs.grade is not None else None,
+                listing_title=listing_title,
+                listing_url=listing_url,
+                observed_at=obs.observed_at or obs.provider_updated_at or datetime.now(UTC),
+            )
+        )
+    return items
+
+
+@router.get("/live-updates", response_model=LiveUpdatesResponse)
+def get_live_updates(
+    response: Response,
+    provider: Literal["all", "ebay", "tcgapi", "pokemonpricetracker"] = Query(default="all", description="Source provider filter"),
+    grade_filter: Literal["all", "graded", "psa10", "psa9", "raw"] = Query(
+        default="all", description="Grading filter"
+    ),
+    set_id: str | None = Query(default=None, description="Filter by set ID"),
+    q: str | None = Query(default=None, max_length=100, description="Search card by name or number"),
+    page: int = Query(default=1, ge=1, description="Page number"),
+    per_page: int = Query(default=30, ge=1, le=100, description="Items per page"),
+    db: Session = Depends(get_db),
+) -> LiveUpdatesResponse:
+    response.headers["Cache-Control"] = "public, max-age=5, s-maxage=10, stale-while-revalidate=30"
+
+    stmt = _live_feed_query(provider, grade_filter, set_id, q)
 
     is_unfiltered = (
         provider == "all"
@@ -379,51 +435,7 @@ def get_live_updates(
             except Exception as exc:
                 logger.warning("Redis live-updates KPI write failed: %s", exc)
 
-    items: list[LiveUpdateItem] = []
-    for obs, card, card_set in rows:
-        listing_url = _extract_listing_url(obs)
-        listing_title: str | None = None
-        if isinstance(obs.payload, dict):
-            listing_title = (
-                obs.payload.get("listing_title")
-                or obs.payload.get("title")
-                or (obs.payload.get("item") or {}).get("title")
-            )
-        if not listing_title:
-            components = [card.name]
-            if card.number:
-                components.append(f"#{card.number}")
-            if obs.printing:
-                components.append(f"({obs.printing})")
-            if obs.grading_company and obs.grade is not None:
-                components.append(f"{obs.grading_company} {obs.grade}")
-            listing_title = " ".join(components)
-
-        price_val = float(obs.price) if obs.price is not None else 0.0
-        items.append(
-            LiveUpdateItem(
-                id=str(obs.id),
-                card_id=card.id,
-                card_name=card.name,
-                set_name=card_set.name,
-                set_id=card.set_id,
-                card_number=card.number,
-                image_url=card_image_url(card.id),
-                provider=obs.provider,
-                update_type=(obs.payload or {}).get("update_type") or ("asking_listing" if obs.provider == "ebay" else "market_update"),
-                price_date=obs.provider_updated_at,
-                metric=(obs.payload or {}).get("metric"),
-                price=price_val,
-                currency=obs.currency or "USD",
-                condition=obs.condition,
-                printing=obs.printing,
-                grading_company=obs.grading_company,
-                grade=str(obs.grade) if obs.grade is not None else None,
-                listing_title=listing_title,
-                listing_url=listing_url,
-                observed_at=obs.observed_at or obs.provider_updated_at or datetime.now(UTC),
-            )
-        )
+    items = _live_feed_items(rows)
 
     return LiveUpdatesResponse(
         page=page,
@@ -438,3 +450,35 @@ def get_live_updates(
         items=items,
         updated_at=datetime.now(UTC),
     )
+
+
+@router.get("/live-updates/feed", response_model=LiveFeedResponse)
+def get_live_feed(
+    response: Response,
+    provider: Literal["all", "ebay", "tcgapi", "pokemonpricetracker"] = Query(default="all"),
+    grade_filter: Literal["all", "graded", "psa10", "psa9", "raw"] = Query(default="all"),
+    set_id: str | None = Query(default=None),
+    q: str | None = Query(default=None, max_length=100),
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=30, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> LiveFeedResponse:
+    response.headers["Cache-Control"] = "no-store"
+    started = time.monotonic()
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(text("SET LOCAL statement_timeout = '5000ms'"))
+    stmt = _live_feed_query(provider, grade_filter, set_id, q)
+    order_col = func.coalesce(PriceObservation.observed_at, PriceObservation.provider_updated_at)
+    rows = db.execute(stmt.order_by(order_col.desc(), PriceObservation.id.desc())
+                      .offset((page - 1) * per_page).limit(per_page + 1)).all()
+    logger.info("Live feed query page=%s per_page=%s rows=%s duration_ms=%.1f",
+                page, per_page, len(rows), (time.monotonic() - started) * 1000)
+    return LiveFeedResponse(page=page, per_page=per_page, has_more=len(rows) > per_page,
+        items=_live_feed_items(rows[:per_page]), updated_at=datetime.now(UTC))
+
+
+@router.get("/live-updates/stats", response_model=LiveStatsResponse)
+def get_live_stats(response: Response) -> LiveStatsResponse:
+    from app.services.live_stats import read_snapshot
+    response.headers["Cache-Control"] = "no-store"
+    return read_snapshot()
