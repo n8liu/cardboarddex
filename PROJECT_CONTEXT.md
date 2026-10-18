@@ -881,3 +881,17 @@ bypassed and five-second per-statement limits. Full backend suite passed. See
 `docs/performance.md`; private receipt `.system_generated/ppt-rehearsal/dashboard-results.json`.
 This follow-up is not committed or deployed; schema remains 0010. Production
 cold/warm verification is required; do not treat local latency as production proof.
+
+### Remaining Trending timeout follow-up — October 18
+
+The previous aggregation fix is now in local HEAD (`043b16c`); operator CI passed
+Top Pokémon Volume but still failed Trending. The new local correction shares one
+per-card aggregate across default Trending sections, including supplementary
+clicked cards, with batched result fetching. No migration or timeout increase.
+Full backend tests passed; five timeframe parity cases verify ranking and a single
+history query. Final candidate was exercised in a separate temporary container on
+the production host with read-only transactions and caches bypassed: PPT off
+8.724s, PPT on 9.923s, 50 results per section, peak RSS approximately 145 MiB.
+Public HTTP/concurrent-load performance is still unverified for this candidate.
+No deployment, commit, or production configuration change was made this turn.
+See `docs/performance.md` for evidence and remaining rollout checks.

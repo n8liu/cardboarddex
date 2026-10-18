@@ -1,4 +1,4 @@
-from app.services.observation_stats import card_observation_stats
+from app.services.observation_stats import card_observation_stats, dashboard_observation_snapshot
 from app.config import get_settings
 from app.services.image_delivery import card_image_url, image_generation
 from app.common.cache import TTLCache
@@ -172,46 +172,55 @@ def calculate_trending_cards(
     *,
     limit: int = 50,
     q: str | None = None,
+    _snapshot=None,
 ) -> list[TrendingCardItem]:
     """Calculate the top trending/most searched or clicked cards."""
     card_clicks = _get_redis_scores(REDIS_KEY_CARD_CLICKS, _IN_MEMORY_CARD_CLICKS)
 
-    stats = card_observation_stats()
-    # Base query template
-    base_stmt = (
-        select(
-            Card.id,
-            Card.name,
-            Card.number,
-            Card.rarity,
-            Set.id.label("set_id"),
-            Set.name.label("set_name"),
-            func.coalesce(stats.c.obs_cnt, 0).label("obs_cnt"),
-            stats.c.avg_price,
-            stats.c.max_price,
+    if _snapshot is None:
+        stats = card_observation_stats()
+        # Base query template
+        base_stmt = (
+            select(
+                Card.id,
+                Card.name,
+                Card.number,
+                Card.rarity,
+                Set.id.label("set_id"),
+                Set.name.label("set_name"),
+                func.coalesce(stats.c.obs_cnt, 0).label("obs_cnt"),
+                stats.c.avg_price,
+                stats.c.max_price,
+            )
+            .join(Set, Card.set_id == Set.id)
+            .outerjoin(stats, stats.c.card_id == Card.id)
+            .where(Card.name.not_ilike("%code card%"))
         )
-        .join(Set, Card.set_id == Set.id)
-        .outerjoin(stats, stats.c.card_id == Card.id)
-        .where(Card.name.not_ilike("%code card%"))
-    )
 
-    # 1. Top cards by observation count
-    obs_stmt = base_stmt.order_by(func.coalesce(stats.c.obs_cnt, 0).desc(), Card.id).limit(200)
-    if q and q.strip():
-        clean_q = q.strip().lower()
-        obs_stmt = obs_stmt.where(or_(Card.name.ilike(f"%{clean_q}%"), Set.name.ilike(f"%{clean_q}%")))
-
-    rows_map: dict[str, Any] = {r.id: r for r in db.execute(obs_stmt).all()}
-
-    # 2. Ensure all clicked cards are included even if low or 0 price observation count
-    clicked_ids = [cid for cid, cnt in card_clicks.items() if cnt > 0 and cid not in rows_map]
-    if clicked_ids:
-        clicked_stmt = base_stmt.where(Card.id.in_(clicked_ids[:100]))
+        # 1. Top cards by observation count
+        obs_stmt = base_stmt.order_by(func.coalesce(stats.c.obs_cnt, 0).desc(), Card.id).limit(200)
         if q and q.strip():
             clean_q = q.strip().lower()
-            clicked_stmt = clicked_stmt.where(or_(Card.name.ilike(f"%{clean_q}%"), Set.name.ilike(f"%{clean_q}%")))
-        for r in db.execute(clicked_stmt).all():
-            rows_map[r.id] = r
+            obs_stmt = obs_stmt.where(or_(Card.name.ilike(f"%{clean_q}%"), Set.name.ilike(f"%{clean_q}%")))
+
+        rows_map: dict[str, Any] = {r.id: r for r in db.execute(obs_stmt).all()}
+
+        # 2. Ensure all clicked cards are included even if low or 0 price observation count
+        clicked_ids = [cid for cid, cnt in card_clicks.items() if cnt > 0 and cid not in rows_map]
+        if clicked_ids:
+            clicked_stmt = base_stmt.where(Card.id.in_(clicked_ids[:100]))
+            if q and q.strip():
+                clean_q = q.strip().lower()
+                clicked_stmt = clicked_stmt.where(or_(Card.name.ilike(f"%{clean_q}%"), Set.name.ilike(f"%{clean_q}%")))
+            for r in db.execute(clicked_stmt).all():
+                rows_map[r.id] = r
+
+    else:
+        rows_map = {r.id: r for r in sorted(_snapshot, key=lambda r: (-r.obs_cnt, r.id))[:200]}
+        clicked_ids = {cid for cid, count in card_clicks.items() if count > 0 and cid not in rows_map}
+        # Preserve the existing 100-card supplementary click limit and order.
+        clicked_ids = set([cid for cid in card_clicks if cid in clicked_ids][:100])
+        rows_map.update({r.id: r for r in _snapshot if r.id in clicked_ids})
 
     rows = list(rows_map.values())
     card_ids = list(rows_map.keys())
@@ -322,6 +331,7 @@ def calculate_trending_pokemon(
     *,
     limit: int = 50,
     q: str | None = None,
+    _snapshot=None,
 ) -> list[TrendingPokemonItem]:
     """Calculate the most clicked or searched on Pokémon characters."""
     poke_clicks = _get_redis_scores(REDIS_KEY_POKE_CLICKS, _IN_MEMORY_POKE_CLICKS)
@@ -339,11 +349,15 @@ def calculate_trending_pokemon(
 
     stats = card_observation_stats()
     name_filter = or_(*[Card.name.ilike(f"%{n}%") for n in active_pokemon_names])
-    enrichment_rows = db.execute(
-        select(Card.id, Card.name, stats.c.max_price)
-        .outerjoin(stats, stats.c.card_id == Card.id)
-        .where(name_filter, Card.name.not_ilike("%code card%"))
-    ).all()
+    if _snapshot is None:
+        enrichment_rows = db.execute(
+            select(Card.id, Card.name, stats.c.max_price)
+            .outerjoin(stats, stats.c.card_id == Card.id)
+            .where(name_filter, Card.name.not_ilike("%code card%"))
+        ).all()
+
+    else:
+        enrichment_rows = ((r.id, r.name, r.max_price) for r in _snapshot)
 
     cards_per_pokemon: dict[str, set[str]] = {n: set() for n in active_pokemon_names}
     top_cards: dict[str, tuple[str, str, float] | None] = {n: None for n in active_pokemon_names}
@@ -467,14 +481,16 @@ def get_trending_dashboard(
         if (now - cached_time).total_seconds() < TRENDING_CACHE_TTL:
             return cached_res
 
+    snapshot = dashboard_observation_snapshot(db, timeframe, now) if not clean_q else None
+
     # 3. Compute Column 1: Trending Cards
-    trending_cards = calculate_trending_cards(db, limit=50, q=q)
+    trending_cards = calculate_trending_cards(db, limit=50, q=q, _snapshot=snapshot)
 
     # 4. Compute Column 2: Trending Pokémon
-    trending_pokemon = calculate_trending_pokemon(db, limit=50, q=q)
+    trending_pokemon = calculate_trending_pokemon(db, limit=50, q=q, _snapshot=snapshot)
 
     # 5. Compute Column 3: Volume Leaders
-    volume_res = calculate_top_pokemon_volume(db, timeframe=timeframe, sort_by="volume_desc", q=q) if include_observation_volume else None
+    volume_res = calculate_top_pokemon_volume(db, timeframe=timeframe, sort_by="volume_desc", q=q, _snapshot=snapshot) if include_observation_volume else None
 
     response = TrendingDashboardResponse(
         timeframe=timeframe,

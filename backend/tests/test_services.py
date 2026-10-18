@@ -357,3 +357,53 @@ def test_sealed_era_rankings_and_missing_returns(memory_db, monkeypatch):
     # The legacy all-products endpoint still includes products without usable dates.
     assert service.calculate_sealed_signals(memory_db).total_items == 8
     service._SEALED_SIGNALS_LOCAL_FALLBACK.clear()
+
+
+@pytest.mark.parametrize('timeframe', ['24h', '7d', '30d', 'all_time', '2026_ytd'])
+def test_trending_shared_snapshot_preserves_rankings_and_scans_history_once(memory_db, monkeypatch, timeframe):
+    from app.services import catalog_service as c, trending_service as t
+    from app.services.observation_stats import dashboard_observation_snapshot
+
+    for service in (c, t):
+        monkeypatch.setattr(service, 'get_redis', lambda: None)
+    monkeypatch.setattr(t, '_IN_MEMORY_CARD_CLICKS', {'z-clicked': 20})
+    monkeypatch.setattr(t, '_IN_MEMORY_POKE_CLICKS', {'Pikachu': 10})
+    monkeypatch.setattr(t, '_IN_MEMORY_SEARCHES', {'charizard': 3})
+    t._TRENDING_CACHE.clear()
+    c._pokemon_volume_cache.clear()
+    now = datetime.now(UTC)
+    memory_db.add(Set(id='snapshot-set', name='Test'))
+    # More than 200 cards exercises the supplementary clicked-card path.
+    for i in range(205):
+        memory_db.add(Card(id=f'a-{i:03}', name='Pikachu', set_id='snapshot-set', number=str(i)))
+    memory_db.add(Card(id='z-clicked', name='Charizard', set_id='snapshot-set', number='206'))
+    memory_db.add(Card(id='code', name='Code Card - Pikachu', set_id='snapshot-set', number='207'))
+    memory_db.flush()
+    for i, days in enumerate([0.5, 3, 10, 20, 40, 400]):
+        memory_db.add(_history_observation(f'snapshot-{i}', 'a-000', now - timedelta(days=days), i + 10))
+    memory_db.commit()
+
+    expected_cards = t.calculate_trending_cards(memory_db)
+    expected_pokemon = t.calculate_trending_pokemon(memory_db)
+    expected_volume = c.calculate_top_pokemon_volume(memory_db, timeframe=timeframe)
+    c._pokemon_volume_cache.clear()
+    snapshot = dashboard_observation_snapshot(memory_db, timeframe, now)
+    assert t.calculate_trending_cards(memory_db, _snapshot=snapshot) == expected_cards
+    assert any(item.card_id == 'z-clicked' for item in expected_cards)
+    assert t.calculate_trending_pokemon(memory_db, _snapshot=snapshot) == expected_pokemon
+    volume = c.calculate_top_pokemon_volume(memory_db, timeframe=timeframe, _snapshot=snapshot)
+    assert volume.items == expected_volume.items
+
+    c._pokemon_volume_cache.clear()
+    statements = []
+    def capture(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+    event.listen(memory_db.bind, 'before_cursor_execute', capture)
+    try:
+        result = t.get_trending_dashboard(memory_db, timeframe=timeframe)
+    finally:
+        event.remove(memory_db.bind, 'before_cursor_execute', capture)
+        t._TRENDING_CACHE.clear()
+        c._pokemon_volume_cache.clear()
+    assert result.trending_cards == expected_cards
+    assert len([sql for sql in statements if 'price_observations' in sql]) == 1

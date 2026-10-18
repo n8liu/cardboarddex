@@ -99,3 +99,34 @@ regression tests passed, including evidence exclusions, half-open time windows,
 PPT-volume exclusion and immediate click-ranking tests. No new migration is needed;
 retain schema 0010. No commit/deployment was performed for this follow-up. Re-run
 production smoke tests and observe both cold and warm requests after release.
+
+### Remaining Trending timeout: shared request aggregation
+
+The next deployed smoke run passed Top Pokémon Volume but still timed out on
+Trending. A read-only trace against production found separate Trending card
+queries (2.57s plus 2.19s for clicked cards), Pokémon enrichment exceeding its
+five-second SQL limit, and volume taking another 4.11s in total.
+
+The new default, unfiltered dashboard shares one request-scoped per-card aggregate
+across all three sections and supplementary clicked cards. Filtered searches keep
+the existing SQL path. Result fetching uses 512-row batches to reduce transient
+memory; retained rows are bounded by catalog size, not history size. Ranking,
+listing eligibility, source selection, time windows, and click invalidation remain.
+No timeout changes or schema migration are required.
+
+An isolated temporary container on the production host ran the candidate against
+the real database in read-only transactions, with five-second statement limits,
+real click scores and both response caches bypassed. Final service-call timings:
+8.724s with PPT primary off, 9.923s with it on; all three sections returned 50 items.
+Peak process RSS was 147,856 / 148,944 KiB. These are service-call measurements,
+not public HTTP latency or concurrent-load certification. An initial validation
+child inside the serving container exited 137; subsequent checks used a separate
+temporary container to avoid sharing the serving process's memory allowance.
+The running API code and persisted configuration were not changed.
+
+Backend suite passed; focused tests also passed after bounded fetching was added.
+Regression coverage compares shared versus independent results for all five time
+windows, includes a clicked card outside the top 200, and asserts one history SQL
+statement per uncached default dashboard. Changes remain local and uncommitted.
+Deploy normally, then rerun the public smoke suite; retain the 15-second deadline
+and observe memory and cold/warm latency under normal traffic.

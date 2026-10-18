@@ -1,4 +1,4 @@
-from app.services.observation_stats import card_observation_stats
+from app.services.observation_stats import card_observation_stats, observation_windows
 from app.config import get_settings
 from app.services.price_sources import market_observation
 from app.services.listing_quality import eligible_observation
@@ -460,6 +460,7 @@ def calculate_top_pokemon_volume(
     timeframe: Literal["24h", "7d", "30d", "all_time", "2026_ytd"] = "7d",
     sort_by: Literal["volume_desc", "sales_desc", "growth_desc", "avg_price_desc"] = "volume_desc",
     q: str | None = None,
+    _snapshot=None,
 ) -> PokemonVolumeResponse:
     """Calculate top 50 Pokémon ranked by aggregated observed market value, sales count, or momentum."""
     clean_q = (q or "").strip().lower()
@@ -485,41 +486,20 @@ def calculate_top_pokemon_volume(
         if (now - cached_time).total_seconds() < POKEMON_VOLUME_CACHE_TTL:
             return cached_res
 
-    # Define current and prior windows for period-over-period momentum
-    if timeframe == "24h":
-        cur_start: datetime | None = now - timedelta(hours=24)
-        cur_end: datetime | None = now
-        prior_start: datetime | None = now - timedelta(hours=48)
-        prior_end: datetime | None = now - timedelta(hours=24)
-    elif timeframe == "7d":
-        cur_start = now - timedelta(days=7)
-        cur_end = now
-        prior_start = now - timedelta(days=14)
-        prior_end = now - timedelta(days=7)
-    elif timeframe == "30d":
-        cur_start = now - timedelta(days=30)
-        cur_end = now
-        prior_start = now - timedelta(days=60)
-        prior_end = now - timedelta(days=30)
-    elif timeframe == "2026_ytd":
-        cur_start = datetime(2026, 1, 1, tzinfo=UTC)
-        cur_end = now
-        prior_start = now - timedelta(days=30)
-        prior_end = now
-    else:  # all_time
-        cur_start = None
-        cur_end = None
-        prior_start = now - timedelta(days=30)
-        prior_end = now
+    cur_start, cur_end, prior_start, prior_end = observation_windows(timeframe, now)
 
     # One history pass supplies both windows and catalog enrichment.
     stats = card_observation_stats(cur_start, cur_end, prior_start, prior_end)
     name_filter = or_(*[Card.name.ilike(f"%{n}%") for n in POKEMON_TOP_50_NAMES])
-    enrichment_rows = db.execute(select(
-        Card.id, Card.name, stats.c.total_price, stats.c.price_count, stats.c.max_price,
-        stats.c.current_volume, stats.c.current_count, stats.c.prior_volume,
-    ).outerjoin(stats, stats.c.card_id == Card.id)
-      .where(name_filter, Card.name.not_ilike("%code card%"))).all()
+    if _snapshot is None:
+        enrichment_rows = db.execute(select(
+            Card.id, Card.name, stats.c.total_price, stats.c.price_count, stats.c.max_price,
+            stats.c.current_volume, stats.c.current_count, stats.c.prior_volume,
+        ).outerjoin(stats, stats.c.card_id == Card.id)
+          .where(name_filter, Card.name.not_ilike("%code card%"))).all()
+    else:
+        enrichment_rows = ((r.id, r.name, r.total_price, r.price_count, r.max_price,
+                            r.current_volume, r.current_count, r.prior_volume) for r in _snapshot)
     curr_stats = {n: (0.0, 0) for n in POKEMON_TOP_50_NAMES}
     prior_stats = {n: (0.0, 0) for n in POKEMON_TOP_50_NAMES}
 
