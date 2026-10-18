@@ -106,6 +106,40 @@ def test_cross_card_assessment_cannot_be_reused(db):
     assert not list(db.scalars(select(PriceObservation).where(eligible_observation())))
 
 
+@pytest.mark.parametrize("primary", [False, True])
+def test_joined_live_totals_match_eligibility(db, monkeypatch, primary):
+    from app.config import get_settings
+    from app.services.collection_stats import live_observation_totals
+    monkeypatch.setattr(get_settings(), "ppt_primary_enabled", primary)
+    db.add(Card(id="other", name="Other", number="5", set_id="base"))
+    for name in ("valid", "rejected", "pending", "wrong-card", "wrong-item", "old-version", "missing", "alias"):
+        row = add_quote(db, name, 10)
+        row.grading_company = "PSA"
+        assessment = db.get(ListingAssessment, row.payload["assessment_fingerprint"])
+        if name in ("rejected", "pending"):
+            assessment.status = name
+        elif name == "wrong-card":
+            row.card_id = "other"
+        elif name == "wrong-item":
+            row.provider_card_id = "different-item"
+        elif name == "old-version":
+            assessment.version = "obsolete"
+        elif name == "missing":
+            row.payload = {}
+        elif name == "alias":
+            row.provider = "ebay_legacy"
+    for provider in ("tcgapi", "pokemonpricetracker"):
+        db.add(PriceObservation(fingerprint=provider, card_id="c", provider=provider,
+            provider_card_id="x", variant_id="raw", price=20, currency="USD", grading_company="PSA"))
+    db.commit()
+    eligible = list(db.scalars(select(PriceObservation).where(eligible_observation())))
+    expected = (sum(r.provider == "ebay" for r in eligible),
+                sum(r.provider == "tcgapi" for r in eligible),
+                sum(r.grading_company is not None for r in eligible))
+    assert expected == (1, 1, 4 if primary else 3)
+    assert live_observation_totals(db) == expected
+
+
 def test_backfill_is_bounded_idempotent_and_preserves_source(db):
     for i in range(3):
         row = add_quote(db, str(i), i+1)

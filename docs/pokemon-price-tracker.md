@@ -134,6 +134,24 @@ not applied to aggregate history, nor is it claimed to authenticate those aggreg
 
 ### Catalog/Live Comps query correction (local follow-up)
 
+Follow-up after operator deployment of `c6d015e27e02470b868264e4879a854861ea6d19`
+and migration 0010: PPT catalog passed at 4.06s. Instrumented production Live Comps
+returned its filtered count in 0.74s and feed rows in 0.02s, but the combined scalar
+KPI statement exceeded the five-second deadline. The earlier local benchmark did
+not predict this production KPI failure.
+
+The next code-only correction moves KPIs to `live_observation_totals`: one aggregate
+over non-eBay providers and a second aggregate joining eBay observations to unique
+matched assessment fingerprints, with card/item/version/status checks retained.
+It avoids repeated correlated evidence probes over full history. On the isolated
+restore with 500 synthetic matched eBay assessments, totals took 0.135s with PPT
+hidden and 0.064s with PPT visible; exact parity against the original eligibility
+predicate passed. Tests cover rejected/pending, wrong card/item, obsolete version,
+missing evidence, provider aliases and PPT visibility. The full backend suite passed.
+These are local measurements. This follow-up needs deployment and the same
+read-only production validation, but no migration beyond 0010. Public PPT remains
+disabled pending that check.
+
 Operator read-only checks showed the production legacy catalog taking 4.06 seconds,
 PPT catalog exceeding the five-second statement deadline, and PPT Live Comps
 returning 48 records in 4.73 seconds. Primary pricing remains disabled pending

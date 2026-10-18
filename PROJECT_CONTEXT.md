@@ -114,6 +114,15 @@ PPT Live Comps 0.395s; PostgreSQL migration/adoption and backend regression suit
 passed. These local timings are not production guarantees. New release/migration
 and read-only production validation remain required before enabling primary pricing.
 
+Operator subsequently deployed `c6d015e27e02470b868264e4879a854861ea6d19` and applied
+0010. PPT catalog now passes at 4.06s, but instrumented Live Comps identified its
+KPI aggregate as the remaining timeout (feed count 0.74s, rows 0.02s). A new local
+code-only correction counts non-eBay history separately and joins listing evidence
+for matched eBay counts without correlated per-row probes. Local restored-data
+KPI checks with 500 synthetic assessments took 0.064–0.135s and matched original
+eligibility counts; full backend tests passed. No additional migration is needed.
+This correction is not deployed; keep primary disabled until production retesting.
+
 - Additive migration `0009_pokemon_price_tracker` follows the local `0008_listing_assessments` work. It adds product mapping/current quote/monthly history/checkpoint tables. Cards/Sets schema and existing TCGAPI data are preserved. No production migration, provider cutover, or deployment was performed.
 - New adapter, atomic daily/weighted-minute limiter, and bounded Celery ingestion cover English/Japanese cards and sealed products. Exact identity matching quarantines ambiguous products. A bounded legacy-ID index avoids rescanning provider JSON for every discovery. History is requested for 180 days and merged idempotently by source/printing/condition/grade/metric; backfilled points do not enter Live Comps.
 - `PPT_INGESTION_ENABLED=false`, `PPT_PRIMARY_ENABLED=false`, `TCGAPI_INGESTION_ENABLED=true` preserve existing operation. `PPT_API_KEY` is private backend configuration. Limits default to 20,000 credits/day and 55 weighted requests/minute; unused lane capacity is shared after 22:00 UTC. Direct eBay ingestion and listing screening are retained.
