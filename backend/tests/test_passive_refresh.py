@@ -144,3 +144,32 @@ def test_unchanged_checks_never_create_new_comps_but_new_listing_does(db):
     assert _observation(db,**{**args,'provider_card_id':'listing2'},provider_updated_at=datetime(2026,1,2,tzinfo=UTC))
     db.commit()
     assert db.scalar(select(func.count()).select_from(PriceObservation))==3
+
+
+@pytest.mark.parametrize("primary", [False, True])
+def test_verified_projection_ranking_does_not_scan_history(db, monkeypatch, primary):
+    from sqlalchemy import event
+    from app.models import CatalogPriceProjectionState, CatalogPriceCandidate
+    from app.services.catalog_prices import VERSION
+    monkeypatch.setattr(refresh.get_settings(), "ppt_primary_enabled", primary)
+    db.add(CatalogPriceProjectionState(version=VERSION, complete=True, verified_at=datetime.now(UTC)))
+    for cid, provider, amount, oid in [("0002", "tcgapi", 100, 1),
+                                      ("0002", "pokemonpricetracker", 10, 2),
+                                      ("0003", "tcgapi", 50, 3),
+                                      ("0004", "tcgapi", 9999, 4)]:
+        db.add(CatalogPriceCandidate(card_id=cid, provider=provider, observation_id=oid,
+            fingerprint=str(oid), price=amount, currency="EUR" if cid == "0004" else "USD",
+            observed_at=datetime.now(UTC)))
+    db.commit()
+    statements = []
+    def capture(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+    event.listen(db.get_bind(), "before_cursor_execute", capture)
+    try:
+        ranked = refresh.rank_priority(db, {"0000": 100}, 30)
+    finally:
+        event.remove(db.get_bind(), "before_cursor_execute", capture)
+    assert ranked[0] == "0000"
+    assert (ranked.index("0003") < ranked.index("0002")) == primary
+    assert ranked.index("0004") > ranked.index("0002")
+    assert not any("price_observations" in statement for statement in statements)

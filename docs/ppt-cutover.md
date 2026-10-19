@@ -53,6 +53,15 @@ Enable ingestion only for the explicitly reviewed pilot process and run one `pyt
 
 Resuming scheduled ingestion is a separate operational decision after the pause cause and all release checks are resolved. Then load the reviewed flags and run exactly one worker and one Beat. PPT uses bounded 15-second dispatches; direct eBay retains its own schedule and quotas. The retired tasks remain inert to safely drain old messages. Remove old provider credentials from private configuration after confirming all deployed processes use this release; do not delete historical data or durable progress.
 
+The systemd ingestion monitor runs a separate copy under `/opt/cardboarddex/operations`; deploying an application image does not update it. While paused, check `systemctl cat cardboarddex-ingestion-monitor.service` and confirm its `ExecStart` matches the path below. Back up and update that script from the reviewed current release:
+
+```sh
+sudo cp -p /opt/cardboarddex/operations/scripts/lightsail/monitor_ingestion.py /opt/cardboarddex/operations/scripts/lightsail/monitor_ingestion.py.pre-ppt
+sudo install -m 0755 /opt/cardboarddex/current/scripts/lightsail/monitor_ingestion.py /opt/cardboarddex/operations/scripts/lightsail/monitor_ingestion.py
+```
+
+After resumption, verify a fresh sample includes `ppt` health and PPT credit counters. An old TCGAPI counter is not evidence of current PPT ingestion. Check worker logs for successful `sync_ppt` tasks and advancing product freshness; successful health-report publication alone does not establish provider ingestion success.
+
 Observe quotas/cooldowns, due coverage by segment, quarantine, grading freshness, database/Redis growth, backups, API latency, restarts and memory for 48 hours. Keep the existing automatic pause thresholds and review weekly catalog coverage. Elapsed stability cannot be simulated or declared complete at deployment.
 
 ## Rollback

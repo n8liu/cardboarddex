@@ -1,4 +1,3 @@
-from app.services.price_sources import market_observation
 """Durable weekly coverage and bounded passive pricing; no catalog schema changes."""
 import json
 import logging
@@ -82,6 +81,22 @@ def eligible_cards():
 
 
 def rank_priority(session, popularity, limit):
+    from app.models import CatalogPriceProjectionState
+    from app.services.catalog_prices import VERSION, candidate_join
+    from app.services.price_sources import market_observation
+
+    state = session.get(CatalogPriceProjectionState, VERSION)
+    if state is not None and state.complete and state.verified_at is not None:
+        # Scheduler ranking can use the verified projection independently of the
+        # public-read feature flag. Never scan the history ledger on this path.
+        from sqlalchemy import case
+        candidate, source, join_on = candidate_join(broad=True)
+        amount = case((and_(candidate.currency == "USD", candidate.price > 0), candidate.price))
+        eligible = eligible_cards().subquery()
+        rows = session.execute(select(Card.id, Set.release_date, amount)
+            .join(eligible, eligible.c.id == Card.id).join(Set, Set.id == Card.set_id)
+            .outerjoin(source, join_on)).all()
+        return _rank_rows(rows, popularity, limit)
     latest = (select(PriceObservation.card_id, PriceObservation.price,
                      func.row_number().over(partition_by=PriceObservation.card_id,
                          order_by=(PriceObservation.observed_at.desc(), PriceObservation.id.desc())).label("rn"))
@@ -92,6 +107,10 @@ def rank_priority(session, popularity, limit):
     rows = session.execute(select(Card.id, Set.release_date, latest.c.price)
         .join(eligible, eligible.c.id == Card.id).join(Set, Set.id == Card.set_id)
         .outerjoin(latest, and_(latest.c.card_id == Card.id, latest.c.rn == 1))).all()
+    return _rank_rows(rows, popularity, limit)
+
+
+def _rank_rows(rows, popularity, limit):
     pop = percentiles({cid: popularity.get(cid) or None for cid, _, _ in rows})
     age = percentiles({cid: date.toordinal() if date else None for cid, date, _ in rows})
     price = percentiles({cid: amount for cid, _, amount in rows})

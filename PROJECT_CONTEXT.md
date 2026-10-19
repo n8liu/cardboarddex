@@ -2,9 +2,13 @@
 
 ## Current handoff — 2026-10-19
 
-The local implementation retires tcgapi.dev and migrates active catalog/pricing work to Pokémon Price Tracker (**PPT**). Direct eBay asking-listing comparisons remain. No production deployment, provider activation, database migration or credential change has been performed by this implementation. Preserve unrelated work and do not infer deployment from local code or test success.
+The implementation retires tcgapi.dev and migrates active catalog/pricing work to Pokémon Price Tracker (**PPT**). Direct eBay asking-listing comparisons remain. Distinguish local fixes from the deployed release.
 
-Latest recorded production evidence (October 18, not reverified today): release `8cb6301`, migrations confirmed through `0010_ppt_query_indexes`, PPT public visibility disabled, worker/Beat stopped under the ingestion pause. Live Comps totals recovered through the isolated maintenance timer. The last supplied smoke suite still had a 15-second Trending timeout. The source/rollback host remains retained; deletion is not authorized. Detailed chronological evidence is preserved in [the archived context](docs/archive/pre-ppt/PROJECT_CONTEXT.md).
+User-supplied production evidence (October 19): release `55c4ad9e92ed876036c3019c929b7baa230f0042`, backend image digest `4efb69d243958cf0cd856e81318e8e04c96f4b29c3fbabe764344ae8018582eb`, deployed successfully with schema `0012_market_history_transitions`. Projection backfill/verification covered 54,996 cards with no mismatches. Transition seeding processed 933 products; the before/after preservation audit passed at `/var/lib/cardboarddex/ppt-cutover-20261019T190118Z`. Deployment readiness and search probes passed; this is not full performance or stability validation.
+
+Ingestion was resumed, but at 19:24 UTC `jobs.sync_ppt` repeatedly timed out while building the weekly priority pool through `rank_priority`, before reaching provider requests in those tasks. Live stats and PPT report publication succeeded. The installed host monitor still reports legacy TCGAPI coverage and needs its separately installed script updated. Re-pausing worker/Beat was requested; execution is not yet confirmed. The local ranking fix uses the verified v2 current-price projection independently of the public-read flag; deployments without a verified projection retain the historical fallback. Projected ranking uses current selected USD positive prices, without resurrecting older positive prices when the current quote is zero or non-USD. This fix is not deployed or benchmarked on production-sized PostgreSQL yet.
+
+The last supplied full smoke suite still had a 15-second Trending timeout. The source/rollback host remains retained; deletion is not authorized. Earlier chronological evidence is in [the archived context](docs/archive/pre-ppt/PROJECT_CONTEXT.md).
 
 ## Implemented migration
 
