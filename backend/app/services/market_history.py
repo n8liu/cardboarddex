@@ -88,7 +88,9 @@ def unified_history(db, card_id, provider_history, days=365, stored=None):
         # An undimensioned legacy prefix can continue the single matching PPT
         # series. Retain point-level condition and never overwrite a conflicting
         # dated price or guess between multiple PPT conditions.
+        # Only seeded continuations count: history-only conditions are never charted.
         candidates = [s for s in provider_history if not s.get('grade') and
+                      digest([card_id, dimensions(s)]) in transitions and
                       all(dimensions(s)[k] == dim[k] for k in KEYS if k != 'condition')]
         if len(candidates) == 1:
             occupied = {p['date'] for p in points}
