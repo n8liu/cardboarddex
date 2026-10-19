@@ -294,8 +294,7 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
   const historyData = useMemo(() => buildMultiSeriesHistory(pricing.market_history_series ? pricing.observations.filter(isEbayObservation) : pricing.observations), [pricing.observations, pricing.market_history_series]);
 
   const [selectedSeries, setSelectedSeries] = useState<string[] | null>(null);
-  const [showBackfill, setShowBackfill] = useState(false);
-  const providerHistory = showBackfill ? (pricing.provider_history ?? []) : (pricing.market_history_series ?? pricing.provider_history ?? []);
+  const providerHistory = pricing.market_history_series ?? pricing.provider_history ?? [];
   const defaultRawSeries = providerHistory.find((series) => !series.grade && series.printing === pptPrimary?.printing && series.condition === pptPrimary?.condition)
     ?? providerHistory.find((series) => !series.grade && series.condition === "Near Mint")
     ?? providerHistory.find((series) => !series.grade);
@@ -544,14 +543,13 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
                 Price history
               </h3>
               <p className="mt-1 text-xs leading-5 text-slate-500">
-                Market price history continues with PPT. Older points retain their source. Missing dates and incompatible conditions remain separate. eBay lines are asking prices.
+                PPT market history includes earlier recorded prices. Lines connect available observations; prices between observations are not reported values. Different printings and grades remain separate. eBay lines are asking prices.
               </p>
             </div>
           </div>
           <div className="mt-5">
             {providerHistory.length > 0 && <fieldset className="mb-3 flex flex-wrap gap-3 text-xs">
               <legend className="mb-2 font-semibold">Market history series</legend>
-              <label className="flex items-center gap-1"><input type="checkbox" checked={showBackfill} onChange={(e) => { setShowBackfill(e.target.checked); setSelectedSeries(null); }} /> Show PPT backfill instead</label>
               {providerHistory.filter(s => s.cutover_date).map(s => <p key={`cutover-${s.id}`}>PPT continuation: {s.cutover_date} · {s.printing} · {s.condition || "Unknown condition"}</p>)}
               {providerHistory.map((series) => <label key={series.id} className="flex items-center gap-1">
                 <input type="checkbox" checked={visibleProviderHistory.some((item) => item.id === series.id)} onChange={(event) => {

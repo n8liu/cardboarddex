@@ -658,3 +658,18 @@ def test_recorded_transition_cannot_be_downgraded(db, payload, now, monkeypatch)
     with pytest.raises(RuntimeError, match='Roll back application code'):
         migration.downgrade()
     assert pricing_data(db, 'legacy-card')['market_history_series']
+
+
+def test_unknown_legacy_prefix_continues_single_ppt_series(db, payload, now):
+    yesterday = now - timedelta(days=1)
+    db.add(MarketHistory(card_id='legacy-card', printing='Holofoil', day=yesterday.date(),
+                         market_price=88, fetched_at=now))
+    product = map_product(db, payload, 'english', 'cards')
+    ingest(db, product, payload, now)
+    db.commit()
+    series = [s for s in pricing_data(db, 'legacy-card')['market_history_series']
+              if not s.get('grade') and s['printing'] == 'Holofoil']
+    assert len(series) == 1
+    assert [(p['price'], p['source']) for p in series[0]['points']] == [(88, 'tcgapi'), (110, 'pokemonpricetracker')]
+    assert series[0]['points'][0]['condition'] is None
+    assert db.get(MarketHistory, ('legacy-card', 'Holofoil', yesterday.date())).market_price == 88

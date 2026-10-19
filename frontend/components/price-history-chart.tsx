@@ -68,7 +68,7 @@ function MultiLineTooltip({
     ...extraSeries.map((s: ExtraSeries) => ({ ...s, val: point[s.key], active: true })),
     { key: "psa10Price", name: "PSA 10 eBay", color: "#f59e0b", val: point.psa10Price, active: hasPsa10 },
     { key: "psa9Price", name: "PSA 9 eBay", color: "#0284c7", val: point.psa9Price, active: hasPsa9 },
-    { key: "tcgPrice", name: "Legacy market", color: "#8b5cf6", val: point.tcgPrice, active: hasTcg },
+    { key: "tcgPrice", name: "PPT market", color: "#8b5cf6", val: point.tcgPrice, active: hasTcg },
     { key: "rawPrice", name: "Raw eBay", color: "#10b981", val: point.rawPrice, active: hasRaw },
   ];
 
@@ -92,7 +92,7 @@ function MultiLineTooltip({
             <div key={s.key} className="flex items-center justify-between gap-4">
               <span className="flex items-center gap-1.5 text-zinc-600">
                 <span className="inline-block h-2 w-2 rounded-full flex-shrink-0" style={{ backgroundColor: s.color }} />
-                <span>{s.name}{point[`${s.key}:source`] ? ` · ${point[`${s.key}:source`] === "tcgapi" ? "Legacy (TCGAPI)" : "PPT"}` : ""}</span>
+                <span>{s.name}{point[`${s.key}:source`] ? ` · ${point[`${s.key}:source`] === "tcgapi" ? "Legacy (TCGAPI)" : "PPT"}` : ""}{point[`${s.key}:condition`] ? ` · ${point[`${s.key}:condition`]}` : ""}</span>
               </span>
               <span className="font-semibold text-zinc-900">
                 {s.val !== null && s.val !== undefined ? money(s.val, currency) : "—"}
@@ -179,7 +179,7 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
     yDomain = [yMin, yMax];
   }
 
-  const showDots = validPoints.length <= 5 ? { r: 3 } : false;
+  const pointDot = (key: string) => data.filter((point) => typeof point[key] === "number").length === 1 ? { r: 3 } : false;
 
   return (
     <div className="h-64 w-full" aria-label={`${label} price history chart`} role="img">
@@ -235,13 +235,13 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
             verticalAlign="top"
             align="right"
             wrapperStyle={{ paddingBottom: "10px", fontSize: "11px", fontWeight: 500 }}
-            iconType="circle"
+            iconType="line"
             iconSize={8}
           />
-          {extraSeries.map((s) => <Line key={s.key} dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} connectNulls={false} dot={data.filter((point) => typeof point[s.key] === "number").length <= 5 ? { r: 3 } : false} type="linear" />)}
+          {extraSeries.map((s) => <Line key={s.key} dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} connectNulls={true} dot={pointDot(s.key)} type="linear" />)}
           {hasRaw && (
             <Area
-              connectNulls={false}
+              connectNulls={true}
               dataKey="rawPrice"
               fill="url(#rawGradient)"
               isAnimationActive={true}
@@ -250,82 +250,82 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
               legendType="none"
               stroke="none"
               tooltipType="none"
-              type="monotone"
+              type="linear"
             />
           )}
           {hasRaw && (
             <Line
               activeDot={{ fill: "#059669", r: 5, stroke: "#ffffff", strokeWidth: 2 }}
-              connectNulls={false}
+              connectNulls={true}
               dataKey="rawPrice"
-              dot={showDots}
+              dot={pointDot("rawPrice")}
               isAnimationActive={true}
               animationDuration={700}
               animationEasing="ease-out"
               name="Raw eBay"
               stroke="#10b981"
               strokeWidth={2.25}
-              type="monotone"
+              type="linear"
             />
           )}
           {hasTcg && (
             <Line
               activeDot={{ fill: "#7c3aed", r: 5, stroke: "#ffffff", strokeWidth: 2 }}
-              connectNulls={false}
+              connectNulls={true}
               dataKey="tcgPrice"
-              dot={showDots}
+              dot={pointDot("tcgPrice")}
               isAnimationActive={true}
               animationDuration={700}
               animationEasing="ease-out"
-              name="Legacy market"
+              name="PPT market"
               stroke="#8b5cf6"
               strokeWidth={2}
-              type="monotone"
+              type="linear"
             />
           )}
           {hasPsa10 && (
             <Line
               activeDot={{ fill: "#d97706", r: 5, stroke: "#ffffff", strokeWidth: 2 }}
-              connectNulls={false}
+              connectNulls={true}
               dataKey="psa10Price"
-              dot={showDots}
+              dot={pointDot("psa10Price")}
               isAnimationActive={true}
               animationDuration={700}
               animationEasing="ease-out"
               name="PSA 10 eBay"
               stroke="#f59e0b"
               strokeWidth={2}
-              type="monotone"
+              type="linear"
             />
           )}
           {hasPsa9 && (
             <Line
               activeDot={{ fill: "#0369a1", r: 5, stroke: "#ffffff", strokeWidth: 2 }}
-              connectNulls={false}
+              connectNulls={true}
               dataKey="psa9Price"
-              dot={showDots}
+              dot={pointDot("psa9Price")}
               isAnimationActive={true}
               animationDuration={700}
               animationEasing="ease-out"
               name="PSA 9 eBay"
               stroke="#0284c7"
               strokeWidth={2}
-              type="monotone"
+              type="linear"
             />
           )}
           {hasLegacyPrice && (
             <Line
               activeDot={{ fill: "#4d7c0f", r: 5, stroke: "#ffffff", strokeWidth: 2 }}
-              connectNulls={false}
+              connectNulls={true}
               dataKey="price"
-              dot={showDots}
+              dot={pointDot("price")}
               isAnimationActive={true}
               animationDuration={700}
               animationEasing="ease-out"
               name={label}
               stroke="#65a30d"
               strokeWidth={2}
-              type="monotone"
+              type="linear"
             />
           )}
         </ComposedChart>

@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { MarketHistoryPanel, PriceFreshness, PurchaseReturn } from "@/components/market-history-panel";
+import { HistorySparkline, MarketHistoryPanel, PriceFreshness, PurchaseReturn } from "@/components/market-history-panel";
 import { CatalogHealth } from "@/components/admin/catalog-health";
 import { getMarketHistory } from "@/lib/api";
 import { adminRequest } from "@/lib/admin-api";
@@ -61,4 +61,11 @@ it("loads catalog health only when expanded and displays discovered missing sets
   fireEvent.click(screen.getByRole("button", { name: /Catalog coverage/ }));
   expect(await screen.findByText("New expansion · Not yet imported")).toBeInTheDocument();
   expect(screen.getByText(/1 \/ 2 discovered sets/)).toBeInTheDocument();
+});
+
+it("connects recorded prices across unknown days without fabricating observations", () => {
+  const { container } = render(<HistorySparkline points={[history.points[0],
+    { date: "2026-09-20", market_price: null, sales_volume: null, avg_sales_price: null }, history.points[1]]} />);
+  expect(container.querySelectorAll("polyline")).toHaveLength(1);
+  expect(container.querySelector("polyline")?.getAttribute("points")?.split(" ")).toHaveLength(2);
 });

@@ -85,6 +85,27 @@ def unified_history(db, card_id, provider_history, days=365, stored=None):
             continue  # Cutover must be explicitly seeded, not invented by a public GET.
         boundary = transition.cutover_date.isoformat()
         points = [p for p in (old or {}).get('points', []) if p['date'] < boundary]
+        # An undimensioned legacy prefix can continue the single matching PPT
+        # series. Retain point-level condition and never overwrite a conflicting
+        # dated price or guess between multiple PPT conditions.
+        candidates = [s for s in provider_history if not s.get('grade') and
+                      all(dimensions(s)[k] == dim[k] for k in KEYS if k != 'condition')]
+        if len(candidates) == 1:
+            occupied = {p['date'] for p in points}
+            for legacy_key, historical in list(legacy.items()):
+                if historical.get('condition') not in (None, 'Unknown') or not all(
+                        historical.get(k) == dim[k] for k in KEYS if k != 'condition'):
+                    continue
+                prefix = [dict(p, condition=historical.get('condition')) for p in historical['points']
+                          if p['date'] < boundary and p['date'] not in occupied]
+                points.extend(prefix)
+                occupied.update(p['date'] for p in prefix)
+                consumed = {p['date'] for p in prefix}
+                remaining = [p for p in historical['points'] if p['date'] not in consumed]
+                if remaining:
+                    legacy[legacy_key] = dict(historical, points=remaining)
+                else:
+                    legacy.pop(legacy_key)
         points += [dict(p, source='pokemonpricetracker') for p in series['points'] if p['date'] >= boundary]
         output.append(dict(series, **dim, id=key, provider='market', cutover_date=boundary,
                            points=sorted(points, key=lambda p: p['date'])))

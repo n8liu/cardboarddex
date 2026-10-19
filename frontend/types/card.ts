@@ -126,7 +126,7 @@ export type ProviderHistorySeries = {
   cutover_date?: string | null;
   id: string; provider: string; language: string; currency: string;
   printing: string | null; condition: string | null; grade: string | null; metric: string;
-  fetched_at: string; points: { date: string; price: number | null; sales_count: number | null; source?: string | null }[];
+  fetched_at: string; points: { date: string; price: number | null; sales_count: number | null; condition?: string | null; source?: string | null }[];
 };
 
 export type CardPricing = {

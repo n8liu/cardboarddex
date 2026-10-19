@@ -13,3 +13,16 @@ it("labels graded daily means independently from current median quotes", () => {
   expect(providerSeriesName({ ...series, grade: "psa10", metric: "daily_average" })).toBe("PPT PSA 10 · daily sales average");
   expect(providerSeriesName(series)).toContain("Holofoil · Near Mint · market");
 });
+
+it("presents the continuation as PPT while retaining historical provenance", () => {
+  const combined = { ...series, provider: "market", points: [
+    { date: "2026-10-14", price: 20, sales_count: null, source: "tcgapi", condition: null },
+    { date: "2026-10-16", price: 30, sales_count: null, source: "pokemonpricetracker" },
+  ] };
+  expect(providerSeriesName(combined)).toMatch(/^PPT /);
+  const rows = mergeProviderHistory([], [combined], "2026-10-01", "2026-10-16");
+  expect(rows[0]["ppt:source"]).toBe("tcgapi");
+  expect(rows[0]["ppt:condition"]).toBe("Unknown condition");
+  expect(rows[1].ppt).toBeUndefined();
+  expect(rows[2].ppt).toBe(30);
+});
