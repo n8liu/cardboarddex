@@ -125,8 +125,8 @@ def test_scheduled_entrypoints_use_coordinator(monkeypatch):
     from jobs import collect_prices, collect_ebay_prices
     runner=MagicMock(return_value={'cards':0})
     monkeypatch.setattr(refresh,'run_scheduled_collection',runner)
-    for module, task, provider in [(collect_prices,collect_prices.collect_prices,'tcgapi'),
-                                  (collect_ebay_prices,collect_ebay_prices.collect_ebay_prices,'ebay')]:
+    assert collect_prices.collect_prices.run()['status'] == 'retired'
+    for module, task, provider in [(collect_ebay_prices,collect_ebay_prices.collect_ebay_prices,'ebay')]:
         monkeypatch.setattr(module,'SessionLocal',MagicMock())
         assert task.run()=={'cards':0}
         assert runner.call_args.args[1]==provider

@@ -65,7 +65,7 @@ To disable collection, turn off backend `ANALYTICS_ENABLED` immediately and rebu
 
 ```
 # backend/
-DATABASE_URL=sqlite:// REDIS_URL=redis://127.0.0.1:1/0 TCGAPI_API_KEY= EBAY_CLIENT_ID= EBAY_CLIENT_SECRET= .venv/bin/pytest
+DATABASE_URL=sqlite:// REDIS_URL=redis://127.0.0.1:1/0 PPT_MINUTE_WEIGHT_LIMIT=55 PPT_API_KEY= EBAY_CLIENT_ID= EBAY_CLIENT_SECRET= .venv/bin/pytest
 
 # frontend/
 npm test

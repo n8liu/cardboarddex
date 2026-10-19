@@ -25,7 +25,7 @@ from sqlalchemy.pool import StaticPool
 from app.database import Base, get_db
 from app.main import app
 from app.models import Card, PriceObservation, ProviderCardState, Set
-from app.routers.cards import get_tcgapi_client
+from app.routers.cards import get_image_client
 from app.common.redis import get_redis
 from app.services.catalog_service import _pokemon_volume_cache
 from app.services.trending_service import (
@@ -114,7 +114,7 @@ def client() -> Generator[TestClient, None, None]:
             yield s
 
     app.dependency_overrides[get_db] = override_db
-    app.dependency_overrides[get_tcgapi_client] = lambda: FakeImageClient()
+    app.dependency_overrides[get_image_client] = lambda: FakeImageClient()
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()

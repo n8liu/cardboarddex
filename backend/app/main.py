@@ -227,37 +227,26 @@ def ready(db: Session = Depends(get_db)) -> JSONResponse:
 @app.get("/health/quotas")
 def get_quotas() -> dict[str, Any]:
     """Report daily provider quota limits, requests used, and remaining headroom."""
-    tcg_limit = settings.tcgapi_daily_request_limit
-    ebay_limit = settings.ebay_daily_request_limit
-    tcg_used = 0
-    ebay_used = 0
+    from app.providers.ppt import PREFIX
     r = get_durable_redis()
-    if r is not None:
-        try:
-            day_bucket = int(datetime.now(UTC).timestamp() // 86400)
-            tcg_val = r.get(f"cardboarddex:tcgapi:requests:{day_bucket}")
-            if tcg_val:
-                tcg_used = int(tcg_val)
-            ebay_val = r.get(f"cardboarddex:ebay:requests:{day_bucket}")
-            if ebay_val:
-                ebay_used = int(ebay_val)
-        except Exception as exc:
-            logging.warning("Failed reading quota counters from Redis: %s", exc)
-            return JSONResponse({"status": "unavailable"}, status_code=503)
-
+    if r is None:
+        return JSONResponse({"status": "unavailable"}, status_code=503)
+    try:
+        bucket = int(datetime.now(UTC).timestamp() // 86400)
+        ppt_used = int(r.get(f"{PREFIX}:credits:{bucket}") or 0)
+        ebay_used = int(r.get(f"cardboarddex:ebay:requests:{bucket}") or 0)
+    except Exception as exc:
+        logging.warning("Failed reading quota counters: %s: %s", type(exc).__name__, exc)
+        return JSONResponse({"status": "unavailable"}, status_code=503)
     return {
-        "tcgapi": {
-            "daily_limit": tcg_limit,
-            "requests_used": tcg_used,
-            "requests_remaining": max(0, tcg_limit - tcg_used),
-        },
-        "ebay": {
-            "daily_limit": ebay_limit,
-            "requests_used": ebay_used,
-            "requests_remaining": max(0, ebay_limit - ebay_used),
-        },
+        "ppt": {"daily_limit": settings.ppt_daily_credit_limit, "credits_used": ppt_used,
+                "credits_remaining": max(0, settings.ppt_daily_credit_limit - ppt_used),
+                "weighted_minute_limit": settings.ppt_minute_weight_limit},
+        "ebay": {"daily_limit": settings.ebay_daily_request_limit, "requests_used": ebay_used,
+                 "requests_remaining": max(0, settings.ebay_daily_request_limit - ebay_used)},
         "timestamp": datetime.now(UTC).isoformat(),
     }
+
 
 
 @app.middleware("http")

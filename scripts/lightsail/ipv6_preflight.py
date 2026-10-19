@@ -18,7 +18,7 @@ DEFAULT_URLS = (
     'https://s3.dualstack.us-west-2.amazonaws.com/',
     'https://349558247779.dkr-ecr.us-west-2.on.aws/v2/',
     'https://download.docker.com/linux/ubuntu/gpg',
-    'https://api.tcgapi.dev/v1/',
+    'https://www.pokemonpricetracker.com/api/v2/sets',
     'https://api.cardboarddex.app/ready',
 )
 

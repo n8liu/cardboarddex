@@ -68,12 +68,12 @@ def sample(previous):
         logging.error('API probe failed exit=%s error=%s', probe.returncode, probe.stderr.decode(errors='replace'))
     backups = list(Path('/var/backups/cardboarddex').glob('*/manifest.json'))
     result['backup_age_seconds'] = now - max(p.stat().st_mtime for p in backups) if backups else None
-    keys = ['cardboarddex:passive:v2:cycle', 'cardboarddex:passive:v2:tcgapi', 'cardboarddex:passive:v2:ebay']
+    keys = ['cardboarddex:passive:v2:cycle', 'cardboarddex:passive:v2:ebay']
     values = run(['docker', 'exec', 'app-redis-1', 'redis-cli', '--raw', 'MGET', *keys]).splitlines()
-    if len(values) >= 3 and all(values[:3]):
-        cycle, *states = [json.loads(value) for value in values[:3]]
+    if len(values) >= 2 and all(values[:2]):
+        cycle, *states = [json.loads(value) for value in values[:2]]
         result['coverage'] = {}
-        for provider, progress in zip(('tcgapi', 'ebay'), states):
+        for provider, progress in zip(('ebay',), states):
             checked = sum(progress['checked'].get(cid, 0) >= cycle['starts'] for cid in cycle['members'])
             result['coverage'][provider] = {'checked': checked, 'pool': len(cycle['members']),
                 'deadline': cycle['ends'], 'overdue': len(cycle['members']) - checked if now >= cycle['ends'] else 0,
@@ -81,9 +81,13 @@ def sample(previous):
                 'catalog_advances': progress['catalog_advances'], 'retry_count': len(progress['retries'])}
         result['previous_cycles'] = cycle.get('history', [])[-2:]
     day = int(now // 86400)
-    quota_keys = [f'cardboarddex:{p}:{kind}:{day}' for p in ('tcgapi', 'ebay') for kind in ('requests', 'scheduled_requests')]
+    quota_keys = [f'cardboarddex:{p}:{kind}:{day}' for p in ('ebay',) for kind in ('requests', 'scheduled_requests')]
+    quota_keys += [f'cardboarddex:ppt:v1:credits:{day}',
+                   *[f'cardboarddex:ppt:v1:lane:{day}:{lane}' for lane in ('priority', 'rotation', 'graded', 'discovery', 'retry')]]
     quota_values = run(['docker', 'exec', 'app-redis-1', 'redis-cli', '--raw', 'MGET', *quota_keys]).splitlines()
     result['quota'] = {key: int(value or 0) for key, value in zip(quota_keys, quota_values)}
+    health = run(['docker', 'exec', 'app-redis-1', 'redis-cli', '--raw', 'GET', 'cardboarddex:ppt:health:v1']).strip()
+    result['ppt'] = json.loads(health) if health else {'status': 'report_unavailable'}
     return result
 
 

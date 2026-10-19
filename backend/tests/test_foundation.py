@@ -9,7 +9,7 @@ from app.main import app
 def test_alembic_has_one_linear_head_with_catalog_foundation() -> None:
     config = Config("alembic.ini")
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["0011_catalog_prices"]
+    assert script.get_heads() == ["0012_market_history_transitions"]
     assert script.get_revision("0011_catalog_prices").down_revision == "0010_ppt_query_indexes"
     assert script.get_revision("0010_ppt_query_indexes").down_revision == "0009_pokemon_price_tracker"
     assert script.get_revision("0009_pokemon_price_tracker").down_revision == "0008_listing_assessments"
@@ -40,9 +40,7 @@ def test_cors_uses_configured_frontend_origin() -> None:
     assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
 
 
-def test_catalog_sync_is_scheduled_daily() -> None:
-    schedule = celery_app.conf.beat_schedule["sync-catalog-daily"]
-    assert schedule["task"] == "jobs.sync_catalog.sync_catalog"
-    assert schedule["schedule"]._orig_minute == 0
-    assert schedule["schedule"]._orig_hour == 3
-    assert schedule["schedule"]._orig_day_of_week == "*"
+def test_only_active_providers_are_scheduled():
+    assert "sync-catalog-daily" not in celery_app.conf.beat_schedule
+    assert "collect-tcgapi-prices-alternating" not in celery_app.conf.beat_schedule
+    assert "collect-ebay-prices-alternating" in celery_app.conf.beat_schedule

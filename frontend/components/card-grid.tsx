@@ -47,7 +47,7 @@ function CardThumbnail({ card }: { card: CardSummary }) {
       {updatedLabel && (
         <span
           className="absolute right-2 top-2 z-10 rounded-md border border-slate-200/80 bg-white/90 px-1.5 py-0.5 text-[9px] font-semibold text-slate-500 shadow-sm backdrop-blur-sm"
-          title={`${card.market_source === "pokemonpricetracker" ? "Pokémon Price Tracker" : "Legacy TCGAPI"} · Price date: ${card.last_updated_at}`}
+          title={`${card.market_source === "pokemonpricetracker" ? "Pokémon Price Tracker" : "Legacy market history"} · Price date: ${card.last_updated_at}`}
         >
           {updatedLabel}
         </span>

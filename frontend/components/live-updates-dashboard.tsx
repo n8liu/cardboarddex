@@ -160,7 +160,7 @@ function LiveUpdateRow({ item, grid = false }: { item: LiveUpdateItem; grid?: bo
                 isEbay ? "bg-sky-500" : "bg-emerald-500"
               }`}
             />
-            <span>{isEbay ? "eBay matched asking listing" : item.provider === "pokemonpricetracker" ? (item.update_type === "graded_aggregate" ? "PPT graded aggregate · 7-day median" : "PPT market update") : "TCG API Sync"}</span>
+            <span>{isEbay ? "eBay matched asking listing" : item.provider === "pokemonpricetracker" ? (item.update_type === "graded_aggregate" ? "PPT graded aggregate · 7-day median" : "PPT market update") : "Legacy market record"}</span>
             {item.provider === "pokemonpricetracker" && item.price_date && <span className="text-[10px] text-slate-500">Price date {item.price_date.slice(0, 10)}</span>}
             <span>•</span>
             <span>{formatRelativeTime(item.observed_at)}</span>
@@ -506,7 +506,7 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
                   : "text-slate-600 hover:text-slate-900"
               }`}
             >
-              TCG API Prices
+              Legacy market history
             </button>
           </div>
 

@@ -68,7 +68,7 @@ function MultiLineTooltip({
     ...extraSeries.map((s: ExtraSeries) => ({ ...s, val: point[s.key], active: true })),
     { key: "psa10Price", name: "PSA 10 eBay", color: "#f59e0b", val: point.psa10Price, active: hasPsa10 },
     { key: "psa9Price", name: "PSA 9 eBay", color: "#0284c7", val: point.psa9Price, active: hasPsa9 },
-    { key: "tcgPrice", name: "TCG API", color: "#8b5cf6", val: point.tcgPrice, active: hasTcg },
+    { key: "tcgPrice", name: "Legacy market", color: "#8b5cf6", val: point.tcgPrice, active: hasTcg },
     { key: "rawPrice", name: "Raw eBay", color: "#10b981", val: point.rawPrice, active: hasRaw },
   ];
 
@@ -92,7 +92,7 @@ function MultiLineTooltip({
             <div key={s.key} className="flex items-center justify-between gap-4">
               <span className="flex items-center gap-1.5 text-zinc-600">
                 <span className="inline-block h-2 w-2 rounded-full flex-shrink-0" style={{ backgroundColor: s.color }} />
-                <span>{s.name}</span>
+                <span>{s.name}{point[`${s.key}:source`] ? ` · ${point[`${s.key}:source`] === "tcgapi" ? "Legacy (TCGAPI)" : "PPT"}` : ""}</span>
               </span>
               <span className="font-semibold text-zinc-900">
                 {s.val !== null && s.val !== undefined ? money(s.val, currency) : "—"}
@@ -241,7 +241,7 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
           {extraSeries.map((s) => <Line key={s.key} dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} connectNulls={false} dot={data.filter((point) => typeof point[s.key] === "number").length <= 5 ? { r: 3 } : false} type="linear" />)}
           {hasRaw && (
             <Area
-              connectNulls
+              connectNulls={false}
               dataKey="rawPrice"
               fill="url(#rawGradient)"
               isAnimationActive={true}
@@ -256,7 +256,7 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
           {hasRaw && (
             <Line
               activeDot={{ fill: "#059669", r: 5, stroke: "#ffffff", strokeWidth: 2 }}
-              connectNulls
+              connectNulls={false}
               dataKey="rawPrice"
               dot={showDots}
               isAnimationActive={true}
@@ -271,13 +271,13 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
           {hasTcg && (
             <Line
               activeDot={{ fill: "#7c3aed", r: 5, stroke: "#ffffff", strokeWidth: 2 }}
-              connectNulls
+              connectNulls={false}
               dataKey="tcgPrice"
               dot={showDots}
               isAnimationActive={true}
               animationDuration={700}
               animationEasing="ease-out"
-              name="TCG API"
+              name="Legacy market"
               stroke="#8b5cf6"
               strokeWidth={2}
               type="monotone"
@@ -286,7 +286,7 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
           {hasPsa10 && (
             <Line
               activeDot={{ fill: "#d97706", r: 5, stroke: "#ffffff", strokeWidth: 2 }}
-              connectNulls
+              connectNulls={false}
               dataKey="psa10Price"
               dot={showDots}
               isAnimationActive={true}
@@ -301,7 +301,7 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
           {hasPsa9 && (
             <Line
               activeDot={{ fill: "#0369a1", r: 5, stroke: "#ffffff", strokeWidth: 2 }}
-              connectNulls
+              connectNulls={false}
               dataKey="psa9Price"
               dot={showDots}
               isAnimationActive={true}
@@ -316,7 +316,7 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
           {hasLegacyPrice && (
             <Line
               activeDot={{ fill: "#4d7c0f", r: 5, stroke: "#ffffff", strokeWidth: 2 }}
-              connectNulls
+              connectNulls={false}
               dataKey="price"
               dot={showDots}
               isAnimationActive={true}

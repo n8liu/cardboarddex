@@ -276,7 +276,7 @@ def cached_read(namespace, *, fresh, maximum):
             from app.config import get_settings
             projection_mode = ("catalog-projection-v1", get_settings().catalog_current_prices_enabled) if namespace in {"search_cards", "get_pokemon_cards", "get_set_stats"} else None
             canonical = json.dumps([namespace, image_generation(), get_settings().ppt_primary_enabled, projection_mode, identity, values], sort_keys=True, default=str)
-            key = 'cardboarddex:responses:v1:' + namespace + ':' + hashlib.sha256(canonical.encode()).hexdigest()
+            key = 'cardboarddex:responses:v2:' + namespace + ':' + hashlib.sha256(canonical.encode()).hexdigest()
             def build():
                 with Session(bind, expire_on_commit=False) as session:
                     if bind.dialect.name == 'postgresql':

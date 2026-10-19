@@ -109,7 +109,7 @@ def test_portfolio_single_card_valuation(test_db: Session) -> None:
     assert res.highest_value_card.market_price == 350.0
     assert len(res.history) >= 1
     # Latest point in history matches current total value
-    assert res.history[-1].total_value == 350.0
+    assert res.history[-1].total_value == 335.0  # Last actual observation; no artificial extension.
 
 
 def test_portfolio_multi_card_aggregation(test_db: Session) -> None:

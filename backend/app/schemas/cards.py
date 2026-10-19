@@ -160,12 +160,14 @@ class ProviderQuote(BaseModel):
 
 
 class ProviderHistoryPoint(BaseModel):
+    source: str | None = None
     date: str
     price: float | None
     sales_count: int | None = None
 
 
 class ProviderHistorySeries(BaseModel):
+    cutover_date: str | None = None
     id: str
     provider: str
     language: str
@@ -179,6 +181,8 @@ class ProviderHistorySeries(BaseModel):
 
 
 class CardPricingResponse(BaseModel):
+    market_quotes: list[ProviderQuote] = Field(default_factory=list)
+    market_history_series: list[ProviderHistorySeries] = Field(default_factory=list)
     provider_quotes: list[ProviderQuote] = Field(default_factory=list)
     provider_history: list[ProviderHistorySeries] = Field(default_factory=list)
     ppt_mapped: bool = False
@@ -412,6 +416,8 @@ class PortfolioValuationRequest(BaseModel):
 
 
 class PortfolioCardItem(BaseModel):
+    price_status: str = "unavailable"
+    price_date: str | None = None
     market_source: str | None = None
     id: str
     name: str
@@ -458,6 +464,7 @@ class LiveFeedResponse(BaseModel):
 
 
 class LiveStatsResponse(BaseModel):
+    total_legacy_updates: int = Field(default=0, ge=0)
     total_items: int = Field(ge=0)
     total_ebay_updates: int = Field(ge=0)
     total_tcg_updates: int = Field(ge=0)

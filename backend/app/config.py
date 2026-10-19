@@ -41,14 +41,10 @@ class Settings(BaseSettings):
     ppt_ingestion_enabled: bool = False
     catalog_current_prices_enabled: bool = False
     ppt_primary_enabled: bool = False
-    tcgapi_ingestion_enabled: bool = True
+    tcgapi_ingestion_enabled: bool = False  # Deprecated; cannot enable retired jobs
     ppt_daily_credit_limit: int = Field(default=20000, ge=1, le=20000)
     ppt_minute_weight_limit: int = Field(default=55, ge=1, le=55)
     ppt_batch_size: int = Field(default=8, ge=1, le=15)
-    tcgapi_api_key: str | None = None
-    tcgapi_base_url: str = "https://api.tcgapi.dev/v1"
-    tcgapi_daily_request_limit: int = 2000
-    tcgapi_sync_set_limit: int = 250
     ebay_client_id: str | None = None
     ebay_client_secret: str | None = None
     ebay_relay_url: str | None = None
@@ -59,7 +55,6 @@ class Settings(BaseSettings):
     price_collection_card_limit: int = Field(default=8, ge=1, le=50)
     passive_refresh_enabled: bool = True
     passive_priority_card_count: int = Field(default=1500, ge=1, le=1500)
-    tcgapi_scheduled_request_limit: int = Field(default=1500, ge=1, le=1500)
     ebay_scheduled_request_limit: int = Field(default=450, ge=1, le=450)
     backend_cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"
     psa_value_fee: float = 24.99

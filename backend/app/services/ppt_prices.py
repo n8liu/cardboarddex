@@ -21,7 +21,7 @@ def graded_sales_activity(db, q=""):
         "products_with_sales_data": 0, "items": []}
     if not get_settings().ppt_primary_enabled:
         return result
-    query = select(PPTProduct.card_id, PPTProduct.metadata_payload["ebay"],
+    query = select(PPTProduct.card_id, PPTProduct.metadata_payload["ebay"], PPTProduct.metadata_payload["graded_synced_at"].as_string(),
                    PPTProduct.last_success_at, Card.name, Card.image_url, Set.name).join(
         Card, Card.id == PPTProduct.card_id).join(Set, Set.id == Card.set_id).where(
         PPTProduct.status == "matched", PPTProduct.segment.in_(["english:cards", "japanese:cards"]),
@@ -34,7 +34,7 @@ def graded_sales_activity(db, q=""):
     now = datetime.now(UTC)
     previous_card = None
     rows = []
-    for card_id, ebay, synced_at, name, image_url, set_name in db.execute(query.execution_options(yield_per=50)):
+    for card_id, ebay, graded_at, synced_at, name, image_url, set_name in db.execute(query.execution_options(yield_per=50)):
         if card_id == previous_card:
             continue
         previous_card = card_id
@@ -55,14 +55,17 @@ def graded_sales_activity(db, q=""):
                               "last_sale_date": sold.isoformat() if sold and sold <= now.date() else None})
         if not breakdown:
             continue
-        synced_at = synced_at.replace(tzinfo=UTC) if synced_at.tzinfo is None else synced_at
+        synced_at = datetime.fromisoformat(graded_at) if graded_at else None
+        if synced_at and synced_at.tzinfo is None:
+            synced_at = synced_at.replace(tzinfo=UTC)
         dates = [g["last_sale_date"] for g in breakdown if g["last_sale_date"]]
         rows.append({"card_id": card_id, "name": name, "set_name": set_name, "image_url": image_url,
                      "sales": sum(g["sales"] for g in breakdown), "grades": breakdown,
                      "last_sale_date": max(dates, default=None), "synced_at": synced_at,
-                     "stale": synced_at < now - timedelta(days=7)})
+                     "stale": not graded_at or synced_at < now - timedelta(days=7)})
         result["products_with_sales_data"] += 1
-        result["synced_at"] = max(result["synced_at"] or synced_at, synced_at)
+        if synced_at:
+            result["synced_at"] = max(result["synced_at"] or synced_at, synced_at)
         # Bound retained payloads even when ranking the whole synced catalog.
         if len(rows) > 100:
             rows = nsmallest(50, rows, key=lambda row: (-row["sales"], row["card_id"]))
@@ -71,26 +74,52 @@ def graded_sales_activity(db, q=""):
     return result
 
 
-def pricing_data(db, card_id, days=180):
+def pricing_data(db, card_id, days=180, *, stored=None):
     if not get_settings().ppt_primary_enabled:
-        return {"provider_quotes": [], "provider_history": [], "ppt_mapped": False}
-    products = list(db.scalars(select(PPTProduct).where(PPTProduct.card_id == card_id, PPTProduct.status == "matched")))
+        from app.services.market_history import legacy_series
+        return {"provider_quotes": [], "provider_history": [], "market_quotes": [],
+                "market_history_series": legacy_series(db, card_id, days, stored), "ppt_mapped": False}
+    products = stored["products"] if stored is not None else list(db.scalars(select(PPTProduct).where(PPTProduct.card_id == card_id, PPTProduct.status == "matched")))
     quotes = []
     today = datetime.now(UTC).date()
     for product in products:
         for quote in product.quotes:
             quotes.append(dict(quote, fetched_at=product.last_success_at,
-                               stale=quote["price_date"] < (today - timedelta(days=7)).isoformat()))
+                               stale=bool(quote.get("historical_only")) or quote["price_date"] < (today - timedelta(days=7)).isoformat()))
+    for quote in quotes:
+        if quote["stale"]:
+            for period in ("24h", "7d", "30d"):
+                quote["price_change_" + period] = None
     cutoff = (today - timedelta(days=min(days, 730))).isoformat()
     series = {}
-    for chunk in db.scalars(select(PPTHistory).where(PPTHistory.card_id == card_id, PPTHistory.month >= cutoff[:7])):
+    matched_ids = {p.id for p in products}
+    for chunk in (stored["history"] if stored is not None else db.scalars(select(PPTHistory).where(PPTHistory.card_id == card_id, PPTHistory.month >= cutoff[:7]))):
+        if chunk.product_id not in matched_ids:
+            continue
         key = digest([chunk.product_id, chunk.dimensions])
         item = series.setdefault(key, dict(chunk.dimensions, id=key, points=[], fetched_at=chunk.fetched_at))
         item["fetched_at"] = max(item["fetched_at"], chunk.fetched_at)
         item["points"].extend(dict(point, date=d) for d, point in chunk.points.items() if cutoff <= d <= today.isoformat())
     for item in series.values():
         item["points"].sort(key=lambda p: p["date"])
-    return {"provider_quotes": quotes, "provider_history": list(series.values()),
+    provider_history = list(series.values())
+    original_history = [dict(s, points=list(s["points"])) for s in provider_history]
+    # Include a dated quote even when a provider omits today's history point.
+    for quote in quotes:
+        if quote.get("grade"):
+            continue
+        item = next((s for s in provider_history if all(s.get(k) == quote.get(k) for k in
+            ("language", "currency", "printing", "condition", "grade", "metric"))), None)
+        if item is None:
+            item = {k: quote.get(k) for k in ("provider", "language", "currency", "printing", "condition", "grade", "metric")}
+            item.update(id=digest([card_id, item]), points=[], fetched_at=quote["fetched_at"])
+            provider_history.append(item)
+        if not any(p["date"] == quote["price_date"] for p in item["points"]):
+            item["points"].append(dict(date=quote["price_date"], price=quote["price"], sales_count=None))
+            item["points"].sort(key=lambda p: p["date"])
+    from app.services.market_history import unified_history
+    return {"provider_quotes": quotes, "provider_history": original_history,
+            "market_quotes": quotes, "market_history_series": unified_history(db, card_id, provider_history, days, stored),
             "ppt_mapped": any(p.last_success_at for p in products)}
 
 
@@ -101,23 +130,29 @@ def primary_quotes(db, card_ids):
     result = {}
     for p in db.scalars(select(PPTProduct).where(PPTProduct.card_id.in_(card_ids), PPTProduct.status == "matched")):
         quote = next((q for q in p.quotes if q.get("primary") and not q.get("grade")
-                      and q["price_date"] >= (today - timedelta(days=7)).isoformat()), None)
+                      and q["price_date"] <= today.isoformat()), None)
         if quote:
-            result[p.card_id] = dict(quote, fetched_at=p.last_success_at)
+            result[p.card_id] = dict(quote, fetched_at=p.last_success_at, stale=bool(quote.get("historical_only")) or quote["price_date"] < (today - timedelta(days=7)).isoformat())
+    for quote in result.values():
+        if quote["stale"]:
+            for period in ("24h", "7d", "30d"):
+                quote["price_change_" + period] = None
     return result
 
 
 def market_history(db, card_id, days=30):
+    if not get_settings().ppt_primary_enabled:
+        return None
     data = pricing_data(db, card_id, days + 7)
     quote = next((q for q in data["provider_quotes"] if q["primary"] and not q["grade"] and not q["stale"]), None)
     if not quote:
         return None
-    series = next((s for s in data["provider_history"] if s["metric"] == "market"
+    series = next((s for s in data["market_history_series"] if s["metric"] == "market"
                    and s["printing"] == quote["printing"] and s["condition"] == quote["condition"]), None)
     points = series["points"] if series else []
     from datetime import date
     baseline_day = (date.fromisoformat(quote["price_date"]) - timedelta(days=days)).isoformat()
-    baseline = next((p["price"] for p in points if p["date"] == baseline_day), None)
+    baseline = next((p["price"] for p in points if p["date"] == baseline_day and p.get("source") == "pokemonpricetracker"), None)
     change = (quote["price"] / baseline - 1) * 100 if baseline else None
     return {"card_id": card_id, "printing": quote["printing"], "condition": quote["condition"],
         "days": days, "currency": "USD", "provider": quote["provider"], "status": "ready",

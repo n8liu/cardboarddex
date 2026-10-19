@@ -47,7 +47,7 @@ function latestByVariant(observations: PriceObservation[]): PriceObservation[] {
 
 function providerName(value: string): string {
   if (value.toLowerCase().includes("ebay")) return "eBay listings";
-  if (value === "tcgapi") return "TCG API";
+  if (value === "tcgapi") return "Legacy market history";
   return value;
 }
 
@@ -119,61 +119,12 @@ function buildMultiSeriesHistory(observations: PriceObservation[]): {
     };
   }
 
-  const today = new Date().toISOString().slice(0, 10);
-  dates.add(today);
-
-  // If earliest date is today, anchor from yesterday so a continuous line segment is drawn
-  const earliestDate = [...dates].sort((a, b) => a.localeCompare(b))[0];
-  if (earliestDate === today) {
-    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-    dates.add(yesterday);
-  }
-
   const sortedDates = [...dates].sort((a, b) => a.localeCompare(b));
 
-  // Determine initial prices for each series
-  let initialRaw: number | null = null;
-  let initialTcg: number | null = null;
-  let initialPsa10: number | null = null;
-  let initialPsa9: number | null = null;
-
-  for (const d of sortedDates) {
-    const raw = rawByDate.get(d);
-    if (raw && initialRaw === null) initialRaw = Math.round((raw.total / raw.count) * 100) / 100;
-    const tcg = tcgByDate.get(d);
-    if (tcg && initialTcg === null) initialTcg = Math.round((tcg.total / tcg.count) * 100) / 100;
-    const psa10 = psa10ByDate.get(d);
-    if (psa10 && initialPsa10 === null) initialPsa10 = Math.round((psa10.total / psa10.count) * 100) / 100;
-    const psa9 = psa9ByDate.get(d);
-    if (psa9 && initialPsa9 === null) initialPsa9 = Math.round((psa9.total / psa9.count) * 100) / 100;
-  }
-
-  // Forward-fill to today's date so every active series displays a continuous line
-  let lastRaw: number | null = rawObsCount === 1 ? initialRaw : null;
-  let lastTcg: number | null = tcgObsCount === 1 ? initialTcg : null;
-  let lastPsa10: number | null = psa10ObsCount === 1 ? initialPsa10 : null;
-  let lastPsa9: number | null = psa9ObsCount === 1 ? initialPsa9 : null;
-
   const points: ChartPoint[] = sortedDates.map((date) => {
-    const raw = rawByDate.get(date);
-    if (raw) lastRaw = Math.round((raw.total / raw.count) * 100) / 100;
-
-    const tcg = tcgByDate.get(date);
-    if (tcg) lastTcg = Math.round((tcg.total / tcg.count) * 100) / 100;
-
-    const psa10 = psa10ByDate.get(date);
-    if (psa10) lastPsa10 = Math.round((psa10.total / psa10.count) * 100) / 100;
-
-    const psa9 = psa9ByDate.get(date);
-    if (psa9) lastPsa9 = Math.round((psa9.total / psa9.count) * 100) / 100;
-
-    return {
-      date,
-      rawPrice: lastRaw,
-      tcgPrice: lastTcg,
-      psa10Price: lastPsa10,
-      psa9Price: lastPsa9,
-    };
+    const average = (entry: { total: number; count: number } | undefined) => entry ? Math.round(entry.total / entry.count * 100) / 100 : null;
+    return { date, rawPrice: average(rawByDate.get(date)), tcgPrice: average(tcgByDate.get(date)),
+      psa10Price: average(psa10ByDate.get(date)), psa9Price: average(psa9ByDate.get(date)) };
   });
 
   return {
@@ -285,7 +236,7 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
     [tcgSnapshot, latest],
   );
 
-  const pptPrimary = pricing.provider_quotes?.find((quote) => quote.primary && !quote.grade && !quote.stale);
+  const pptPrimary = (pricing.market_quotes ?? pricing.provider_quotes)?.find((quote) => quote.primary && !quote.grade);
   const tcgPrimary = pptPrimary ? { ...pptPrimary, provider_updated_at: pptPrimary.price_date, observed_at: pptPrimary.fetched_at ?? pptPrimary.price_date } : legacyTcgPrimary;
   const pptPsaTen = pricing.provider_quotes?.find((quote) => quote.grade === "psa10" && quote.metric === "median_7d" && !quote.stale);
   const pptPsaNine = pricing.provider_quotes?.find((quote) => quote.grade === "psa9" && quote.metric === "median_7d" && !quote.stale);
@@ -296,7 +247,7 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
   const matchedSources = pricing.provider_states.filter((item) => item.match_status === "matched").length + (pricing.ppt_mapped ? 1 : 0);
   const gradedMin = graded.length ? Math.min(...graded.map((item) => item.price)) : null;
   const gradedMax = graded.length ? Math.max(...graded.map((item) => item.price)) : null;
-  const momentum = pptPrimary ?? tcgSnapshot;
+  const momentum = pptPrimary?.stale ? null : pptPrimary;
   const p24h = momentum?.price_change_24h;
   const p7d = momentum?.price_change_7d;
   const p30d = momentum?.price_change_30d;
@@ -340,16 +291,17 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
   }
 
   // --- Multi-series History & Timeframe Filtering ---
-  const historyData = useMemo(() => buildMultiSeriesHistory(pricing.observations), [pricing.observations]);
+  const historyData = useMemo(() => buildMultiSeriesHistory(pricing.market_history_series ? pricing.observations.filter(isEbayObservation) : pricing.observations), [pricing.observations, pricing.market_history_series]);
 
   const [selectedSeries, setSelectedSeries] = useState<string[] | null>(null);
-  const providerHistory = pricing.provider_history ?? [];
+  const [showBackfill, setShowBackfill] = useState(false);
+  const providerHistory = showBackfill ? (pricing.provider_history ?? []) : (pricing.market_history_series ?? pricing.provider_history ?? []);
   const defaultRawSeries = providerHistory.find((series) => !series.grade && series.printing === pptPrimary?.printing && series.condition === pptPrimary?.condition)
     ?? providerHistory.find((series) => !series.grade && series.condition === "Near Mint")
     ?? providerHistory.find((series) => !series.grade);
   const visibleProviderHistory = providerHistory.filter((series) => selectedSeries
     ? selectedSeries.includes(series.id)
-    : (series.grade === "psa10" || series.grade === "psa9" || (series.id === defaultRawSeries?.id)));
+    : (series.grade === "psa10" || series.grade === "psa9" || series.provider === "tcgapi" || (series.id === defaultRawSeries?.id)));
   const colors = ["#e11d48", "#0891b2", "#d97706", "#4f46e5", "#16a34a"];
   const extraSeries = visibleProviderHistory.map((series, index) => ({ key: series.id, name: providerSeriesName(series), color: colors[index % colors.length] }));
   const days = timeframe === "1M" ? 30 : timeframe === "3M" ? 90 : timeframe === "6M" ? 180 : 365;
@@ -441,10 +393,10 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
 
       {/* Comprehensive Price Breakdown Cards */}
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        {/* TCG Market Price Card with Momentum */}
+        {/* Market Price Card with Momentum */}
         <div className="rounded-2xl border border-emerald-500/20 bg-emerald-50/50 p-5 shadow-sm">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-emerald-800">TCG Market Price</span>
+            <span className="text-xs font-bold uppercase tracking-wider text-emerald-800">Market Price</span>
             {tcgPrimary?.printing && (
               <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800">
                 {tcgPrimary.printing}
@@ -454,10 +406,10 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
           <p className="mt-2 text-2xl font-black tracking-tight text-slate-950">
             {tcgPrimary?.price != null ? <AnimatedNumber value={tcgPrimary.price} format={(value) => money(value, tcgPrimary.currency)} /> : "—"}
           </p>
-          {pptPrimary && <p className="mt-1 text-xs text-emerald-800">Pokémon Price Tracker · {pptPrimary.condition} · {formatUpdatedDate(pptPrimary.price_date)}</p>}
-          {tcgPrimary && !pptPrimary && (!tcgSnapshot || pricing.ppt_mapped) && (
+          {pptPrimary && <p className="mt-1 text-xs text-emerald-800">Pokémon Price Tracker · {pptPrimary.stale ? "Stale recorded price · " : ""}{pptPrimary.condition} · {formatUpdatedDate(pptPrimary.price_date)}</p>}
+          {tcgPrimary && !pptPrimary && (
             <p className="mt-1 text-xs text-emerald-800">
-              Latest recorded TCGAPI price · {formatUpdatedDate(tcgPrimary.provider_updated_at ?? tcgPrimary.observed_at)}
+              Legacy recorded price · {formatUpdatedDate(tcgPrimary.provider_updated_at ?? tcgPrimary.observed_at)}
             </p>
           )}
           {/* 24h / 7d / 30d Momentum Pills */}
@@ -592,13 +544,15 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
                 Price history
               </h3>
               <p className="mt-1 text-xs leading-5 text-slate-500">
-                Legacy TCGAPI and eBay listings alongside Pokémon Price Tracker market prices and graded daily sales averages
+                Market price history continues with PPT. Older points retain their source. Missing dates and incompatible conditions remain separate. eBay lines are asking prices.
               </p>
             </div>
           </div>
           <div className="mt-5">
             {providerHistory.length > 0 && <fieldset className="mb-3 flex flex-wrap gap-3 text-xs">
-              <legend className="mb-2 font-semibold">Pokémon Price Tracker series</legend>
+              <legend className="mb-2 font-semibold">Market history series</legend>
+              <label className="flex items-center gap-1"><input type="checkbox" checked={showBackfill} onChange={(e) => { setShowBackfill(e.target.checked); setSelectedSeries(null); }} /> Show PPT backfill instead</label>
+              {providerHistory.filter(s => s.cutover_date).map(s => <p key={`cutover-${s.id}`}>PPT continuation: {s.cutover_date} · {s.printing} · {s.condition || "Unknown condition"}</p>)}
               {providerHistory.map((series) => <label key={series.id} className="flex items-center gap-1">
                 <input type="checkbox" checked={visibleProviderHistory.some((item) => item.id === series.id)} onChange={(event) => {
                   const ids = visibleProviderHistory.map((item) => item.id);

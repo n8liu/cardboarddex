@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.database import SessionLocal
 from app.models import Card
-from app.tcgapi.client import TCGAPIClient
+from app.services.image_download import ImageClient, source_for_card
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ def _sync_single_card_image(
     image_url: str,
     s3_client: Any,
     bucket: str,
-    tcg_client: TCGAPIClient,
+    image_client: ImageClient,
     overwrite: bool = False,
 ) -> tuple[str, bool, str]:
     """
@@ -51,7 +51,7 @@ def _sync_single_card_image(
         return card_id, True, "cached"
 
     try:
-        content, content_type = tcg_client.get_image(image_url)
+        content, content_type = image_client.get_image(image_url)
         s3_client.put_object(
             Bucket=bucket,
             Key=key,
@@ -85,15 +85,15 @@ def run_image_sync(
     target_region = region or settings.aws_region
 
     s3_client = boto3.client("s3", region_name=target_region)
-    tcg_client = TCGAPIClient()
+    image_client = ImageClient()
 
-    query = select(Card.id, Card.image_url).where(Card.image_url.is_not(None))
+    query = select(Card).where(Card.image_url.is_not(None))
     if set_id:
         query = query.where(Card.set_id == set_id)
     if limit:
         query = query.limit(limit)
 
-    cards = session.execute(query).all()
+    cards = [(card.id, source_for_card(session, card)) for card in session.scalars(query)]
     total = len(cards)
     logger.info("Found %s cards to sync to S3 bucket=%s", total, target_bucket)
 
@@ -109,7 +109,7 @@ def run_image_sync(
                 image_url=url,
                 s3_client=s3_client,
                 bucket=target_bucket,
-                tcg_client=tcg_client,
+                image_client=image_client,
                 overwrite=overwrite,
             ): cid
             for cid, url in cards

@@ -36,6 +36,7 @@ def discovery_step(db, client, segment, now):
     if not state["complete"]:
         db.commit()
         rows = client.request("sets", lane="discovery", language=language, limit=100, offset=state["offset"])
+        state["fetched_at"] = now.isoformat()
         state["sets"] = state["sets"] + rows
         state["offset"] += len(rows)
         state["complete"] = len(rows) < 100
@@ -166,13 +167,9 @@ def sync_ppt():
                         language, kind = product.segment.split(":")
                         bonus_graded = (lane == "rotation" and kind == "cards" and int(redis.get(
                             f"{PREFIX}:lane:{int(now.timestamp() // 86400)}:graded") or 0) < 500)
-                        db.commit()  # Release the connection during provider I/O.
-                        rows = client.request("cards" if kind == "cards" else "sealed-products", lane=lane,
-                            language=language, tcgPlayerId=product.provider_id, limit=1, includeHistory=True, bonus_graded=bonus_graded,
-                            includeEbay=kind == "cards" and (bonus_graded or lane in {"priority", "retry"}))
-                        if len(rows) != 1:
-                            raise ValueError("PPT product lookup returned no product")
-                        ingest(db, product, rows[0], now)
+                        from app.services.ppt_refresh import refresh_product
+                        refresh_product(db, client, product, lane=lane, now=now, bonus_graded=bonus_graded,
+                            include_graded=bonus_graded or lane in {"priority", "retry"})
                     db.commit()
                     completed += 1
                 except PPTBlocked as exc:

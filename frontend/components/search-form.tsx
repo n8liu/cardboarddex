@@ -15,7 +15,7 @@ export function SearchForm({
     <div role="search">
       <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">Pokémon price guide</p>
       <h1 className="mt-2 text-3xl font-bold tracking-[-0.035em] text-slate-950 sm:text-4xl">Find your next card.</h1>
-      <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">Explore a focused catalog with current TCG API pricing and verified eBay sales as they arrive.</p>
+      <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">Explore a focused catalog with current PPT pricing and matched eBay asking-price comparisons.</p>
       <div className="mt-6 flex min-w-0 flex-col gap-2 sm:flex-row">
         <label className="min-w-0 flex-1">
           <span className="sr-only">Search cards or sets</span>

@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from app.database import Base, get_db
 from app.main import app
 from app.models import Card, PriceObservation, ProviderCardState, Set
-from app.routers.cards import get_tcgapi_client, clear_catalog_caches
+from app.routers.cards import get_image_client, clear_catalog_caches
 from app.common.redis import get_redis
 from app.services.catalog_service import _pokemon_volume_cache
 from app.services.trending_service import (
@@ -180,7 +180,7 @@ def client() -> Generator[TestClient, None, None]:
             yield session
 
     app.dependency_overrides[get_db] = override_db
-    app.dependency_overrides[get_tcgapi_client] = lambda: FakeImageClient()
+    app.dependency_overrides[get_image_client] = lambda: FakeImageClient()
     with TestClient(app) as client:
         yield client
     app.dependency_overrides.clear()
@@ -447,7 +447,7 @@ def test_get_market_movers_endpoint() -> None:
             yield session
 
     app.dependency_overrides[get_db] = override_db
-    app.dependency_overrides[get_tcgapi_client] = lambda: (_ for _ in ()).throw(AssertionError('Provider dependency must not run'))
+    app.dependency_overrides[get_image_client] = lambda: (_ for _ in ()).throw(AssertionError('Provider dependency must not run'))
     try:
         with TestClient(app) as test_client:
             res = test_client.get("/cards/market-movers?direction=all&period=24h&page=1&per_page=12")
@@ -524,7 +524,7 @@ def test_get_market_movers_stored_percentages() -> None:
             yield session
 
     app.dependency_overrides[get_db] = override_db
-    app.dependency_overrides[get_tcgapi_client] = lambda: EmptyMoverClient()
+    app.dependency_overrides[get_image_client] = lambda: EmptyMoverClient()
     try:
         with TestClient(app) as test_client:
             res = test_client.get("/cards/market-movers?direction=all&period=24h&page=1&per_page=12")
@@ -582,7 +582,7 @@ def test_get_market_movers_does_not_invent_period_changes() -> None:
             yield session
 
     app.dependency_overrides[get_db] = override_db
-    app.dependency_overrides[get_tcgapi_client] = lambda: EmptyMoverClient()
+    app.dependency_overrides[get_image_client] = lambda: EmptyMoverClient()
     try:
         with TestClient(app) as test_client:
             res = test_client.get("/cards/market-movers?direction=all&period=24h&page=1&per_page=12")

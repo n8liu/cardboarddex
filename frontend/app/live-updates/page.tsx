@@ -4,7 +4,7 @@ import type { LiveFeedResponse } from "@/types/card";
 
 export const metadata: Metadata = {
   title: "Live Updated Items & Market Comps | CardboardDex",
-  description: "Streaming real-time feed of verified Pokémon card market comps, eBay sold listings, graded slab submissions, and TCG API price syncs.",
+  description: "Streaming real-time feed of Pokémon card market updates, matched eBay asking listings, graded aggregates, and PPT market updates.",
 };
 
 export const dynamic = "force-dynamic";

@@ -123,12 +123,15 @@ export type ProviderQuote = {
   smart_price_outlier?: boolean;
 };
 export type ProviderHistorySeries = {
+  cutover_date?: string | null;
   id: string; provider: string; language: string; currency: string;
   printing: string | null; condition: string | null; grade: string | null; metric: string;
-  fetched_at: string; points: { date: string; price: number | null; sales_count: number | null }[];
+  fetched_at: string; points: { date: string; price: number | null; sales_count: number | null; source?: string | null }[];
 };
 
 export type CardPricing = {
+  market_quotes?: ProviderQuote[];
+  market_history_series?: ProviderHistorySeries[];
   provider_quotes?: ProviderQuote[];
   provider_history?: ProviderHistorySeries[];
   ppt_mapped?: boolean;
@@ -383,6 +386,7 @@ export type LiveUpdatesResponse = {
   grade_filter: string;
   total_ebay_updates: number;
   total_tcg_updates: number;
+  total_legacy_updates?: number;
   graded_updates_count: number;
   items: LiveUpdateItem[];
   updated_at: string;
@@ -403,6 +407,7 @@ export type LiveStatsResponse = {
   total_items: number;
   total_ebay_updates: number;
   total_tcg_updates: number;
+  total_legacy_updates?: number;
   total_ppt_updates: number;
   graded_updates_count: number;
   generated_at: string;

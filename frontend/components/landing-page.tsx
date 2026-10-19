@@ -124,7 +124,7 @@ export function LandingPage() {
         <CacheNotice metadata={cacheMetadata} />
         {error && <div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900"><span>Market and catalog data are temporarily unavailable.</span><button type="button" onClick={() => setAttempt((n) => n + 1)} className="min-h-9 rounded-lg border border-amber-300 px-3 font-bold hover:bg-amber-100">Retry data</button></div>}
         <div className="grid gap-4 md:grid-cols-3"><MarketCard title="Biggest card gainer" item={data?.gainer ?? null} href="/market-movers?period=30d" loading={loading} /><MarketCard title="Biggest card drop" item={data?.loser ?? null} href="/market-movers?period=30d" loading={loading} /><MarketCard title="Strongest sealed growth" item={data?.sealed ?? null} href="/sealed-signals" loading={loading} /></div>
-        <p className="mt-3 text-[10px] leading-relaxed text-slate-400">TCG API market prices · Historical changes before fees · No forecast of future returns</p>
+        <p className="mt-3 text-[10px] leading-relaxed text-slate-400">PPT market prices · Historical changes before fees · No forecast of future returns</p>
       </section>
 
       <RecentlyViewed />
@@ -158,7 +158,7 @@ export function LandingPage() {
       <section aria-labelledby="coverage-heading" className="border-t border-slate-200 py-10 sm:py-12">
         <div className="mb-5"><h2 id="coverage-heading" className="text-lg font-bold">Behind the collection</h2><p className="mt-2 text-xs leading-relaxed text-slate-500">The sources behind the catalog, price comparisons, and Pokémon reference data.</p></div>
         <HomeLiveStats />
-        <div className="mt-8 grid gap-5 text-xs leading-relaxed text-slate-500 sm:grid-cols-3"><p><strong className="block text-slate-700">TCG API</strong>Catalog details and per-printing market prices. Availability and price dates vary by product.</p><p><strong className="block text-slate-700">eBay</strong>Matched active listings for price comparisons. Asking prices do not establish completed sales.</p><p><strong className="block text-slate-700">PokéAPI</strong>Species artwork and reference data for exploring the Pokémon behind your cards.</p></div>
+        <div className="mt-8 grid gap-5 text-xs leading-relaxed text-slate-500 sm:grid-cols-3"><p><strong className="block text-slate-700">Pokémon Price Tracker</strong>Catalog details and per-printing market prices. Availability and price dates vary by product.</p><p><strong className="block text-slate-700">eBay</strong>Matched active listings for price comparisons. Asking prices do not establish completed sales.</p><p><strong className="block text-slate-700">PokéAPI</strong>Species artwork and reference data for exploring the Pokémon behind your cards.</p></div>
       </section>
     </div>
   </div>;

@@ -56,7 +56,7 @@ def invalidate_trending_cache() -> None:
     r = get_redis()
     if r is not None:
         try:
-            keys = list(r.scan_iter(match="cardboarddex:*:trending:identity-v1:*", count=100))
+            keys = list(r.scan_iter(match="cardboarddex:*:trending:identity-v2:*", count=100))
             if keys:
                 r.delete(*keys)
         except (RedisError, Exception) as exc:
@@ -462,7 +462,7 @@ def get_trending_dashboard(
     cache_key = f"{timeframe}:{clean_q}:observations={include_observation_volume}"
     cache_key = f"{image_generation()}:{get_settings().ppt_primary_enabled}:{cache_key}"
     source_key = "ppt" if get_settings().ppt_primary_enabled else "legacy"
-    redis_key = f"cardboarddex:{source_key}:trending:identity-v1:{cache_key}"
+    redis_key = f"cardboarddex:{source_key}:trending:identity-v2:{cache_key}"
     now = datetime.now(UTC)
 
     # 1. Redis Cache

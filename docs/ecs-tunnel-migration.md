@@ -9,7 +9,7 @@ The production API is published at `https://api.cardboarddex.app` through Cloudf
 - ECS cluster: `default`, region: `us-west-2`.
 - Standard Fargate service: `cardboarddex-api-tunnel-service`, staged at desired count `0`, no load balancer. Set desired count to `1` for cutover.
 - Task definition: `cardboarddex-api-tunnel:1`, 256 CPU units and 512 MiB memory, `awsvpc` network mode. It preserves the `Main` FastAPI container and `cloudflared` sidecar configuration, with both containers essential so ECS replaces the task if either exits.
-- Use the existing four public subnets in `vpc-0eb3f8046811e607d` with `assignPublicIp=ENABLED`. This retains one billable task IPv4 address for outbound Cloudflare, TCG API, eBay, ECR, and S3 connections; no NAT gateway is added.
+- Use the existing four public subnets in `vpc-0eb3f8046811e607d` with `assignPublicIp=ENABLED`. This retains one billable task IPv4 address for outbound Cloudflare, PPT, eBay, ECR, and S3 connections; no NAT gateway is added.
 - Use the separate `/ecs/cardboarddex-api-tunnel` CloudWatch log group with 14-day retention. The Express-owned log group may be removed with its service.
 - The service uses outbound-only security group `sg-08030298585b352b4`, with no inbound public listener. RDS allows this group on TCP 5432. It does not depend on the Express-managed task security group, which may be removed when Express Mode is deleted.
 - Copy the current task definition directly through AWS APIs without writing its environment values or Tunnel token into this repository or command output. The current task definition stores these values in container environment entries, so take care when inspecting it.

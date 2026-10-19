@@ -51,7 +51,7 @@ export function GradedSalesActivityPanel({ compact = false, query = "" }: { comp
             <p className="mt-2 text-sm font-bold text-emerald-800">{item.sales.toLocaleString()} reported graded sales</p>
             <p className="mt-1 break-words text-[11px] text-slate-600">{item.grades.map((grade) => `${grade.grade}: ${grade.sales.toLocaleString()}`).join(" · ")}</p>
             <p className="mt-1 text-[11px] text-slate-500">Latest sale {item.last_sale_date || "unknown"}</p>
-            <p className={`mt-1 text-[11px] ${item.stale ? "text-amber-800" : "text-slate-500"}`}>{item.stale ? "Stale snapshot · " : ""}Last synced {item.synced_at.slice(0, 10)}</p>
+            <p className={`mt-1 text-[11px] ${item.stale ? "text-amber-800" : "text-slate-500"}`}>{item.stale ? "Stale snapshot · " : ""}{item.synced_at ? `Last synced ${item.synced_at.slice(0, 10)}` : "Sync date unknown"}</p>
           </Link>
         </li>)}</ol>
       </>}

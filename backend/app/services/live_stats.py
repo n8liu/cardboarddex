@@ -23,7 +23,7 @@ LEASE_SECONDS = 30
 
 
 def snapshot_key():
-    return (f"cardboarddex:live_stats:v1:{listing_quality.MATCHER_VERSION}:"
+    return (f"cardboarddex:live_stats:v2:{listing_quality.MATCHER_VERSION}:"
             f"ppt-{int(get_settings().ppt_primary_enabled)}")
 
 
@@ -44,7 +44,7 @@ def calculate_snapshot(db):
         func.count(case((rows.c.provider == "pokemonpricetracker", 1))),
         func.count(rows.c.grading_company)).select_from(rows)).one()
     return LiveStatsResponse(total_items=result[0], total_ebay_updates=result[1],
-        total_tcg_updates=result[2], total_ppt_updates=result[3], graded_updates_count=result[4],
+        total_tcg_updates=result[2], total_legacy_updates=result[2], total_ppt_updates=result[3], graded_updates_count=result[4],
         generated_at=datetime.now(UTC), is_stale=False)
 
 

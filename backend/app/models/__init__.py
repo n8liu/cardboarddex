@@ -9,3 +9,4 @@ from app.models.listing_assessment import ListingAssessment  # noqa: F401
 from app.models.ppt import PPTProduct, PPTHistory, PPTCheckpoint, PPTCurrentQuote  # noqa: F401
 
 from app.models.catalog_prices import CatalogPriceCandidate, CatalogPriceProjectionState  # noqa: F401
+from app.models.ppt import MarketHistoryTransition  # noqa: F401

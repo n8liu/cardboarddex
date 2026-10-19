@@ -10,7 +10,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 # Exact hosts only: no arbitrary seller URLs or wildcard subdomains.
-IMAGE_HOSTS = {"i.ebayimg.com", "images.pokemontcg.io", "images.tcgapi.dev", "api.tcgapi.dev", "tcgplayer-cdn.tcgplayer.com"}
+IMAGE_HOSTS = {"i.ebayimg.com", "images.pokemontcg.io", "tcgplayer-cdn.tcgplayer.com"}
 MAX_BYTES = 5 * 1024 * 1024
 
 

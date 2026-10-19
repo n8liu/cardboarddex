@@ -131,8 +131,10 @@ def test_shadow_hidden_and_current_fallback(db, payload, now, monkeypatch):
     payload["ebay"]["salesByGrade"] = {}
     ingest(db, product, payload, now)
     db.commit()
-    assert [o.provider for o in db.scalars(select(PriceObservation).where(market_observation()))] == ["tcgapi"]
+    assert [o.provider for o in db.scalars(select(PriceObservation).where(market_observation()))] == ["pokemonpricetracker"]
     assert not list(db.scalars(select(PriceObservation).where(grading_observation(), PriceObservation.grading_company == "PSA")))
+
+    assert next(q for q in pricing_data(db, "legacy-card")["provider_quotes"] if q["primary"])["stale"]
 
 
 def test_identity_conflicts_languages_and_new_products(db, payload):
@@ -310,7 +312,7 @@ def test_provider_sales_counts_only_explicit_volume(db, payload, now):
     result = sales_activity(db)
     assert result["total_sales"] == 3  # not graded count 1234, history points, or quote count
     assert result["products_with_sales_data"] == 1
-    assert market_history(db, "legacy-card", 7)["previous_price"] == 55
+    assert market_history(db, "legacy-card", 7)["previous_price"] is None  # Backfill is separate from the continuation.
     assert market_history(db, "legacy-card", 30)["return_percent"] is None
 
 
@@ -359,7 +361,7 @@ def test_app_price_consumers_prefer_provider_without_merging_baselines(db, paylo
     assert catalog.cards[0].market_source == "pokemonpricetracker"
     binder = calculate_portfolio_valuation(db, ["legacy-card"])
     assert binder.total_current_value == 110
-    assert binder.delta_7d_percent == 100
+    assert binder.delta_7d_percent is None  # Older PPT backfill is not a continuation baseline.
     assert binder.delta_30d_percent is None
     grading = calculate_grading_profit(db, use_cache=False)
     item = next(i for i in grading.items if i.card_id == "legacy-card")
@@ -424,7 +426,7 @@ def test_disposable_migration_preserves_existing_tables(tmp_path, monkeypatch):
     assert str(before) == str(after)
     with engine.connect() as conn:
         assert conn.execute(text("SELECT id FROM cards")).scalar() == "keep"
-        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0011_catalog_prices"
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0012_market_history_transitions"
     engine.dispose()
 
 
@@ -515,4 +517,144 @@ def test_graded_sales_bounded_ranking_duplicate_and_zero(db, now):
     assert len(result['items']) == 50
     assert [x['card_id'] for x in result['items'][:3]] == ['card-124', 'card-122', 'card-123']
     assert graded_sales_activity(db, 'card-000')['items'][0]['sales'] == 0
-    assert graded_sales_activity(db, 'card-000')['items'][0]['stale'] is False
+    assert graded_sales_activity(db, 'card-000')['items'][0]['stale'] is True  # Old snapshots lack separate graded freshness.
+
+
+def test_cutover_preserves_history_overlap_and_conditions(db, payload, now):
+    from app.models import MarketHistoryTransition
+    from app.services.market_history import establish_transitions
+    yesterday = now - timedelta(days=1)
+    db.add(PriceObservation(fingerprint='old', card_id='legacy-card', provider='tcgapi', provider_card_id='old',
+        variant_id='normal', printing='Holofoil', condition='Near Mint', price=77, currency='USD',
+        observed_at=yesterday, provider_updated_at=yesterday))
+    # Unknown-condition points must never be relabeled Near Mint.
+    db.add(MarketHistory(card_id='legacy-card', printing='Holofoil', day=yesterday.date(), market_price=88, fetched_at=now))
+    product = map_product(db, payload, 'english', 'cards')
+    ingest(db, product, payload, now)
+    db.commit()
+    result = pricing_data(db, 'legacy-card')
+    market = next(s for s in result['market_history_series'] if s['condition'] == 'Near Mint' and s['printing'] == 'Holofoil')
+    assert [(p['price'], p['source']) for p in market['points']] == [(77, 'tcgapi'), (110, 'pokemonpricetracker')]
+    unknown = next(s for s in result['market_history_series'] if s['condition'] is None and not s.get('grade'))
+    assert unknown['points'][0]['price'] == 88
+    before = [(t.id, t.cutover_date) for t in db.scalars(select(MarketHistoryTransition))]
+    establish_transitions(db, product, now + timedelta(days=10))
+    db.commit()
+    assert [(t.id, t.cutover_date) for t in db.scalars(select(MarketHistoryTransition))] == before
+    assert db.scalar(select(PriceObservation.price).where(PriceObservation.fingerprint == 'old')) == 77
+    assert db.get(MarketHistory, ('legacy-card', 'Holofoil', yesterday.date())).market_price == 88
+
+
+def test_partial_refresh_preserves_graded_snapshot_and_freshness(db, payload, now):
+    product = map_product(db, payload, 'english', 'cards')
+    ingest(db, product, payload, now)
+    db.commit()
+    original = deepcopy(product.metadata_payload['ebay'])
+    original_time = product.metadata_payload['graded_synced_at']
+    partial = deepcopy(payload)
+    partial.pop('ebay')
+    ingest(db, product, partial, now + timedelta(days=2))
+    db.commit()
+    assert product.metadata_payload['ebay'] == original
+    assert product.metadata_payload['graded_synced_at'] == original_time
+    partial['ebay'] = {}
+    ingest(db, product, partial, now + timedelta(days=3))
+    db.commit()
+    assert product.metadata_payload['ebay'] == {}
+    assert product.metadata_payload['graded_synced_at'] != original_time
+
+
+def test_manual_refresh_uses_same_ingestion_and_keeps_ids(db, payload, now, monkeypatch):
+    from app.services.ppt_refresh import refresh_cards
+    monkeypatch.setattr(get_settings(), 'ppt_ingestion_enabled', True)
+    product = map_product(db, payload, 'english', 'cards')
+    db.commit()
+    client = Mock()
+    client.request.return_value = [payload]
+    result = refresh_cards(db, ['legacy-card'], client=client)
+    assert result['cards'] == 1
+    assert client.request.call_args.kwargs['tcgPlayerId'] == product.provider_id
+    assert db.get(Card, 'legacy-card').set_id == 'legacy-set'
+    assert product.last_success_at is not None
+
+
+def test_retired_schedules_do_not_reappear_when_legacy_flag_is_true(monkeypatch):
+    import importlib
+    import app.celery_app as module
+    monkeypatch.setattr(get_settings(), 'tcgapi_ingestion_enabled', True)
+    monkeypatch.setattr(get_settings(), 'ppt_ingestion_enabled', True)
+    importlib.reload(module)
+    tasks = {x['task'] for x in module.celery_app.conf.beat_schedule.values()}
+    assert 'jobs.sync_ppt.sync_ppt' in tasks
+    assert 'jobs.collect_ebay_prices.collect_ebay_prices' in tasks
+    assert not tasks.intersection({'jobs.collect_prices.collect_prices', 'jobs.sync_catalog.sync_catalog', 'jobs.sync_market_data.sync_market_data'})
+    monkeypatch.undo()
+    importlib.reload(module)
+
+
+def test_quarantined_mapping_cannot_supply_public_history(db, payload, now):
+    product = map_product(db, payload, 'english', 'cards')
+    ingest(db, product, payload, now)
+    db.commit()
+    assert pricing_data(db, 'legacy-card')['provider_history']
+    product.status = 'quarantined'
+    db.commit()
+    result = pricing_data(db, 'legacy-card')
+    assert result['provider_history'] == []
+    assert result['market_quotes'] == []
+    assert all(s['provider'] == 'tcgapi' for s in result['market_history_series'])
+
+
+def test_preservation_receipt_detects_loss_but_allows_catalog_additions(db, payload, now):
+    from scripts.ppt_migration_audit import audit, preserved
+    db.add(PriceObservation(fingerprint='receipt-old', card_id='legacy-card', provider='tcgapi',
+        provider_card_id='old', variant_id='raw', price=77, currency='USD', observed_at=now))
+    db.commit()
+    before = audit(db)
+    product = map_product(db, payload, 'english', 'cards')
+    ingest(db, product, payload, now)
+    db.add(Card(id='new-ppt-card', set_id='legacy-set', name='New card', number='999'))
+    db.commit()
+    assert preserved(before, audit(db))
+    row = db.scalar(select(PriceObservation).where(PriceObservation.fingerprint == 'receipt-old'))
+    row.price = 78
+    db.commit()
+    assert not preserved(before, audit(db))
+
+
+def test_portfolio_history_inputs_have_fixed_query_count(db, payload, now):
+    from sqlalchemy import event
+    from app.services.market_history import load_history_inputs
+    product = map_product(db, payload, 'english', 'cards')
+    ingest(db, product, payload, now)
+    db.commit()
+    statements = []
+    def record(*args):
+        statements.append(args[2])
+    event.listen(db.get_bind(), 'before_cursor_execute', record)
+    try:
+        stored = load_history_inputs(db, ['legacy-card', 'missing'], 180)
+        assert len(statements) == 6
+        pricing_data(db, 'legacy-card', stored=stored['legacy-card'])
+        pricing_data(db, 'missing', stored=stored['missing'])
+        assert len(statements) == 6
+    finally:
+        event.remove(db.get_bind(), 'before_cursor_execute', record)
+
+
+def test_recorded_transition_cannot_be_downgraded(db, payload, now, monkeypatch):
+    import importlib.util
+    from pathlib import Path
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    path = Path('alembic/versions/0012_market_history_transitions.py')
+    spec = importlib.util.spec_from_file_location('transition_migration', path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    product = map_product(db, payload, 'english', 'cards')
+    ingest(db, product, payload, now)
+    db.commit()
+    monkeypatch.setattr(migration, 'op', Operations(MigrationContext.configure(db.connection())))
+    with pytest.raises(RuntimeError, match='Roll back application code'):
+        migration.downgrade()
+    assert pricing_data(db, 'legacy-card')['market_history_series']

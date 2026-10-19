@@ -7,7 +7,7 @@ from redis.exceptions import RedisError
 from app.common.redis import get_durable_redis
 from app.config import get_settings
 from app.database import SessionLocal
-from app.models import PPTProduct, PPTHistory, PPTCurrentQuote, PriceObservation
+from app.models import PPTProduct, PPTHistory, PPTCurrentQuote, PriceObservation, Card, MarketHistoryTransition
 from app.providers.ppt import LANES, PREFIX, PROVIDER
 from jobs.sync_ppt import due_query
 
@@ -23,8 +23,10 @@ def report(db, redis=None, now=None):
     chunks, json_bytes = db.execute(select(func.count(), func.sum(func.length(cast(PPTHistory.points, String))))).one()
     result = {"generated_at": now, "ingestion_enabled": settings.ppt_ingestion_enabled,
         "primary_enabled": settings.ppt_primary_enabled, "api_key_configured": bool(settings.ppt_api_key),
-        "legacy_ingestion_enabled": settings.tcgapi_ingestion_enabled,
+        "legacy_ingestion_retired": True,
         "daily_credit_limit": settings.ppt_daily_credit_limit, "minute_weight_limit": settings.ppt_minute_weight_limit,
+        "unmapped_cards": db.scalar(select(func.count()).select_from(Card).where(~select(PPTProduct.id).where(PPTProduct.card_id == Card.id, PPTProduct.status == "matched").exists())),
+        "history_transitions": db.scalar(select(func.count()).select_from(MarketHistoryTransition)),
         "coverage": [{"segment": s, "status": status, "products": n, "oldest_success": old, "newest_success": new} for s, status, n, old, new in groups],
         "due_products": db.scalar(select(func.count()).select_from(due_query(now).subquery())),
         "history_chunks": chunks, "history_json_characters": json_bytes or 0,
@@ -50,3 +52,18 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     with SessionLocal() as session:
         print(json.dumps(report(session, get_durable_redis()), default=str, indent=2))
+
+
+from celery import shared_task
+
+@shared_task(name="jobs.ppt_report.publish_report")
+def publish_report():
+    redis = get_durable_redis()
+    try:
+        with SessionLocal() as db:
+            payload = report(db, redis)
+        redis.setex("cardboarddex:ppt:health:v1", 300, json.dumps(payload, default=str))
+        return {"status": "published"}
+    except Exception as exc:
+        logger.exception("PPT health publication failed error=%s: %s", type(exc).__name__, exc)
+        raise

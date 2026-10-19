@@ -15,7 +15,7 @@ from app.models import Card, Set, MarketHistory, CatalogSnapshot, ProviderCardSt
 from app.services import market_data_service as service
 from app.services import sealed_service
 from app.tcgapi.client import TCGAPIClient, DEFAULT_BASE_URL
-from jobs.sync_market_data import sync_history, sync_catalog_snapshot
+from app.services.legacy_records import import_legacy_history, import_legacy_catalog_snapshot
 from jobs.collect_prices import _state
 
 
@@ -34,21 +34,10 @@ def db(monkeypatch):
     engine.dispose()
 
 
-@respx.mock
-def test_history_and_catalog_contracts():
-    history = respx.get(f"{DEFAULT_BASE_URL}/cards/box/history").respond(200, json={"data": []})
-    game = respx.get(f"{DEFAULT_BASE_URL}/games/pokemon").respond(200, json={"data": {"slug": "pokemon"}})
-    sets = respx.get(f"{DEFAULT_BASE_URL}/games/pokemon/sets").mock(side_effect=[
-        httpx.Response(200, json={"data": [{"id": 1}], "meta": {"has_more": True}}),
-        httpx.Response(200, json={"data": [{"id": 2}], "meta": {"has_more": False}}),
-    ])
-    client = TCGAPIClient(api_key="test", acquire_request=lambda: None)
-    client.get_history("box")
-    client.get_game("pokemon")
-    assert [r["id"] for r in client.iter_game_sets("pokemon")] == [1, 2]
-    assert history.calls[0].request.url.params["range"] == "year"
-    assert sets.calls[1].request.url.params["page"] == "2"
-    assert game.called
+def test_legacy_http_client_is_retired():
+    from app.tcgapi.client import TCGAPIConfigurationError
+    with pytest.raises(TCGAPIConfigurationError, match="retired"):
+        TCGAPIClient(api_key="test")
 
 
 def test_idempotent_history_preserves_zero_null_and_corrections(db):
@@ -59,17 +48,17 @@ def test_idempotent_history_preserves_zero_null_and_corrections(db):
         {"date": today, "printing": "Foil", "market_price": 110, "sales_volume": None},
     ]}
     card = db.get(Card, "box")
-    sync_history(db, client, card)
-    sync_history(db, client, card)
+    import_legacy_history(db, card, client.get_history())
+    import_legacy_history(db, card, client.get_history())
     assert db.scalar(select(func.count()).select_from(MarketHistory)) == 2
     assert service.sales_activity(db)["total_sales"] == 0
     client.get_history.return_value["data"][0]["sales_volume"] = 8
-    sync_history(db, client, card)
+    import_legacy_history(db, card, client.get_history())
     assert service.sales_activity(db)["total_sales"] == 8
     assert db.scalar(select(func.count()).select_from(MarketHistory)) == 2
     client.get_history.return_value = {"data": [{"date": today, "market_price": "NaN"}]}
     with pytest.raises(ValueError):
-        sync_history(db, client, card)
+        import_legacy_history(db, card, client.get_history())
     db.rollback()
     assert service.sales_activity(db)["total_sales"] == 8
 
@@ -116,15 +105,15 @@ def test_catalog_snapshot_counts_missing_and_failed_refresh(db):
         {"id": "set", "name": "Imported", "card_count": 4, "release_date": "2025-01-01"},
         {"id": "new", "name": "New set", "card_count": 6, "release_date": "2026-10-01"},
     ])
-    sync_catalog_snapshot(db, client, "pokemon")
-    result = service.catalog_coverage(db)["games"][0]
+    import_legacy_catalog_snapshot(db, "pokemon", client.get_game()["data"], list(client.iter_game_sets()))
+    result = service.legacy_catalog_coverage(db)["games"][0]
     assert result["local_set_count"] == 1
     assert result["local_card_count"] == 1
     assert result["missing_sets"][0]["id"] == "new"
     assert result["latest_sets"][0]["id"] == "new"
     client.iter_game_sets.side_effect = ValueError("Failed page 2")
     with pytest.raises(ValueError):
-        sync_catalog_snapshot(db, client, "pokemon")
+        import_legacy_catalog_snapshot(db, "pokemon", client.get_game()["data"], list(client.iter_game_sets()))
     db.rollback()
     assert db.get(CatalogSnapshot, "pokemon").payload["game"]["set_count"] == 2
 
@@ -207,21 +196,14 @@ def test_market_data_migration_preserves_catalog(tmp_path, monkeypatch):
     engine.dispose()
 
 
-def test_history_sync_stops_on_plan_restriction_without_erasing_data(db, monkeypatch):
+def test_retired_history_job_preserves_existing_data(db, monkeypatch):
     from jobs import sync_market_data as job
-    db.add(Card(id="second", name="Second", set_id="set", number="2"))
     db.add(MarketHistory(card_id="box", printing="Normal", day=datetime.now(UTC).date(), market_price=100, sales_volume=3, fetched_at=datetime.now(UTC)))
     db.commit()
-    client = Mock()
-    response = httpx.Response(403, request=httpx.Request("GET", "https://api.tcgapi.dev/v1/cards/box/history"))
-    client.get_history.side_effect = httpx.HTTPStatusError("Plan restricted", request=response.request, response=response)
-    monkeypatch.setattr(job, "TCGAPIClient", lambda: client)
-    monkeypatch.setattr(job, "SessionLocal", lambda: Session(db.bind))
-    with pytest.raises(httpx.HTTPStatusError):
-        job.sync_market_data.run(limit=2, card_ids=["box", "second"])
-    assert client.get_history.call_count == 1
+    factory = Mock(side_effect=AssertionError("No legacy provider construction"))
+    assert job.sync_market_data.run(limit=2, card_ids=["box"])["status"] == "retired"
+    factory.assert_not_called()
     assert db.scalar(select(func.count()).select_from(MarketHistory)) == 1
-    assert db.scalar(select(ProviderCardState.match_status).where(ProviderCardState.provider == "tcgapi_history")) == "restricted"
 
 
 def test_trending_can_skip_observation_aggregates(db, monkeypatch):
@@ -364,7 +346,8 @@ def test_public_graded_sales_api(db, monkeypatch):
             result = response.json()
             assert result['status'] == 'ready'
             assert result['items'][0]['sales'] == 3
-            assert result['items'][0]['synced_at']
+            assert result['items'][0]['synced_at'] is None
+            assert result['items'][0]['stale'] is True
             assert client.get('/market/graded-sales-activity?q=' + 'x' * 121).status_code == 422
     finally:
         app.dependency_overrides.clear()

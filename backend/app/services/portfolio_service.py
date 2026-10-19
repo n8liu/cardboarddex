@@ -63,7 +63,8 @@ def calculate_portfolio_valuation(
         )
 
     # Cache lookup
-    cache_str = f"{','.join(clean_ids)}:{days}"
+    from app.config import get_settings
+    cache_str = f"ppt-migration-v2:{get_settings().ppt_primary_enabled}:{','.join(clean_ids)}:{days}"
     cache_hash = hashlib.md5(cache_str.encode("utf-8")).hexdigest()
     cache_key = f"cardboarddex:portfolio:{cache_hash}"
     cache_key = f"{image_generation()}:{cache_key}"
@@ -200,6 +201,8 @@ def calculate_portfolio_valuation(
                 number=f"{card.number}/{card.printed_total}" if card.printed_total else card.number,
                 rarity=card.rarity,
                 image_url=card_image_url(card.id),
+                price_status=("stale" if ppt_quotes[cid].get("stale") else "recent") if cid in ppt_quotes else "legacy" if market_price is not None else "unavailable",
+                price_date=ppt_quotes[cid]["price_date"] if cid in ppt_quotes else next(((o.provider_updated_at or o.observed_at).date().isoformat() for o in latest_observations if o.card_id == cid), None),
                 market_source="pokemonpricetracker" if cid in ppt_quotes else "tcgapi" if market_price is not None else None,
                 market_price=round(market_price, 2) if market_price is not None else None,
                 market_currency="USD",
@@ -215,141 +218,56 @@ def calculate_portfolio_valuation(
     total_current_val = round(sum(card_current_prices.values()), 2)
     highest_card = portfolio_cards[0] if portfolio_cards and portfolio_cards[0].market_price else None
 
-    # 5. Build Historical Timeline Curve
-    cutoff = now - timedelta(days=days)
-    history_query = (
-        select(
-            PriceObservation.card_id,
-            func.coalesce(PriceObservation.provider_updated_at, PriceObservation.observed_at).label("ts"),
-            PriceObservation.price,
-        )
-        .where(
-            PriceObservation.card_id.in_(clean_ids),
-            PriceObservation.provider == "tcgapi",
-            PriceObservation.grading_company.is_(None),
-            or_(
-                PriceObservation.observed_at >= cutoff,
-                PriceObservation.provider_updated_at >= cutoff,
-            ),
-        )
-        .order_by("ts")
-    )
-    raw_history = list(db.execute(history_query).all())
-
-    # Group price observations by card and date
-    card_date_prices: dict[str, dict[date, float]] = {cid: {} for cid in clean_ids}
-    all_dates: set[date] = set()
-
-    for row in raw_history:
-        cid = row[0]
-        ts = row[1]
-        price = _extract_float(row[2])
-        if cid in card_date_prices and ts and price is not None and price > 0:
-            d = ts.date() if isinstance(ts, datetime) else ts
-            card_date_prices[cid][d] = price
-            all_dates.add(d)
-
-    # A PPT-valued card uses its own dimensioned history, never legacy baselines.
+    # Unified source-aware history, with no synthesized observations or today's seed.
     from app.services.ppt_prices import pricing_data
-    for cid, quote in ppt_quotes.items():
-        card_date_prices[cid] = {}
-        for series in pricing_data(db, cid, days)["provider_history"]:
-            if series["metric"] != "market" or series["printing"] != quote["printing"] or series["condition"] != quote["condition"]:
-                continue
-            for point in series["points"]:
-                if point["price"] is not None:
-                    d = date.fromisoformat(point["date"])
-                    card_date_prices[cid][d] = point["price"]
-                    all_dates.add(d)
-
-    # Generate daily chronological sequence
-    history_points: list[PortfolioHistoryPoint] = []
-    if all_dates or total_current_val > 0:
-        start_date = min(all_dates) if all_dates else now_date - timedelta(days=7)
-        # Ensure we don't start before cutoff
-        if start_date < cutoff.date():
-            start_date = cutoff.date()
-
-        # Step through every day from start_date to now_date
-        current_step_date = start_date
-        running_prices: dict[str, float] = {}
-
-        while current_step_date <= now_date:
-            # Update running price for any cards that had an observation on this day
-            for cid in clean_ids:
-                if current_step_date in card_date_prices.get(cid, {}):
-                    running_prices[cid] = card_date_prices[cid][current_step_date]
-                elif cid not in running_prices and cid in card_current_prices and cid not in ppt_quotes:
-                    # If card has no prior historical points, seed with current price
-                    running_prices[cid] = card_current_prices[cid]
-
-            day_total = sum(running_prices.values())
-            history_points.append(
-                PortfolioHistoryPoint(
-                    date=current_step_date.isoformat(),
-                    total_value=round(day_total, 2),
-                    card_count=len(running_prices),
-                )
-            )
-            current_step_date += timedelta(days=1)
-
-    # Ensure the last point matches today and total_current_val exactly
-    today_iso = now_date.isoformat()
-    if history_points and history_points[-1].date == today_iso:
-        history_points[-1] = PortfolioHistoryPoint(
-            date=today_iso,
-            total_value=total_current_val,
-            card_count=len(portfolio_cards),
-        )
-    elif total_current_val > 0:
-        history_points.append(
-            PortfolioHistoryPoint(
-                date=today_iso,
-                total_value=total_current_val,
-                card_count=len(portfolio_cards),
-            )
-        )
+    from app.services.market_history import load_history_inputs
+    inputs = load_history_inputs(db, clean_ids, days)
+    card_date_prices = {}
+    card_date_sources = {}
+    for cid in clean_ids:
+        data = pricing_data(db, cid, days, stored=inputs[cid])
+        quote = ppt_quotes.get(cid)
+        series = [s for s in data["market_history_series"] if not s.get("grade") and s["metric"] == "market"]
+        if quote:
+            printing = 'Normal' if quote["printing"] == 'Standard' else quote["printing"]
+            series = [s for s in series if s["printing"] == printing and s["condition"] in (quote["condition"], None, 'Unknown')]
+        elif series:
+            # Choose one printing by most recent recorded point; never sum printings as separate cards.
+            selected = max(series, key=lambda s: max((p['date'] for p in s['points']), default=''))
+            series = [selected]
+        points = {}
+        sources = {}
+        for s in sorted(series, key=lambda s: s['provider'] != 'tcgapi'):
+            for point in s['points']:
+                if point['price'] is not None:
+                    points[point['date']] = point['price']
+                    sources[point['date']] = point.get('source')
+        card_date_prices[cid] = points
+        card_date_sources[cid] = sources
+    dates = sorted({d for points in card_date_prices.values() for d in points})
+    history_points = [PortfolioHistoryPoint(date=d,
+        total_value=round(sum(points[d] for points in card_date_prices.values() if d in points), 2),
+        card_count=sum(d in points for points in card_date_prices.values())) for d in dates]
 
     # 6. Calculate Combined Deltas (24h, 7d, 30d)
     # Prefer delta computed from historical points if available
     def _calc_delta(days_back: int) -> tuple[float | None, float | None]:
-        if ppt_quotes:
-            field = {1: "price_change_24h", 7: "price_change_7d", 30: "price_change_30d"}[days_back]
-            previous = 0.0
-            for card in portfolio_cards:
-                if card.market_price is None:
-                    continue
-                change = getattr(card, field)
-                if change is None or change <= -100:
-                    return None, None
-                previous += card.market_price / (1 + change / 100)
-            if previous > 0:
-                return round(total_current_val - previous, 2), round((total_current_val / previous - 1) * 100, 2)
-            return None, None
-        target_date = (now_date - timedelta(days=days_back)).isoformat()
-        past_point = None
-        for pt in reversed(history_points):
-            if pt.date <= target_date:
-                past_point = pt
-                break
-        if past_point and past_point.total_value > 0 and total_current_val > 0:
-            diff = total_current_val - past_point.total_value
-            pct = (diff / past_point.total_value) * 100.0
-            return round(diff, 2), round(pct, 2)
-
-        # Fallback to sum of individual card deltas if 24h
-        if days_back == 1:
-            diff_sum = 0.0
-            has_diff = False
-            for c in portfolio_cards:
-                if c.price_change_24h is not None:
-                    diff_sum += c.price_change_24h
-                    has_diff = True
-            if has_diff and total_current_val > 0:
-                base = total_current_val - diff_sum
-                pct = (diff_sum / base * 100.0) if base > 0 else 0.0
-                return round(diff_sum, 2), round(pct, 2)
-
+        previous = 0.0
+        for card in portfolio_cards:
+            if card.market_price is None:
+                continue
+            # A stale value is not a current return, and provider backfill cannot
+            # supply a hidden baseline across the recorded source cutover.
+            if card.price_date != now_date.isoformat() or card.price_status == "stale":
+                return None, None
+            baseline = (now_date - timedelta(days=days_back)).isoformat()
+            price = card_date_prices.get(card.id, {}).get(baseline)
+            source = card_date_sources.get(card.id, {}).get(baseline)
+            if not price or source != card.market_source:
+                return None, None
+            previous += price
+        if previous > 0:
+            return round(total_current_val - previous, 2), round((total_current_val / previous - 1) * 100, 2)
         return None, None
 
     d24_amt, d24_pct = _calc_delta(1)

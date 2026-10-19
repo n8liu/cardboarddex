@@ -2,8 +2,8 @@ import type { ChartPoint } from "@/components/price-history-chart";
 import type { ProviderHistorySeries } from "@/types/card";
 
 export function providerSeriesName(series: ProviderHistorySeries): string {
-  const identity = series.grade ? series.grade.toUpperCase().replace(/(PSA|CGC|BGS)/, "$1 ").replace("_", ".") : `${series.printing} · ${series.condition}`;
-  return `PPT ${identity} · ${series.metric === "daily_average" ? "daily sales average" : "market"}`;
+  const identity = series.grade ? series.grade.toUpperCase().replace(/(PSA|CGC|BGS)/, "$1 ").replace("_", ".") : `${series.printing || "Unknown printing"} · ${series.condition || "Unknown condition"}`;
+  return `${series.provider === "tcgapi" ? "Legacy market" : series.provider === "market" ? "Market price" : "PPT"} ${identity} · ${series.metric === "daily_average" ? "daily sales average" : "market"}`;
 }
 
 export function mergeProviderHistory(legacy: ChartPoint[], series: ProviderHistorySeries[], cutoff: string, end: string): ChartPoint[] {
@@ -14,6 +14,7 @@ export function mergeProviderHistory(legacy: ChartPoint[], series: ProviderHisto
       if (point.date < cutoff || point.date > end) continue;
       const row = dates.get(point.date) ?? { date: point.date };
       row[item.id] = point.price;
+      row[`${item.id}:source`] = point.source || item.provider;
       dates.set(point.date, row);
     }
   }

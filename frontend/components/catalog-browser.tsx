@@ -515,7 +515,7 @@ export function CatalogBrowser({
           <div className="mt-6 border-t border-slate-100 pt-5">
             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Data</p>
             <div className="mt-3 space-y-2.5 text-sm text-slate-600">
-              <p className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-emerald-500" /> TCG API catalog</p>
+              <p className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-emerald-500" /> PPT catalog</p>
               <p className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-slate-300" /> eBay listings data</p>
             </div>
           </div>

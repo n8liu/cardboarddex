@@ -5,13 +5,14 @@ import type { CardPricing, PriceObservation } from "@/types/card";
 vi.mock("next/dynamic", () => ({ default: () => () => null }));
 afterEach(cleanup);
 const observation: PriceObservation = { provider: "tcgapi", provider_card_id: "card", variant_id: "normal", condition: null, printing: "Normal", grading_company: null, grade: null, price: 100, currency: "USD", observed_at: "2026-10-01", provider_updated_at: null, price_change_24h: 1, price_change_7d: 75, price_change_30d: 90 };
-it("uses current TCG fields and seven-day summaries, not historical percentages or listing prices", () => {
+it("retains the dated legacy snapshot without presenting retired momentum as current", () => {
   const pricing: CardPricing = { card_id: "card", provider_states: [], observations: [observation], tcg_market_prices: [{ ...observation, price: 110, price_change_7d: -4, price_change_30d: null }], avg_listing_price: 30, median_listing_price: 25, listing_sample_count: 3 };
   render(<PriceDashboard pricing={pricing} />);
-  const tcg = screen.getByText("TCG Market Price").closest('.rounded-2xl') as HTMLElement;
+  const tcg = screen.getByText("Market Price").closest('.rounded-2xl') as HTMLElement;
   expect(within(tcg).getByText("$110.00", { selector: ".sr-only" })).toBeInTheDocument();
-  expect(tcg).toHaveTextContent("24h: +1.0%");
-  expect(tcg).toHaveTextContent("7d: -4.0%");
+  expect(tcg).not.toHaveTextContent("24h:");
+  expect(tcg).toHaveTextContent("Legacy recorded price");
+  expect(tcg).not.toHaveTextContent("7d:");
   expect(tcg).not.toHaveTextContent("30d:");
   const average = screen.getByText("Avg Listing (Raw, 7d)").parentElement!;
   expect(within(average).getByText("$30.00", { selector: ".sr-only" })).toBeInTheDocument();
@@ -21,7 +22,7 @@ it("uses current TCG fields and seven-day summaries, not historical percentages 
 });
 it("never labels an eBay quote as the TCG market price", () => {
   render(<PriceDashboard pricing={{ card_id: "card", provider_states: [], observations: [{ ...observation, provider: "ebay" }], tcg_market_prices: [] }} />);
-  const tcg = screen.getByText("TCG Market Price").closest('.rounded-2xl') as HTMLElement;
+  const tcg = screen.getByText("Market Price").closest('.rounded-2xl') as HTMLElement;
   expect(tcg).toHaveTextContent("—");
   expect(tcg).not.toHaveTextContent("$100");
 });
@@ -33,9 +34,9 @@ it.each([undefined, []])("falls back to the newest raw TCG graph quote when snap
     { ...observation, provider: "ebay", price: 500, observed_at: "2026-10-16" },
     { ...observation, variant_id: "graded", grading_company: "PSA", grade: 10, price: 900, observed_at: "2026-10-16" },
   ] }} />);
-  const tcg = screen.getByText("TCG Market Price").closest('.rounded-2xl') as HTMLElement;
+  const tcg = screen.getByText("Market Price").closest('.rounded-2xl') as HTMLElement;
   expect(within(tcg).getByText("$120.00", { selector: ".sr-only" })).toBeInTheDocument();
-  expect(tcg).toHaveTextContent("Latest recorded TCGAPI price");
+  expect(tcg).toHaveTextContent("Legacy recorded price");
   expect(tcg).not.toHaveTextContent("7d:");
   expect(tcg).not.toHaveTextContent("30d:");
 });
@@ -66,7 +67,7 @@ it("prefers PPT market and seven-day PSA medians while retaining dated legacy qu
   render(<PriceDashboard pricing={{ card_id: "card", provider_states: [], observations: [observation], ppt_mapped: true,
     provider_quotes: [quote, { ...quote, primary: false, grade: "psa10", metric: "median_7d", price: 500 }],
   }} />);
-  const market = screen.getByText("TCG Market Price").closest('.rounded-2xl') as HTMLElement;
+  const market = screen.getByText("Market Price").closest('.rounded-2xl') as HTMLElement;
   expect(within(market).getByText("$140.00", { selector: ".sr-only" })).toBeInTheDocument();
   expect(market).toHaveTextContent("Lightly Played");
   expect(market).toHaveTextContent("7d: +10.0%");

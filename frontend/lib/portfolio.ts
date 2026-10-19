@@ -72,28 +72,19 @@ export async function fetchPortfolioDataWithFallback(
     let p7: number | null = null;
     let p30: number | null = null;
 
-    // Check pricing observations
-    if (pricing && Array.isArray(pricing.observations)) {
-      const tcgObs = pricing.observations.filter(
-        (o) => o.provider === "tcgapi" && !o.grading_company
-      );
-      if (tcgObs.length > 0) {
-        const latest = tcgObs[tcgObs.length - 1];
-        if (latest.price) marketPrice = latest.price;
-        p24 = latest.price_change_24h ?? null;
-        p7 = latest.price_change_7d ?? null;
-        p30 = latest.price_change_30d ?? null;
-      }
-
-      // Collect points
-      const points = tcgObs
-        .filter((o) => o.observed_at && o.price)
-        .map((o) => ({
-          date: o.observed_at.slice(0, 10),
-          price: o.price,
-        }));
-      cardHistories.push({ cardId: id, points });
+    const quote = (pricing?.market_quotes ?? pricing?.provider_quotes ?? []).find(q => q.primary && !q.grade);
+    if (quote) {
+      marketPrice = quote.price;
+      p24 = quote.stale ? null : quote.price_change_24h ?? null;
+      p7 = quote.stale ? null : quote.price_change_7d ?? null;
+      p30 = quote.stale ? null : quote.price_change_30d ?? null;
     }
+    const series = (pricing?.market_history_series ?? []).filter(s => !s.grade && s.metric === "market" &&
+      (!quote || (s.printing === quote.printing && [quote.condition, null, "Unknown"].includes(s.condition))));
+    const selected = quote ? series : [...series].sort((a, b) => (b.points.at(-1)?.date ?? "").localeCompare(a.points.at(-1)?.date ?? "")).slice(0, 1);
+    const points = new Map<string, number>();
+    for (const s of selected) for (const point of s.points) if (point.price !== null) points.set(point.date, point.price);
+    cardHistories.push({ cardId: id, points: [...points].map(([date, price]) => ({ date, price })) });
 
     cards.push({
       id: detail.id,
@@ -106,6 +97,9 @@ export async function fetchPortfolioDataWithFallback(
       image_url: detail.image_url,
       market_price: marketPrice > 0 ? marketPrice : null,
       market_currency: "USD",
+      price_status: quote ? (quote.stale ? "stale" : "recent") : marketPrice > 0 ? "legacy" : "unavailable",
+      price_date: quote?.price_date ?? null,
+      market_source: quote?.provider ?? detail.market_source,
       price_change_24h: p24,
       price_change_7d: p7,
       price_change_30d: p30,
@@ -128,8 +122,8 @@ export async function fetchPortfolioDataWithFallback(
   const history: PortfolioHistoryPoint[] = [];
 
   if (sortedDates.length > 0) {
-    const runningPrices: Record<string, number> = {};
     for (const d of sortedDates) {
+      const runningPrices: Record<string, number> = {};
       for (const ch of cardHistories) {
         const matchingPt = ch.points.find((p) => p.date === d);
         if (matchingPt) {
@@ -145,24 +139,15 @@ export async function fetchPortfolioDataWithFallback(
     }
   }
 
-  const todayIso = new Date().toISOString().slice(0, 10);
-  if (history.length === 0 || history[history.length - 1].date !== todayIso) {
-    history.push({
-      date: todayIso,
-      total_value: Math.round(totalVal * 100) / 100,
-      card_count: cards.length,
-    });
-  }
-
   return {
     total_cards: cards.length,
     total_current_value: Math.round(totalVal * 100) / 100,
     currency: "USD",
-    delta_24h_amount: cards.reduce((s, c) => s + (c.price_change_24h ?? 0), 0) || null,
+    delta_24h_amount: null,
     delta_24h_percent: null,
-    delta_7d_amount: cards.reduce((s, c) => s + (c.price_change_7d ?? 0), 0) || null,
+    delta_7d_amount: null,
     delta_7d_percent: null,
-    delta_30d_amount: cards.reduce((s, c) => s + (c.price_change_30d ?? 0), 0) || null,
+    delta_30d_amount: null,
     delta_30d_percent: null,
     highest_value_card: cards[0] ?? null,
     cards,

@@ -1,3 +1,4 @@
+from app.services.price_sources import market_observation
 """Durable weekly coverage and bounded passive pricing; no catalog schema changes."""
 import json
 import logging
@@ -19,7 +20,7 @@ STATE = "cardboarddex:passive:v2"
 WEEK = 7 * 86400
 RETRY_DELAY = 3600
 MAX_RETRIES = 1000
-PROVIDERS = ("tcgapi", "ebay")
+PROVIDERS = ("ebay",)
 LOCK = f"{PREFIX}:batch"
 RELEASE = "if redis.call('get',KEYS[1]) == ARGV[1] then return redis.call('del',KEYS[1]) else return 0 end"
 SAVE = """
@@ -70,8 +71,8 @@ def percentiles(values: dict) -> dict[str, float]:
 
 
 def eligible_cards():
-    explicit_type = func.coalesce(ProviderCardState.payload["card"]["product_type"].as_string(),
-                                  ProviderCardState.payload["card"]["data"]["product_type"].as_string())
+    from app.services.product_metadata import product_type_expression
+    explicit_type = product_type_expression()
     return (select(Card.id).outerjoin(ProviderCardState, and_(
         ProviderCardState.card_id == Card.id, ProviderCardState.provider == "tcgapi"))
         .where(Card.name.not_ilike("%code card%"), Card.number.is_not(None),
@@ -84,7 +85,7 @@ def rank_priority(session, popularity, limit):
     latest = (select(PriceObservation.card_id, PriceObservation.price,
                      func.row_number().over(partition_by=PriceObservation.card_id,
                          order_by=(PriceObservation.observed_at.desc(), PriceObservation.id.desc())).label("rn"))
-              .where(PriceObservation.provider == "tcgapi", PriceObservation.currency == "USD",
+              .where(market_observation(), PriceObservation.currency == "USD",
                      PriceObservation.price > 0, PriceObservation.grading_company.is_(None),
                      PriceObservation.grade.is_(None)).subquery())
     eligible = eligible_cards().subquery()

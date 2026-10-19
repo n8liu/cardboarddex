@@ -11,12 +11,10 @@ def test_env_file_is_resolved_from_project_root() -> None:
 
 def test_tcgapi_defaults_are_server_side_and_bounded() -> None:
     settings = Settings(_env_file=None)
-    assert settings.tcgapi_base_url == "https://api.tcgapi.dev/v1"
-    assert settings.tcgapi_daily_request_limit == 2000
-    assert settings.tcgapi_sync_set_limit == 250
+    assert settings.ppt_daily_credit_limit == 20000
+    assert settings.ppt_minute_weight_limit == 55
     assert settings.ebay_daily_request_limit == 500
     assert settings.price_collection_card_limit == 8
-    assert settings.tcgapi_scheduled_request_limit == 1500
     assert settings.ebay_scheduled_request_limit == 450
     assert settings.passive_priority_card_count == 1500
 

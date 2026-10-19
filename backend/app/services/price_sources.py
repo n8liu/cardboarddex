@@ -32,8 +32,7 @@ def market_observation():
         .join(PPTCurrentQuote, PPTCurrentQuote.fingerprint == other.fingerprint)
         .where(other.provider == PROVIDER,
                other.payload["primary"].as_boolean().is_(True),
-               other.grading_company.is_(None), other.card_id.is_not(None),
-               PPTCurrentQuote.price_date >= datetime.now(UTC).date() - timedelta(days=7))
+               other.grading_company.is_(None), other.card_id.is_not(None))
         .correlate(None).cte())
     return or_(
         and_(PriceObservation.provider == PROVIDER,

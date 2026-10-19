@@ -17,7 +17,7 @@ export default function LiveUpdatesLoading() {
               Live Updated Items &amp; Comps
             </h1>
             <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-600">
-              Streaming feed of verified market comps, eBay sold listings, graded slab submissions, and TCG API price syncs in real-time chronological order.
+              Streaming feed of market updates, matched eBay asking listings, graded aggregates, and PPT market updates in real-time chronological order.
             </p>
           </div>
 
@@ -52,7 +52,7 @@ export default function LiveUpdatesLoading() {
         <div className="mb-6">
           <SectionLoadingBar
             label="Connecting to Live Comps Stream..."
-            detail="Ingesting streaming eBay sold listings, graded slab transactions, and TCG API price syncs"
+            detail="Ingesting matched eBay asking listings, graded aggregates, and PPT market updates"
           />
         </div>
 

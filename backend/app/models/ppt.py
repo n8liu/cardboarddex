@@ -47,3 +47,14 @@ class PPTCurrentQuote(Base):
     fingerprint: Mapped[str] = mapped_column(String(64), primary_key=True)
     product_id: Mapped[str] = mapped_column(ForeignKey("ppt_products.id"), nullable=False, index=True)
     price_date: Mapped[date] = mapped_column(Date, nullable=False)
+
+
+class MarketHistoryTransition(Base):
+    """Immutable display boundary; original provider rows remain untouched."""
+    __tablename__ = "market_history_transitions"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    card_id: Mapped[str] = mapped_column(ForeignKey("cards.id"), index=True)
+    product_id: Mapped[str] = mapped_column(ForeignKey("ppt_products.id"))
+    dimensions: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    cutover_date: Mapped[date] = mapped_column(Date, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

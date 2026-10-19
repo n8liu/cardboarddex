@@ -11,6 +11,9 @@ export interface StoredBinder {
 }
 
 export interface PortfolioCardItem {
+  price_status?: "recent" | "stale" | "legacy" | "unavailable";
+  price_date?: string | null;
+  market_source?: string | null;
   id: string;
   name: string;
   set_name: string;

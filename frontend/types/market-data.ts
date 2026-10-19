@@ -36,7 +36,7 @@ export interface GradedSalesActivity {
   products_with_sales_data: number;
   items: {
     card_id: string; name: string; set_name: string; image_url: string | null;
-    sales: number; last_sale_date: string | null; synced_at: string; stale: boolean;
+    sales: number; last_sale_date: string | null; synced_at: string | null; stale: boolean;
     grades: { grade: string; sales: number; last_sale_date: string | null }[];
   }[];
 }

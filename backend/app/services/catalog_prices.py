@@ -6,7 +6,7 @@ from sqlalchemy import Date, and_, case, delete, func, insert, literal, or_, sel
 from sqlalchemy.orm import aliased
 from app.models import Card, CatalogPriceCandidate as C, CatalogPriceProjectionState as State, PPTCurrentQuote, PriceObservation as O
 
-VERSION = 1
+VERSION = 2
 BATCH_SIZE = 250
 
 
@@ -60,7 +60,7 @@ def candidate_join(*, broad=False, as_of=None, dialect=None):
     day = as_of or datetime.now(UTC).date()
     eligible = C.provider == "tcgapi"
     if primary:
-        eligible = or_(eligible, and_(C.provider == "pokemonpricetracker", C.ppt_price_date >= day - timedelta(days=7)))
+        eligible = or_(eligible, C.provider == "pokemonpricetracker")
     order = (case((C.provider == "pokemonpricetracker", 0), else_=1),
              C.provider_updated_at.desc().nullslast(), C.observed_at.desc(), C.observation_id.desc())
     if not primary:
@@ -71,7 +71,7 @@ def candidate_join(*, broad=False, as_of=None, dialect=None):
         # snapshot, then exclude TCG for those cards; never rank all legacy rows.
         ppt_ranked = select(C.card_id, C.observation_id.label("id"), C.price, C.currency, C.provider_updated_at,
             func.row_number().over(partition_by=C.card_id, order_by=order[1:]).label("position")
-        ).where(C.provider == "pokemonpricetracker", C.ppt_price_date >= day - timedelta(days=7)).subquery()
+        ).where(C.provider == "pokemonpricetracker").subquery()
         ppt = select(ppt_ranked.c.card_id, ppt_ranked.c.id, ppt_ranked.c.price,
                      ppt_ranked.c.currency, ppt_ranked.c.provider_updated_at).where(ppt_ranked.c.position == 1).cte()
         legacy = select(C.card_id, C.observation_id.label("id"), C.price, C.currency, C.provider_updated_at).where(

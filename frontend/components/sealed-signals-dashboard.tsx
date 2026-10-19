@@ -16,14 +16,14 @@ import type { GameLanguage, SealedProductType, SealedSignalItem, SealedSignalsRe
 type Layout = "cards" | "table";
 type View = "split" | "newer" | "older";
 const readView = (value: string | null): View => value === "newer" || value === "older" ? value : "split";
-const toggleClass = "min-h-9 rounded-lg px-3 text-xs font-bold text-slate-600 transition hover:bg-slate-200 focus-visible:outline-slate-900 aria-pressed:bg-white aria-pressed:text-slate-950 aria-pressed:shadow-xs";
+const toggleClass = "rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:text-slate-900 focus-visible:outline-slate-900 aria-pressed:bg-white aria-pressed:font-bold aria-pressed:text-slate-950 aria-pressed:shadow-xs";
 type Era = "newer" | "older";
 type Filters = { game: GameLanguage; period: 30 | 90; query: string; productType: SealedProductType; signal: SealedSignalType; sortBy: SealedSortOption };
 const languages = { all: "All", pokemon: "English", "pokemon-japan": "Japanese" };
 const products = { all: "All products", booster_box: "Booster boxes", etb: "Elite Trainer Boxes", bundle: "Booster bundles", case: "Cases", pack: "Booster packs", blister: "Blisters", collection: "Collections & tins" };
 const signals = { all: "All signals", strong_buy: "Strong buy", buy: "Buy", hold: "Hold", underperform: "Underperform" };
 const sorts = { momentum_desc: "30-day growth", score_desc: "Signal score", price_asc: "Lowest price", price_desc: "Highest price", supply_asc: "Fewest listings", age_desc: "Oldest release" };
-const selectClass = "min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-800 transition hover:bg-slate-100 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10";
+const selectClass = "py-2 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-800 transition hover:bg-slate-100 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10";
 
 function ProductDetails({ item }: { item: SealedSignalItem }) {
   return (
@@ -34,7 +34,7 @@ function ProductDetails({ item }: { item: SealedSignalItem }) {
           {item.history?.coverage_start && <p>History: {item.history.coverage_start} – {item.history.coverage_end}</p>}
           <p className="mt-3 font-semibold text-slate-700">Estimate return on your purchase</p>
           <PurchaseReturn price={item.market_price} />
-          <p className="mt-2 text-[10px]">{item.market_source === "pokemonpricetracker" ? "Pokémon Price Tracker · " : "Legacy TCGAPI · "}{item.total_listings > 0 ? `${item.total_listings} active listings` : "Listing count unavailable"}{item.last_updated_at ? ` · Observed ${item.last_updated_at.slice(0, 10)}` : ""}</p>
+          <p className="mt-2 text-[10px]">{item.market_source === "pokemonpricetracker" ? "Pokémon Price Tracker · " : "Legacy market history · "}{item.total_listings > 0 ? `${item.total_listings} active listings` : "Listing count unavailable"}{item.last_updated_at ? ` · Observed ${item.last_updated_at.slice(0, 10)}` : ""}</p>
         </div>
   );
 }
@@ -262,25 +262,25 @@ export function SealedSignalsDashboard({ initialData }: { initialData: Record<Er
       <SealedResults filters={filters} initialData={defaults ? initialData : { newer: null, older: null }} layout={layout} view={view}>
       <div className="mb-4 rounded-2xl border border-slate-200/90 bg-white p-3.5 shadow-2xs">
         <div className="mb-3 flex flex-wrap items-center gap-3">
-          <div role="group" aria-label="Era view" className="flex flex-wrap gap-1 rounded-xl bg-slate-100 p-1">{([["split", "Split View"], ["newer", "Newer"], ["older", "Older"]] as const).map(([value, label]) => <button key={value} type="button" className={toggleClass} aria-pressed={view === value} onClick={() => setView(value)}>{label}</button>)}</div>
-          <div role="group" aria-label="Result layout" className="flex gap-1 rounded-xl bg-slate-100 p-1">{(["cards", "table"] as const).map((value) => <button key={value} type="button" className={toggleClass} aria-pressed={layout === value} onClick={() => setLayout(value)}>{value === "cards" ? "Cards" : "Table"}</button>)}</div>
+          <div role="group" aria-label="Era view" className="flex flex-wrap items-center gap-1 rounded-xl bg-slate-100 p-1">{([["split", "Split View"], ["newer", "Newer"], ["older", "Older"]] as const).map(([value, label]) => <button key={value} type="button" className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition focus-visible:outline-slate-900 ${view === value ? value === "newer" ? "bg-emerald-600 text-white shadow-sm" : value === "older" ? "bg-rose-600 text-white shadow-sm" : "bg-white text-slate-950 shadow-sm" : value === "newer" ? "text-emerald-700 hover:bg-emerald-50" : value === "older" ? "text-rose-700 hover:bg-rose-50" : "text-slate-600 hover:text-slate-900"}`} aria-pressed={view === value} onClick={() => setView(value)}>{label}</button>)}</div>
+          <div role="group" aria-label="Result layout" className="flex items-center rounded-xl bg-slate-100 p-1">{(["cards", "table"] as const).map((value) => <button key={value} type="button" className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition focus-visible:outline-slate-900 ${layout === value ? "bg-white text-slate-950 shadow-xs font-bold" : "text-slate-600 hover:text-slate-900"}`} aria-pressed={layout === value} onClick={() => setLayout(value)}><span aria-hidden="true">{value === "cards" ? "⊞" : "☰"}</span><span>{value === "cards" ? "Cards" : "Table"}</span></button>)}</div>
         </div>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <div className="min-w-0 flex-1"><label htmlFor="sealed-search" className="sr-only">Search sealed products</label><SearchInput id="sealed-search" value={query} onChange={setQuery} placeholder="Search products or sets…" inputClassName="min-h-10" /></div>
+          <div className="min-w-0 flex-1"><label htmlFor="sealed-search" className="sr-only">Search sealed products</label><SearchInput id="sealed-search" value={query} onChange={setQuery} placeholder="Search products or sets…" /></div>
           <div className="sm:w-48"><label htmlFor="sealed-type" className="sr-only">Product type</label><select id="sealed-type" className={selectClass} value={productType} onChange={(e) => setProductType(e.target.value as SealedProductType)}>{Object.entries(products).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>
-          <button type="button" aria-expanded={expanded} aria-controls="sealed-more-filters" onClick={() => setExpanded(!expanded)} className="min-h-10 shrink-0 rounded-lg border border-slate-200 bg-white px-4 text-xs font-bold text-slate-700 transition hover:bg-slate-100 focus-visible:outline-slate-900 aria-expanded:border-slate-900 aria-expanded:bg-slate-900 aria-expanded:text-white">Filters & sort{signal !== "all" || sortBy !== "momentum_desc" ? " •" : ""} <span aria-hidden="true">{expanded ? "−" : "+"}</span></button>
+          <button type="button" aria-expanded={expanded} aria-controls="sealed-more-filters" onClick={() => setExpanded(!expanded)} className="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100 focus-visible:outline-slate-900 aria-expanded:border-slate-900 aria-expanded:bg-slate-900 aria-expanded:text-white">Filters & sort{signal !== "all" || sortBy !== "momentum_desc" ? " •" : ""} <span aria-hidden="true">{expanded ? "−" : "+"}</span></button>
         </div>
         <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3">
           <div role="group" aria-label="Product language" className="flex flex-wrap items-center gap-2">
             <span className="text-[11px] font-semibold text-slate-500">Language</span>
-            <div className="inline-flex gap-1 rounded-lg bg-slate-100 p-1">
-              {(Object.entries(languages) as [GameLanguage, string][]).map(([value, label]) => <button key={value} type="button" aria-pressed={game === value} onClick={() => setGame(value)} className="min-h-9 rounded-lg px-3 text-xs font-bold text-slate-600 transition hover:bg-slate-200 focus-visible:outline-slate-900 aria-pressed:bg-white aria-pressed:text-slate-950 aria-pressed:shadow-xs">{label}</button>)}
+            <div className="inline-flex items-center gap-1 rounded-xl bg-slate-100 p-1">
+              {(Object.entries(languages) as [GameLanguage, string][]).map(([value, label]) => <button key={value} type="button" aria-pressed={game === value} onClick={() => setGame(value)} className={`rounded-lg px-3 py-1.5 text-xs font-bold transition focus-visible:outline-slate-900 ${game === value ? value === "pokemon-japan" ? "bg-white text-red-950 shadow-xs font-black" : "bg-white text-slate-950 shadow-xs" : "text-slate-600 hover:text-slate-900"}`}>{label}</button>)}
             </div>
           </div>
           <div role="group" aria-label="Comparison period" className="flex flex-wrap items-center gap-2">
             <span className="text-[11px] font-semibold text-slate-500">Comparison period</span>
-            <div className="inline-flex gap-1 rounded-lg bg-slate-100 p-1">
-              {([30, 90] as const).map((days) => <button key={days} type="button" aria-pressed={period === days} onClick={() => setPeriod(days)} className="min-h-9 rounded-lg px-3 text-xs font-bold text-slate-600 transition hover:bg-slate-200 focus-visible:outline-slate-900 aria-pressed:bg-white aria-pressed:text-slate-950 aria-pressed:shadow-xs">{days} days</button>)}
+            <div className="inline-flex items-center gap-1 rounded-xl bg-slate-100 p-1">
+              {([30, 90] as const).map((days) => <button key={days} type="button" aria-pressed={period === days} onClick={() => setPeriod(days)} className={toggleClass}>{days} days</button>)}
             </div>
           </div>
           <span className="text-[10px] text-slate-400">USD market prices · Source shown per product</span>

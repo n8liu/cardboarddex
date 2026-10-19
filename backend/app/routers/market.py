@@ -37,7 +37,7 @@ from app.schemas.cards import (
 )
 from app.services.grading_service import calculate_grading_profit
 from app.services.sealed_service import calculate_sealed_signals
-from app.tcgapi import TCGAPIClient
+from app.services.image_download import ImageClient
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +47,8 @@ ALLOWED_MARKETPLACE_DOMAINS = {"ebay.com", "tcgplayer.com"}
 
 
 @lru_cache
-def get_tcgapi_client() -> TCGAPIClient:
-    return TCGAPIClient(acquire_request=lambda: None)
+def get_image_client() -> ImageClient:
+    return ImageClient()
 
 
 def _extract_listing_url(item: PriceObservation) -> str | None:

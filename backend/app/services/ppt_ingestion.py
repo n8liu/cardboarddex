@@ -72,7 +72,7 @@ def normalize(payload, language, kind, today=None):
             if not d or d > today or d < today - timedelta(days=180):
                 continue
             count = row.get("volume", row.get("count"))
-            if count is not None and (not isinstance(count, int) or count < 0):
+            if count is not None and (type(count) is not int or count < 0):
                 raise ValueError("Invalid PPT sales count")
             points[d.isoformat()] = {"price": price(row.get(key)), "sales_count": count}
         if points:
@@ -129,7 +129,7 @@ def normalize(payload, language, kind, today=None):
     return quotes, series
 
 
-def map_product(db, payload, language, kind, set_metadata=None):
+def _map_product(db, payload, language, kind, set_metadata=None):
     db.flush()  # Make earlier page mappings visible even with autoflush disabled.
     provider_id = str(payload.get("tcgPlayerId") or "")
     if not provider_id or len(provider_id) > 128 or not payload.get("name") or not payload.get("setName"):
@@ -217,6 +217,8 @@ def ingest(db, product, payload, now=None):
         refresh_candidates(db, [product.card_id])
         return
     quotes, series = normalize(payload, language, kind, now.date())
+    if not any(not q.get("grade") for q in quotes):
+        quotes.extend(dict(q, historical_only=True) for q in product.quotes if not q.get("grade"))
     if "ebay" not in payload:
         quotes.extend(q for q in product.quotes if q.get("grade") and q["price_date"] >= (now.date() - timedelta(days=7)).isoformat())
     for series_item in series:
@@ -256,10 +258,20 @@ def ingest(db, product, payload, now=None):
     product.primary_price = next((q["price"] for q in quotes if q.get("primary") and not q.get("grade")), None)
     # Bound current snapshot: historical arrays already live in monthly chunks.
     product.metadata_payload = {k: v for k, v in payload.items() if k not in {"priceHistory", "ebay"}}
-    if payload.get("ebay"):
-        product.metadata_payload["ebay"] = {k: v for k, v in payload["ebay"].items() if k not in {"priceHistory", "soldListings"}}
+    if "ebay" in payload:
+        product.metadata_payload["ebay"] = {k: v for k, v in (payload.get("ebay") or {}).items() if k not in {"priceHistory", "soldListings"}}
+        product.metadata_payload["graded_synced_at"] = now.isoformat()
+    elif "ebay" in prior:
+        product.metadata_payload["ebay"] = prior["ebay"]
+        # No timestamp is guessed for snapshots collected before separate freshness tracking.
+        product.metadata_payload["graded_synced_at"] = prior.get("graded_synced_at")
     product.last_success_at, product.retry_at, product.failures = now, None, 0
+    from app.config import get_settings
+    if get_settings().ppt_primary_enabled:
+        from app.services.market_history import establish_transitions
+        establish_transitions(db, product, now)
     refresh_candidates(db, [product.card_id])
+
 
 
 def index_legacy_identities(db, limit=500):
@@ -291,3 +303,15 @@ def index_legacy_identities(db, limit=500):
             entry.payload = {"card_ids": sorted(set(entry.payload["card_ids"] + [cid]))}
     state.payload = {"after": rows[-1][0] if rows else state.payload["after"], "complete": len(rows) < limit}
     return state.payload["complete"]
+
+
+def map_product(db, payload, language, kind, set_metadata=None):
+    product = _map_product(db, payload, language, kind, set_metadata)
+    if product.status == "matched" and product.card_id and set_metadata:
+        card = db.get(Card, product.card_id)
+        card_set = db.get(Set, card.set_id)
+        if card_set.release_date is None and set_metadata.get("releaseDate"):
+            card_set.release_date = day(set_metadata["releaseDate"])
+        if card_set.series is None and language == "english" and set_metadata.get("series"):
+            card_set.series = set_metadata["series"]
+    return product

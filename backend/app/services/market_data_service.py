@@ -6,7 +6,7 @@ from decimal import Decimal, InvalidOperation
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 from app.models import Card, Set, PriceObservation, ProviderCardState, MarketHistory, CatalogSnapshot
-from app.tcgapi.client import parse_release_date
+from app.common.catalog_identity import parse_release_date
 
 logger = logging.getLogger(__name__)
 
@@ -167,11 +167,16 @@ def sales_activity(db: Session, days=30, q=""):
     status = "ready" if totals[0] is not None else "no_matches" if q.strip() and has_history else "no_sales" if has_history else "not_synced"
     return {"days": days, "start": start, "end": today, "synced_at": synced, "status": status,
         "total_sales": int(totals[0]) if totals[0] is not None else None, "products_with_sales_data": totals[1],
-        "items": [dict(row) for row in rows], "source": "TCG API reported sales",
-        "coverage": "Synced products only. Missing sales are unknown; the newest 1–3 days may be incomplete."}
+        "items": [dict(row) for row in rows], "source": "Archived legacy reported sales",
+        "coverage": "Archived reported sales across previously synced products. Collection is retired; missing days are unknown."}
 
 
 def catalog_coverage(db: Session):
+    from app.services.product_metadata import ppt_catalog_coverage
+    return ppt_catalog_coverage(db)
+
+
+def legacy_catalog_coverage(db: Session):
     counts = dict(db.execute(select(Card.set_id, func.count()).group_by(Card.set_id)).all())
     local_sets = set(db.scalars(select(Set.id)))
     games = []

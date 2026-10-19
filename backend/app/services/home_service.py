@@ -36,10 +36,8 @@ def build_home_overview(db: Session) -> HomeOverview:
         market_observation(), PriceObservation.currency == 'USD',
         PriceObservation.observed_at <= now, PriceObservation.grading_company.is_(None),
     ).subquery()
-    product_type = func.coalesce(
-        ProviderCardState.payload['card']['product_type'].as_string(),
-        ProviderCardState.payload['card']['data']['product_type'].as_string(),
-    )
+    from app.services.product_metadata import product_type_expression
+    product_type = product_type_expression()
     query = select(
         Card.id, Card.name, Card.rarity, Set.name.label('set_name'),
         Set.release_date, product_type.label('product_type'),

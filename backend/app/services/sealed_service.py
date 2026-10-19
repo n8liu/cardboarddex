@@ -82,7 +82,7 @@ def calculate_sealed_signals(
 ) -> SealedSignalsResponse:
     """Calculate multi-factor sealed market investment signals and scores."""
     now = time.time()
-    cache_key_raw = f"v5:{game}:{period}:{era}:{signal}:{product_type}:{sort_by}:{set_id}:{q.strip().lower()}:{page}:{per_page}"
+    cache_key_raw = f"v6:{game}:{period}:{era}:{signal}:{product_type}:{sort_by}:{set_id}:{q.strip().lower()}:{page}:{per_page}"
     cache_hash = hashlib.md5(cache_key_raw.encode()).hexdigest()
     source_key = "ppt" if get_settings().ppt_primary_enabled else "legacy"
     redis_key = f"cardboarddex:{source_key}:sealed_signals:{cache_hash}"
@@ -104,10 +104,8 @@ def calculate_sealed_signals(
         return local_cached[1]
 
     # Explicit provider metadata takes precedence over the legacy rarity fallback.
-    explicit_type = func.coalesce(
-        ProviderCardState.payload["card"]["product_type"].as_string(),
-        ProviderCardState.payload["card"]["data"]["product_type"].as_string(),
-    )
+    from app.services.product_metadata import product_type_expression
+    explicit_type = product_type_expression()
     query = (
         select(Card, Set)
         .join(Set, Card.set_id == Set.id)

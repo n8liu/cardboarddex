@@ -32,7 +32,7 @@ from app.services.catalog_service import (
     match_to_pokemon,
 )
 from app.services.trending_service import record_action
-from app.tcgapi import TCGAPIClient
+from app.services.image_download import ImageClient
 
 # Re-exports for test and backward compatibility
 from app.routers.catalog import (  # noqa: F401
@@ -44,7 +44,7 @@ from app.routers.catalog import (  # noqa: F401
 from app.services.catalog_service import get_set_statistics  # noqa: F401
 from app.routers.analytics import verify_admin_token, ADMIN_TOKEN_HEADER  # noqa: F401
 from app.routers.market import (  # noqa: F401
-    get_tcgapi_client,
+    get_image_client,
     _MOVERS_LOCAL_FALLBACK,
     _build_mover_item,
 )
@@ -364,7 +364,7 @@ _PLACEHOLDER_SVG = (
 def get_card_image(
     card_id: str,
     db: Session = Depends(get_db),
-    client: TCGAPIClient = Depends(get_tcgapi_client),
+    client: ImageClient = Depends(get_image_client),
 ) -> Response:
     # 1. Path traversal and injection protection
     if not RE_SAFE_CARD_ID.match(card_id) or len(card_id) > 64:
@@ -400,7 +400,8 @@ def get_card_image(
         )
 
     card = db.get(Card, card_id)
-    source_url = card.image_url if card is not None else None
+    from app.services.image_download import source_for_card
+    source_url = source_for_card(db, card) if card is not None else None
     # Image downloads/uploads must not hold a scarce database connection.
     db.close()
     if not source_url:

@@ -77,7 +77,7 @@ def test_expiration_without_worker_and_empty_snapshot(db, monkeypatch):
         cols, rows, on = candidate_join(as_of=day)
         return db.scalar(select(cols.price).select_from(Card).outerjoin(rows, on).where(Card.id == "c"))
     assert price(datetime.now(UTC).date()) == 25
-    assert price(datetime.now(UTC).date() + timedelta(days=1)) == 10
+    assert price(datetime.now(UTC).date() + timedelta(days=1)) == 25  # Dated PPT remains visible
     db.execute(delete(Q))
     refresh_candidates(db, ["c"])
     assert price(datetime.now(UTC).date()) == 10
@@ -90,12 +90,12 @@ def test_backfill_resume_verification_and_rollback(db, monkeypatch):
     db.commit()
     monkeypatch.setattr(catalog_prices, "BATCH_SIZE", 1)
     assert backfill_batch(db) == 1
-    assert not db.get(State, 1).complete
+    assert not db.get(State, 2).complete
     with pytest.raises(RuntimeError): require_ready(db)
-    while not db.get(State, 1).complete: backfill_batch(db)
+    while not db.get(State, 2).complete: backfill_batch(db)
     assert verify_projection(db)["mismatched_cards"] == []
     with pytest.raises(RuntimeError): require_ready(db)
-    db.get(State, 1).verified_at = datetime.now(UTC)
+    db.get(State, 2).verified_at = datetime.now(UTC)
     db.commit()
     require_ready(db)
     observation(db, "new", price=20)

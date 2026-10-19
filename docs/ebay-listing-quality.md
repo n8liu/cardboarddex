@@ -7,7 +7,7 @@ This feature matches product identity. It does not authenticate a physical card 
 - Strict title matching requires the card name, number and set. Printed denominators, structured item specifics, language, raw/graded status, variations and auction offers can disqualify a candidate. Unknown condition/finish never silently becomes Near Mint or a known finish.
 - Raw singles require text and image matches. Graded and sealed products require strict text matching only in v1. A missing rarity does not make a product sealed.
 - Original observations and raw listing payloads remain stored. Assessments are keyed by target catalog metadata, listing identity content and matcher version. Price-only changes reuse checks; changed titles/images invalidate previous matches. Ingestion queues a new image check after seven days, and reference-feature caches rotate daily. New observations include the assessment fingerprint, including when identity changes without a price change.
-- The shared SQL rule runs before aggregates, ranking and pagination. It covers card pricing, Live Comps and shared homepage counts, grading comparisons, Trending and Pokémon observation-volume aggregates. TCGAPI remains independent.
+- The shared SQL rule runs before aggregates, ranking and pagination. It covers card pricing, Live Comps and shared homepage counts, grading comparisons, Trending and Pokémon observation-volume aggregates. PPT aggregates remain independent.
 - Card summaries use a seven-day window, USD, one latest observation per listing and the selected printing/condition. Average and median require three listings and two named sellers. Lowest requires one. Unknown sellers do not satisfy the seller threshold. Shipping is not added; these remain item asking prices.
 - Unconfirmed observations remain inspectable in the card profile, capped at 100 displayed listings with the full excluded count. Graphs and statistics omit them. Conditions/printings can be switched without a network request.
 
@@ -24,7 +24,7 @@ The default schedule checks one listing every three minutes. Monitor backlog bef
 Dependencies are declared in both backend dependency manifests; the backend Docker image installs Tesseract. For local development, install backend dependencies and the system `tesseract` command.
 
 1. Back up the database and deploy migration `0008_listing_assessments` **before** the application backend. It adds only the assessment table and indexes; Cards/Sets are unchanged. Validate in a disposable database first. Backend eligibility queries require this table.
-2. Deploy the backend, then frontend. The migration does not grandfather existing eBay observations: unchecked records immediately disappear from statistics. TCGAPI continues to populate its own price data. Versioned caches prevent old aggregates from being reused.
+2. Deploy the backend, then frontend. The migration does not grandfather existing eBay observations: unchecked records immediately disappear from statistics. PPT supplies independent provider market data when enabled. Versioned caches prevent old aggregates from being reused.
 3. Prepare historical observations using the stored payloads, newest first (therefore the past seven days first), in bounded batches. From `backend/`:
 
    ```sh
