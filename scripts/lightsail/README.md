@@ -34,7 +34,10 @@ sudo systemctl start cardboarddex-live-stats.service
 ```
 
 The service runs only while `/opt/cardboarddex/ingestion.paused` exists; normal
-Celery scheduling owns refreshes after ingestion resumes. Neither the service nor
+Celery scheduling owns refreshes after ingestion resumes. It also publishes the
+default Trending snapshot that `/cards/trending` serves; reinstall the script and
+units after upgrading from a copy that refreshed only Live Comps totals. Its start
+timeout stays below the release script's 120-second lock wait. Neither the service nor
 the script starts provider ingestion. Inspect `journalctl -u cardboarddex-live-stats.service`
 and the public stats endpoint to verify advancing `generated_at` timestamps.
 The timer follows `/opt/cardboarddex/current`; disable it before rolling back to

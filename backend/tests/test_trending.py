@@ -3,13 +3,14 @@
 Verifies:
 1. 3-column Trending Dashboard structure (Trending Cards, Popular Pokémon, Volume Leaders).
 2. All timeframes (24h, 7d, 30d, all_time, 2026_ytd).
-3. Real-time click tracking: immediate counter increment and cache invalidation.
+3. Click tracking: immediate in the local fallback; the worker snapshot picks clicks up on its next refresh.
 4. Dual attribution: clicking a Pokémon card increments both the card and the Pokémon.
 5. Zero-observation card inclusion: cards without price observations can still trend via user clicks.
 6. Search query filtering on trending cards and Pokémon.
 7. Ranking algorithm: active user velocity prioritizes items above passive catalog entries.
 8. View tracking via GET /cards/{card_id}.
 9. Payload validation on /cards/track-action.
+10. Worker-published snapshot: public reads never rebuild it.
 """
 
 from datetime import UTC, date, datetime, timedelta
@@ -417,3 +418,104 @@ def test_popular_pokemon_includes_clicked_species(client: TestClient) -> None:
     assert "644.png" in zekrom_entry["sprite_url"]
     assert zekrom_entry["clicks_count"] >= 1
 
+
+
+# ---------------------------------------------------------------------------
+# Worker-published snapshot
+# ---------------------------------------------------------------------------
+
+from contextlib import nullcontext
+from unittest.mock import Mock
+
+from fastapi import HTTPException
+
+from app.services import trending_service
+
+
+@pytest.fixture
+def seeded_db(client: TestClient) -> Generator[Session, None, None]:
+    override = app.dependency_overrides[get_db]
+    yield from override()
+
+
+def _published(db: Session, *, age_seconds: float = 0) -> str:
+    snapshot = trending_service.build_snapshot(db, datetime.now(UTC) - timedelta(seconds=age_seconds))
+    return snapshot.model_dump_json()
+
+
+def test_default_dashboard_serves_snapshot_without_database(seeded_db: Session, monkeypatch) -> None:
+    raw = _published(seeded_db)
+    monkeypatch.setattr(trending_service, "get_redis", lambda: Mock(get=Mock(return_value=raw)))
+    monkeypatch.setattr(trending_service, "card_image_url", lambda card_id: f"https://cdn.test/{card_id}")
+    db = Mock()
+    db.execute.side_effect = AssertionError("public reads must not query")
+
+    default = trending_service.get_trending_dashboard(db, timeframe="7d")
+    assert default.volume_pokemon and default.trending_cards
+    assert all(c.image_url == f"https://cdn.test/{c.card_id}" for c in default.trending_cards)
+
+    slim = trending_service.get_trending_dashboard(db, timeframe="30d", include_observation_volume=False)
+    assert slim.timeframe == "30d" and slim.volume_pokemon == [] and slim.total_volume_usd == 0
+    assert [c.card_id for c in slim.trending_cards] == [c.card_id for c in default.trending_cards]
+
+
+@pytest.mark.parametrize("raw", [None, "corrupt", "stale"])
+def test_missing_corrupt_or_stale_snapshot_returns_503_without_building(seeded_db: Session, monkeypatch, raw) -> None:
+    if raw == "stale":
+        raw = _published(seeded_db, age_seconds=trending_service.SNAPSHOT_MAX_SECONDS + 1)
+    monkeypatch.setattr(trending_service, "get_redis", lambda: Mock(get=Mock(return_value=raw)))
+    monkeypatch.setattr(trending_service, "dashboard_observation_snapshot", Mock(side_effect=AssertionError("must not build")))
+    with pytest.raises(HTTPException) as error:
+        trending_service.get_trending_dashboard(Mock(), timeframe="7d")
+    assert error.value.status_code == 503
+    assert error.value.headers["Retry-After"] == "60"
+
+
+def test_unreachable_redis_falls_back_to_bounded_compute(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setattr(trending_service, "get_redis", lambda: Mock(get=Mock(side_effect=ConnectionError("offline"))))
+    res = client.get("/cards/trending?timeframe=7d")
+    assert res.status_code == 200
+    assert res.json()["trending_cards"]
+
+
+def test_refresh_requires_lease_and_publishes_atomically(seeded_db: Session, monkeypatch) -> None:
+    redis = Mock(set=Mock(return_value=False))
+    monkeypatch.setattr(trending_service, "get_redis", lambda: redis)
+    sessions = Mock()
+    monkeypatch.setattr(trending_service, "SessionLocal", sessions)
+    assert trending_service.refresh_snapshot() is False
+    sessions.assert_not_called()
+    redis.eval.assert_not_called()
+
+    redis.set.return_value = True
+    sessions.side_effect = RuntimeError("database unavailable")
+    assert trending_service.refresh_snapshot() is False
+    assert redis.eval.call_count == 1  # release only; no overwrite
+    assert redis.eval.call_args.args[0] == trending_service._RELEASE
+
+    redis.reset_mock()
+    redis.eval.return_value = 1
+    monkeypatch.setattr(trending_service, "SessionLocal", lambda: nullcontext(seeded_db))
+    assert trending_service.refresh_snapshot() is True
+    publish = redis.eval.call_args_list[0].args
+    assert publish[0] == trending_service._PUBLISH
+    assert publish[3] == trending_service.snapshot_key()
+    assert publish[-1] == trending_service.SNAPSHOT_MAX_SECONDS
+    assert '"trending_cards"' in publish[-2]
+
+
+def test_snapshot_key_isolates_source_mode(monkeypatch) -> None:
+    from app.config import get_settings
+    monkeypatch.setattr(get_settings(), "ppt_primary_enabled", False)
+    legacy = trending_service.snapshot_key()
+    monkeypatch.setattr(get_settings(), "ppt_primary_enabled", True)
+    assert trending_service.snapshot_key() != legacy
+
+
+def test_clicks_never_scan_shared_redis(monkeypatch) -> None:
+    redis = Mock(zcard=Mock(return_value=0))
+    monkeypatch.setattr(trending_service, "get_redis", lambda: redis)
+    record_action("card", "pika-base", "click")
+    record_action("search", "pikachu", "search")
+    redis.scan_iter.assert_not_called()
+    redis.delete.assert_not_called()

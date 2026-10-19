@@ -4,14 +4,19 @@ from app.services.image_delivery import card_image_url, image_generation
 from app.common.cache import TTLCache
 import logging
 import re
+import time
+import uuid
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+from fastapi import HTTPException
 from redis.exceptions import RedisError
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 
 from app.common.redis import get_redis
+from app.common.response_cache import _PUBLISH, _RELEASE
+from app.database import SessionLocal
 from app.services.passive_refresh import record_card_interest
 from app.models import Card, PriceObservation, ProviderCardState, Set
 from app.schemas.cards import (
@@ -40,6 +45,14 @@ _IN_MEMORY_CARD_CLICKS: dict[str, int] = {}
 _IN_MEMORY_POKE_CLICKS: dict[str, int] = {}
 _IN_MEMORY_SEARCHES: dict[str, int] = {}
 _TRENDING_CACHE = TTLCache(max_entries=64, ttl=180)
+
+# Worker-published default dashboard. Public reads never rebuild it: a full
+# history aggregation cannot fit the API's 15-second budget on production data.
+SNAPSHOT_MAX_SECONDS = 1800
+SNAPSHOT_LEASE_SECONDS = 120
+SNAPSHOT_TIMEFRAME = "7d"
+# Worker-only bound; public SQL keeps its five-second deadline.
+SNAPSHOT_STATEMENT_TIMEOUT = "30000ms"
 
 
 def _safe_increment_in_memory(store: dict[str, int], key: str) -> None:
@@ -148,8 +161,9 @@ def record_action(
                     exc,
                 )
 
-    # Preserve immediate click/search ranking updates.
-    invalidate_trending_cache()
+    # Local fallback only; the shared snapshot picks up clicks on its next refresh.
+    # Never SCAN/delete shared Redis entries on every click.
+    _TRENDING_CACHE.clear()
 
 
 def _get_redis_scores(redis_key: str, fallback_dict: dict[str, int]) -> dict[str, int]:
@@ -450,6 +464,84 @@ def calculate_trending_pokemon(
     return items
 
 
+def snapshot_key() -> str:
+    # No image generation here: the worker does not mount the image manifest,
+    # so card image URLs are resolved by the API at read time instead.
+    source_key = "ppt" if get_settings().ppt_primary_enabled else "legacy"
+    return f"cardboarddex:{source_key}:trending-snapshot:v1"
+
+
+def build_snapshot(db: Session, now: datetime) -> TrendingDashboardResponse:
+    """One history aggregation shared by every default section."""
+    rows = dashboard_observation_snapshot(db, SNAPSHOT_TIMEFRAME, now)
+    volume = calculate_top_pokemon_volume(db, timeframe=SNAPSHOT_TIMEFRAME, sort_by="volume_desc", _snapshot=rows)
+    return TrendingDashboardResponse(
+        timeframe=SNAPSHOT_TIMEFRAME,
+        trending_cards=calculate_trending_cards(db, limit=50, _snapshot=rows),
+        trending_pokemon=calculate_trending_pokemon(db, limit=50, _snapshot=rows),
+        volume_pokemon=volume.items,
+        total_volume_usd=volume.total_volume_usd,
+        total_sales_count=volume.total_sales_count,
+        updated_at=now,
+    )
+
+
+def refresh_snapshot() -> bool:
+    started = time.monotonic()
+    redis = get_redis()
+    if redis is None:
+        logger.warning("Trending refresh unavailable: Redis client unavailable")
+        return False
+    key, token = snapshot_key(), uuid.uuid4().hex
+    acquired = False
+    try:
+        acquired = bool(redis.set(key + ":lock", token, nx=True, ex=SNAPSHOT_LEASE_SECONDS))
+        if not acquired:
+            return False
+        with SessionLocal() as db:
+            if db.get_bind().dialect.name == "postgresql":
+                db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"))
+                db.execute(text(f"SET LOCAL statement_timeout = '{SNAPSHOT_STATEMENT_TIMEOUT}'"))
+            snapshot = build_snapshot(db, datetime.now(UTC))
+        published = bool(redis.eval(_PUBLISH, 2, key + ":lock", key, token,
+                                    snapshot.model_dump_json(), SNAPSHOT_MAX_SECONDS))
+        logger.info("Trending refresh published=%s duration_ms=%.1f", published,
+                    (time.monotonic() - started) * 1000)
+        return published
+    except Exception as exc:
+        logger.exception("Trending refresh failed error=%s: %s", type(exc).__name__, exc)
+        return False
+    finally:
+        if acquired:
+            try:
+                redis.eval(_RELEASE, 1, key + ":lock", token)
+            except Exception as exc:
+                logger.warning("Trending lock release failed error=%s: %s", type(exc).__name__, exc)
+
+
+def read_snapshot(redis) -> TrendingDashboardResponse | None:
+    """Return the published dashboard; None only when Redis itself is unreachable."""
+    if redis is None:
+        return None
+    try:
+        raw = redis.get(snapshot_key())
+    except Exception as exc:
+        logger.warning("Trending snapshot read failed error=%s: %s", type(exc).__name__, exc)
+        return None
+    if raw:
+        try:
+            snapshot = TrendingDashboardResponse.model_validate_json(raw)
+            age = (datetime.now(UTC) - snapshot.updated_at).total_seconds()
+            if 0 <= age < SNAPSHOT_MAX_SECONDS:
+                return snapshot.model_copy(update={"trending_cards": [
+                    card.model_copy(update={"image_url": card_image_url(card.card_id)})
+                    for card in snapshot.trending_cards]})
+        except ValueError as exc:
+            logger.warning("Trending snapshot invalid error=%s: %s", type(exc).__name__, exc)
+    raise HTTPException(503, "Trending temporarily unavailable",
+                        headers={"Retry-After": "60", "Cache-Control": "no-store"})
+
+
 def get_trending_dashboard(
     db: Session,
     *,
@@ -457,6 +549,27 @@ def get_trending_dashboard(
     q: str | None = None,
     include_observation_volume: bool = True,
 ) -> TrendingDashboardResponse:
+    """Serve the worker snapshot by default; searches stay bounded and on demand."""
+    clean_q = (q or "").strip().lower()
+    r = get_redis()
+    if not clean_q:
+        # Card and Pokémon columns use all-time aggregates, so one snapshot serves
+        # every timeframe. Only the volume column depends on the window.
+        published = read_snapshot(r)
+        if published is not None:
+            if not include_observation_volume:
+                return published.model_copy(update={"timeframe": timeframe, "volume_pokemon": [],
+                                                    "total_volume_usd": 0, "total_sales_count": 0})
+            if timeframe == SNAPSHOT_TIMEFRAME:
+                return published
+            volume = calculate_top_pokemon_volume(db, timeframe=timeframe, sort_by="volume_desc")
+            return published.model_copy(update={"timeframe": timeframe, "volume_pokemon": volume.items,
+                "total_volume_usd": volume.total_volume_usd, "total_sales_count": volume.total_sales_count})
+        logger.warning("Trending serving on-demand fallback: Redis unavailable")
+    return _compute_dashboard(db, timeframe=timeframe, q=q, include_observation_volume=include_observation_volume, r=r)
+
+
+def _compute_dashboard(db, *, timeframe, q, include_observation_volume, r) -> TrendingDashboardResponse:
     """Calculate all three trending columns in a single unified payload with caching."""
     clean_q = (q or "").strip().lower()
     cache_key = f"{timeframe}:{clean_q}:observations={include_observation_volume}"
@@ -466,7 +579,6 @@ def get_trending_dashboard(
     now = datetime.now(UTC)
 
     # 1. Redis Cache
-    r = get_redis()
     if r is not None:
         try:
             cached = r.get(redis_key)
@@ -481,6 +593,8 @@ def get_trending_dashboard(
         if (now - cached_time).total_seconds() < TRENDING_CACHE_TTL:
             return cached_res
 
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(text("SET LOCAL statement_timeout = '5000ms'"))
     snapshot = dashboard_observation_snapshot(db, timeframe, now) if not clean_q else None
 
     # 3. Compute Column 1: Trending Cards

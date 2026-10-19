@@ -52,6 +52,10 @@ COMPOSE_PARALLEL_LIMIT=1 "${compose[@]}" pull
 [[ $(docker image inspect "$BACKEND_IMAGE" --format '{{.Architecture}}') == amd64 ]]
 "${compose[@]}" run --rm --no-deps backend python -m jobs.check_revision
 "${compose[@]}" up -d --wait --wait-timeout 180 postgres redis redis-cache backend
+# Seed the worker-published Trending snapshot in the worker's memory budget (never
+# docker exec in the API). Non-fatal: public smoke tests report a missing snapshot.
+"${compose[@]}" run --rm --no-deps -T celery-worker python -m jobs.refresh_trending </dev/null \
+  || echo 'Warning: Trending snapshot seed failed; /cards/trending returns 503 until a refresh succeeds' >&2
 if [[ "$ingestion_paused" == false ]]; then
   "${compose[@]}" run --rm --no-deps --user 0 celery-beat chown -R 1001:1001 /beat
   "${compose[@]}" up -d celery-worker

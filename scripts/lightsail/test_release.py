@@ -85,6 +85,10 @@ elif command == 'systemctl':
     stopped = next(i for i, call in enumerate(calls) if call[-4:] == ['stop', '-t', '3600', 'celery-worker'])
     pulled = next(i for i, call in enumerate(calls) if call[-1] == 'pull')
     assert stopped < pulled
+    if release_failure != 'pull':
+        # Trending is seeded in an isolated worker-budget container, never in the API.
+        seed = next(call for call in calls if call[-3:] == ['python', '-m', 'jobs.refresh_trending'])
+        assert 'run' in seed and 'celery-worker' in seed and 'exec' not in seed
     if paused:
         assert not any('up' in call and 'celery-worker' in call for call in calls)
         assert not any('up' in call and 'celery-beat' in call for call in calls)

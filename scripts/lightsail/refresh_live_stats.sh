@@ -17,4 +17,8 @@ trap 'exit 130' INT
 # Use the worker service's independent memory budget, not docker exec in the API.
 docker compose -p app --env-file "$APP_ENV_FILE" -f "$release/docker-compose.prod.yml" \
   run --rm --no-deps -T --name "$container" celery-worker \
-  python -c 'import logging; logging.basicConfig(level=logging.INFO); from app.services.live_stats import refresh_snapshot; raise SystemExit(0 if refresh_snapshot() else 1)' </dev/null
+  python -c 'import logging; logging.basicConfig(level=logging.INFO)
+from app.services import live_stats, trending_service
+# Refresh both even if one fails; report either failure.
+results = [live_stats.refresh_snapshot(), trending_service.refresh_snapshot()]
+raise SystemExit(0 if all(results) else 1)' </dev/null

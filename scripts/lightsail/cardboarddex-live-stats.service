@@ -1,5 +1,5 @@
 [Unit]
-Description=Refresh stored Live Comps totals while ingestion is paused
+Description=Refresh stored Live Comps totals and Trending while ingestion is paused
 After=docker.service
 Requires=docker.service
 ConditionPathExists=/opt/cardboarddex/ingestion.paused
@@ -7,6 +7,6 @@ ConditionPathExists=/opt/cardboarddex/ingestion.paused
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/cardboarddex-refresh-live-stats
-TimeoutStartSec=45
+TimeoutStartSec=110
 TimeoutStopSec=15
 KillMode=mixed

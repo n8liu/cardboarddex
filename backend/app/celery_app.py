@@ -9,7 +9,7 @@ celery_app = Celery(
     "cardboarddex",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["jobs.refresh_live_stats", "jobs.sync_catalog", "jobs.collect_prices", "jobs.collect_ebay_prices", "jobs.cycle_prices", "jobs.sync_market_data", "jobs.check_listing_images", "jobs.sync_ppt", "jobs.ppt_report"],
+    include=["jobs.refresh_live_stats", "jobs.refresh_trending", "jobs.sync_catalog", "jobs.collect_prices", "jobs.collect_ebay_prices", "jobs.cycle_prices", "jobs.sync_market_data", "jobs.check_listing_images", "jobs.sync_ppt", "jobs.ppt_report"],
 )
 
 celery_app.conf.update(
@@ -35,6 +35,11 @@ celery_app.conf.beat_schedule = {
         "task": "jobs.refresh_live_stats.refresh_live_stats",
         "schedule": 60.0,
         "options": {"expires": 55, "time_limit": 20},
+    },
+    "refresh-trending": {
+        "task": "jobs.refresh_trending.refresh_trending",
+        "schedule": 60.0,
+        "options": {"expires": 55, "time_limit": 110},
     },
     # Minute :15 and :45 -> eBay market comps
     "collect-ebay-prices-alternating": {
