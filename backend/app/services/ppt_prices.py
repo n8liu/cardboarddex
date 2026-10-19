@@ -1,9 +1,74 @@
 """Stored provider quotes and series for public API responses."""
 from datetime import UTC, datetime, timedelta
+from heapq import nsmallest
 from sqlalchemy import select
 from app.config import get_settings
 from app.models import PPTProduct, PPTHistory
 from app.services.ppt_ingestion import digest
+
+
+def graded_sales_activity(db, q=""):
+    """Rank stored graded snapshots; counts have no verified fixed time window."""
+    from sqlalchemy import or_
+    from app.common.formatters import escape_like
+    from app.models import Card, Set
+    from app.services.ppt_ingestion import day
+
+    result = {"status": "provider_disabled", "synced_at": None,
+        "coverage": "Provider-reported coverage; not a selected-period total. "
+                    "Graded sales reported by Pokémon Price Tracker across its sources. "
+                    "Missing counts are unknown. Rankings cover synced cards only.",
+        "products_with_sales_data": 0, "items": []}
+    if not get_settings().ppt_primary_enabled:
+        return result
+    query = select(PPTProduct.card_id, PPTProduct.metadata_payload["ebay"],
+                   PPTProduct.last_success_at, Card.name, Card.image_url, Set.name).join(
+        Card, Card.id == PPTProduct.card_id).join(Set, Set.id == Card.set_id).where(
+        PPTProduct.status == "matched", PPTProduct.segment.in_(["english:cards", "japanese:cards"]),
+        PPTProduct.last_success_at.is_not(None))
+    if q.strip():
+        pattern = f"%{escape_like(q.strip())}%"
+        query = query.where(or_(Card.name.ilike(pattern, escape="\\"), Set.name.ilike(pattern, escape="\\")))
+    # A card may have multiple mappings: use its newest snapshot, never sum duplicates.
+    query = query.order_by(PPTProduct.card_id, PPTProduct.last_success_at.desc(), PPTProduct.id)
+    now = datetime.now(UTC)
+    previous_card = None
+    rows = []
+    for card_id, ebay, synced_at, name, image_url, set_name in db.execute(query.execution_options(yield_per=50)):
+        if card_id == previous_card:
+            continue
+        previous_card = card_id
+        grades = ebay.get("salesByGrade") if isinstance(ebay, dict) else None
+        if not isinstance(grades, dict):
+            continue
+        breakdown = []
+        for grade, data in sorted(grades.items()):
+            count = data.get("count") if isinstance(data, dict) else None
+            if type(count) is not int or count < 0:
+                continue
+            try:
+                sold = day(data.get("lastSaleDate"))
+            except ValueError:
+                # day() logs the exact malformed provider value and error.
+                sold = None
+            breakdown.append({"grade": grade, "sales": count,
+                              "last_sale_date": sold.isoformat() if sold and sold <= now.date() else None})
+        if not breakdown:
+            continue
+        synced_at = synced_at.replace(tzinfo=UTC) if synced_at.tzinfo is None else synced_at
+        dates = [g["last_sale_date"] for g in breakdown if g["last_sale_date"]]
+        rows.append({"card_id": card_id, "name": name, "set_name": set_name, "image_url": image_url,
+                     "sales": sum(g["sales"] for g in breakdown), "grades": breakdown,
+                     "last_sale_date": max(dates, default=None), "synced_at": synced_at,
+                     "stale": synced_at < now - timedelta(days=7)})
+        result["products_with_sales_data"] += 1
+        result["synced_at"] = max(result["synced_at"] or synced_at, synced_at)
+        # Bound retained payloads even when ranking the whole synced catalog.
+        if len(rows) > 100:
+            rows = nsmallest(50, rows, key=lambda row: (-row["sales"], row["card_id"]))
+    result["items"] = nsmallest(50, rows, key=lambda row: (-row["sales"], row["card_id"]))
+    result["status"] = "ready" if rows else "no_matches" if q.strip() else "not_synced"
+    return result
 
 
 def pricing_data(db, card_id, days=180):

@@ -37,6 +37,7 @@ A full-stack Pokémon trading card price tracker and market analytics tool. It i
 - **Backend**: Python 3.11+, FastAPI, SQLAlchemy 2, Alembic, Celery
 - **Database & Cache**: PostgreSQL 16, Redis 7 (rate limiting + shared token caching)
 - **Data Sources**: [TCG API](https://tcgapi.dev) (Catalog & Pricing), eBay Browse API (Comps)
+- **Data Sources**: [Pokemon Price Tracker](pokemonpricetracker.com), (Catalog & Pricing), eBay Browse API (Comps), and PSA comps
 
 
 ### start

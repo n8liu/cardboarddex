@@ -345,3 +345,26 @@ def test_profile_seven_day_raw_usd_listing_sample(db):
     assert result.median_listing_price is None
     assert result.excluded_listing_count > 0
     assert result.tcg_market_prices == []
+
+
+def test_public_graded_sales_api(db, monkeypatch):
+    from app.config import get_settings
+    from app.models import PPTProduct
+    monkeypatch.setattr(get_settings(), 'ppt_primary_enabled', True)
+    db.add(PPTProduct(id='graded', provider_id='1', card_id='box', segment='english:cards', status='matched',
+        last_success_at=datetime.now(UTC), metadata_payload={'ebay': {'salesByGrade': {'psa10': {'count': 3}}}}))
+    db.commit()
+    app.dependency_overrides[get_db] = lambda: db
+    monkeypatch.setattr('app.main.check_rate_limit', AsyncMock(return_value=(True, 0)))
+    try:
+        with TestClient(app) as client:
+            response = client.get('/market/graded-sales-activity?q=Test')
+            assert response.status_code == 200, response.text
+            assert response.headers['cache-control'] == 'public, max-age=60'
+            result = response.json()
+            assert result['status'] == 'ready'
+            assert result['items'][0]['sales'] == 3
+            assert result['items'][0]['synced_at']
+            assert client.get('/market/graded-sales-activity?q=' + 'x' * 121).status_code == 422
+    finally:
+        app.dependency_overrides.clear()

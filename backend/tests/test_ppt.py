@@ -461,3 +461,58 @@ def test_live_counts_preserve_shadow_and_listing_exclusion(db, payload, now, mon
         assert result.total_tcg_updates == 1
         assert result.total_ebay_updates == 0
         assert result.graded_updates_count == expected_graded
+
+
+def test_graded_sales_snapshot_counts_and_search(db, payload, now):
+    from app.services.ppt_prices import graded_sales_activity
+    payload['ebay']['salesByGrade'].update({
+        'cgc9_5': {'count': 0}, 'psa9': {'count': 5, 'lastSaleDate': 'invalid'},
+        'missing': {}, 'negative': {'count': -1}, 'boolean': {'count': True},
+        'float': {'count': 2.5}, 'string': {'count': '3'}, 'bad': None,
+    })
+    # Invalid dates in unnormalized metadata must not break the public ranking.
+    payload['ebay']['salesByGrade']['psa9'].pop('lastSaleDate')
+    product = map_product(db, payload, 'english', 'cards')
+    ingest(db, product, payload, now - timedelta(days=8))
+    product.metadata_payload = {**product.metadata_payload, 'ebay': {**payload['ebay'], 'salesByGrade': {
+        **payload['ebay']['salesByGrade'], 'psa9': {'count': 5, 'lastSaleDate': 'invalid'},
+    }}}
+    db.commit()
+    result = graded_sales_activity(db, 'Example')
+    assert result['status'] == 'ready'
+    item = result['items'][0]
+    assert item['sales'] == 1239  # Neither raw history volume nor daily graded counts.
+    assert {g['grade']: g['sales'] for g in item['grades']} == {'cgc9_5': 0, 'psa10': 1234, 'psa9': 5}
+    assert item['last_sale_date'] == (now - timedelta(days=1)).date().isoformat()
+    assert item['stale'] is True
+    assert graded_sales_activity(db, 'Pika')['status'] == 'ready'
+    assert graded_sales_activity(db, '%')['status'] == 'no_matches'
+    assert graded_sales_activity(db, 'missing')['synced_at'] is None
+
+
+def test_graded_sales_gate_and_empty(db, monkeypatch):
+    from app.services.ppt_prices import graded_sales_activity
+    assert graded_sales_activity(db)['status'] == 'not_synced'
+    monkeypatch.setattr(get_settings(), 'ppt_primary_enabled', False)
+    # Gate must not even query the database.
+    assert graded_sales_activity(Mock())['status'] == 'provider_disabled'
+
+
+def test_graded_sales_bounded_ranking_duplicate_and_zero(db, now):
+    from app.services.ppt_prices import graded_sales_activity
+    for i in range(125):
+        cid = f'card-{i:03}'
+        db.add(Card(id=cid, name=cid, number=str(i), set_id='legacy-set'))
+        db.add(PPTProduct(id=cid, provider_id=cid, card_id=cid, segment='english:cards', status='matched',
+            last_success_at=now, metadata_payload={'ebay': {'salesByGrade': {'psa10': {'count': i // 2}}}}))
+    db.add(PPTProduct(id='older', provider_id='older', card_id='card-000', segment='english:cards', status='matched',
+        last_success_at=now-timedelta(days=1), metadata_payload={'ebay': {'salesByGrade': {'psa10': {'count': 999999}}}}))
+    db.add(PPTProduct(id='sealed', provider_id='sealed', card_id='legacy-card', segment='english:sealed', status='matched',
+        last_success_at=now, metadata_payload={'ebay': {'salesByGrade': {'psa10': {'count': 999999}}}}))
+    db.commit()
+    result = graded_sales_activity(db)
+    assert result['products_with_sales_data'] == 125
+    assert len(result['items']) == 50
+    assert [x['card_id'] for x in result['items'][:3]] == ['card-124', 'card-122', 'card-123']
+    assert graded_sales_activity(db, 'card-000')['items'][0]['sales'] == 0
+    assert graded_sales_activity(db, 'card-000')['items'][0]['stale'] is False

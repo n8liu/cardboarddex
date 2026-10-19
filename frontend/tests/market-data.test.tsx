@@ -1,12 +1,11 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MarketHistoryPanel, PriceFreshness, PurchaseReturn } from "@/components/market-history-panel";
-import { SalesActivityPanel } from "@/components/sales-activity-panel";
 import { CatalogHealth } from "@/components/admin/catalog-health";
-import { getMarketHistory, getSalesActivity } from "@/lib/api";
+import { getMarketHistory } from "@/lib/api";
 import { adminRequest } from "@/lib/admin-api";
-import type { MarketHistory, SalesActivity } from "@/types/market-data";
-vi.mock("@/lib/api", () => ({ getMarketHistory: vi.fn(), getSalesActivity: vi.fn() }));
+import type { MarketHistory } from "@/types/market-data";
+vi.mock("@/lib/api", () => ({ getMarketHistory: vi.fn() }));
 vi.mock("@/lib/admin-api", () => ({ adminRequest: vi.fn() }));
 const history: MarketHistory = {
   card_id: "box", printing: "Normal", currency: "USD", days: 30, status: "ready", synced_at: "2026-10-11",
@@ -52,17 +51,6 @@ it("shows unavailable history without fabricating a return", async () => {
   expect(screen.getByText(/Provider access is restricted/)).toBeInTheDocument();
 });
 
-it("shows unknown sales instead of a zero total and supports retry", async () => {
-  vi.mocked(getSalesActivity).mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce({
-    days: 30, start: "2026-09-12", end: "2026-10-11", synced_at: null, total_sales: null,
-    products_with_sales_data: 0, coverage: "", items: [],
-  } satisfies SalesActivity);
-  render(<SalesActivityPanel />);
-  await screen.findByRole("alert");
-  fireEvent.click(screen.getByText("Retry"));
-  expect(await screen.findByText("Sales data unavailable for this selection.")).toBeInTheDocument();
-});
-
 it("loads catalog health only when expanded and displays discovered missing sets", async () => {
   vi.mocked(adminRequest).mockResolvedValue({ status: "ready", games: [{ game: "pokemon", fetched_at: "2026-10-11", provider_synced_at: null,
     local_set_count: 1, discovered_set_count: 2, provider_set_count: 2, local_card_count: 10, provider_card_count: 20,
@@ -73,14 +61,4 @@ it("loads catalog health only when expanded and displays discovered missing sets
   fireEvent.click(screen.getByRole("button", { name: /Catalog coverage/ }));
   expect(await screen.findByText("New expansion · Not yet imported")).toBeInTheDocument();
   expect(screen.getByText(/1 \/ 2 discovered sets/)).toBeInTheDocument();
-});
-
-it("explains unsynced sales without presenting a zero", async () => {
-  vi.mocked(getSalesActivity).mockResolvedValue({
-    days: 30, start: "2026-09-12", end: "2026-10-11", synced_at: null,
-    total_sales: null, products_with_sales_data: 0, coverage: "", items: [], status: "not_synced",
-  });
-  render(<SalesActivityPanel />);
-  expect(await screen.findByText(/Sales history has not been synced yet/)).toBeInTheDocument();
-  expect(screen.queryByText(/0 reported sales/)).not.toBeInTheDocument();
 });

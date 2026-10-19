@@ -4,6 +4,15 @@ Updated: 2026-10-18. This handoff retains detailed product and implementation co
 
 Read [AGENTS.md](AGENTS.md) before changing code, including the installed Next.js documentation requirement. Treat source code and dated verification as authoritative when older documents disagree. [ARCHITECTURE.md](ARCHITECTURE.md) describes the system boundaries but still contains outdated deployment and eBay implementation notes.
 
+## Trending graded-sales replacement — local, 2026-10-18
+
+- Trending's third column and dedicated tab now show **Graded Sales Activity**, replacing the retired TCG API sales-history panel. The column loads independently of the main Trending request, supports card/set search, and displays 15 overview rows or up to 50 full-view rows, with artwork, grade counts, latest sale date, last sync, and a stale-snapshot label after seven days.
+- New `GET /market/graded-sales-activity?q=…` reads matched English/Japanese card snapshots from `PPTProduct.metadata_payload.ebay.salesByGrade`. It sums only explicit nonnegative integer counts, preserves grade keys, keeps zero distinct from unknown, excludes sealed/unmatched/unsynced products, and selects the newest mapping per local card to avoid double counting. Results sort by count descending then card ID. Database results stream in batches and retained ranking payloads are bounded.
+- Counts represent **provider-reported coverage, not a selected-period total**. The 7/30/90-day sales selector is removed; the dashboard timeframe still applies to the other rankings. PPT source aggregates may span multiple marketplaces. No dollar volume, raw-sales volume, or fixed sales window is inferred. Existing `/market/sales-activity` remains compatible.
+- PPT visibility still obeys `ppt_primary_enabled`; disabled, unsynced, no-match, and ready states have explicit UI messages. No provider requests occur on this read path. No schema, ingestion settings, worker/Beat state, or production deployment was changed. The latest recorded production gate is off; current production metadata coverage and deployment remain unverified.
+- Validation: 153 frontend tests passed, TypeScript and production build passed, and both backend PPT/market-data test modules passed (59 tests). Backend test processes explicitly overrode the invalid local PPT minute limit with 55 and enabled the mocked legacy ingestion path needed by an existing test; configuration files were not changed. Existing Edge Runtime/dependency deprecation warnings remain.
+- Synthetic in-memory SQLite benchmark with 10,000 mapped products: unfiltered ranking 0.054s (50 returned), filtered ranking 0.007s (111 matching products, 50 returned). This is not production-sized PostgreSQL, public HTTP, or device-layout verification. Retain unchanged public smoke deadlines and separately verify production coverage before claiming populated rankings.
+
 ## Deployment lock contention — local fix, 2026-10-18
 
 An operator CI log stopped at `Another deployment is running` after successful

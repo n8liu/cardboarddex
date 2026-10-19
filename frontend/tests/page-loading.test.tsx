@@ -19,10 +19,10 @@ vi.mock("@/lib/api", async (original) => ({
   ...await original<typeof api>(),
   searchCards: vi.fn(), getCardSets: vi.fn(), getSetStats: vi.fn(),
   getSealedSignals: vi.fn(), getMarketMovers: vi.fn(), getGradingProfit: vi.fn(),
-  getTrendingDashboard: vi.fn(), getLiveFeed: vi.fn(), getLiveStats: vi.fn(),
+  getTrendingDashboard: vi.fn(), getGradedSalesActivity: vi.fn(), getLiveFeed: vi.fn(), getLiveStats: vi.fn(),
 }));
 const requests = [api.searchCards, api.getCardSets, api.getSetStats, api.getSealedSignals,
-  api.getMarketMovers, api.getGradingProfit, api.getTrendingDashboard, api.getLiveFeed, api.getLiveStats];
+  api.getMarketMovers, api.getGradingProfit, api.getTrendingDashboard, api.getGradedSalesActivity, api.getLiveFeed, api.getLiveStats];
 const pending = () => new Promise<never>(() => {});
 const card = (name: string): CardSummary => ({ id: name, name, set_id: "test", set_name: "Test", number: "1", printed_total: null, rarity: "Rare", image_url: "", market_price: 10, market_currency: "USD" });
 
@@ -209,4 +209,11 @@ it("keeps final-page has_more after a first-page poll", async () => {
     expect(screen.getByRole("link", { name: "Last" })).toBeVisible();
     expect(screen.getByText("End of results")).toBeVisible();
   } finally { cleanup(); vi.useRealTimers(); }
+});
+
+it("loads graded sales independently while Trending remains pending", async () => {
+  vi.mocked(api.getGradedSalesActivity).mockResolvedValue({ status: "not_synced", coverage: "Provider-reported coverage", synced_at: null, products_with_sales_data: 0, items: [] });
+  render(TrendingPage());
+  expect(await screen.findByText(/No graded sales counts have been synced/)).toBeVisible();
+  expect(screen.getByText(/Loading trending cards/)).toBeVisible();
 });

@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useCurrency } from "@/context/currency-context";
 import { cardImageUrl, getTrendingDashboard } from "@/lib/api";
 import { shimmerBlurDataUrl } from "@/lib/shimmer";
-import { SalesActivityPanel } from "@/components/sales-activity-panel";
+import { GradedSalesActivityPanel } from "@/components/graded-sales-activity-panel";
 import { SearchInput } from "@/components/ui/search-input";
 import { getPokemonByIdOrSlug } from "@/lib/pokedex-data";
 import type {
@@ -296,7 +296,7 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
               Trending &amp; Top 50
             </h1>
             <p className="mt-1.5 max-w-2xl text-xs sm:text-sm font-mono text-slate-500 leading-relaxed">
-              Track search velocity, click popularity, and provider-reported sales activity across cards and Pokémon species.
+              Track search velocity, click popularity, and provider-reported graded sales activity across cards and Pokémon species.
             </p>
           </div>
 
@@ -369,7 +369,7 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
                     : "text-slate-600 hover:text-slate-950 hover:bg-slate-200/60"
                 }`}
               >
-                Sales Activity
+                Graded Sales Activity
               </button>
             </div>
 
@@ -436,18 +436,7 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
       {error && <div role="alert" className="my-4 text-sm text-rose-700">{error} <button type="button" className="underline" onClick={() => void handleTimeframeChange(timeframe)}>Retry</button></div>}
       {isLoading && <SectionLoadingBar label="Loading trending cards…" />}
       {/* Main Content Area */}
-      {isLoading ? (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          {Array.from({ length: 3 }).map((_, colIdx) => (
-            <div key={colIdx} className="space-y-2">
-              <div className="h-8 w-full animate-pulse rounded-xl bg-slate-100" />
-              {Array.from({ length: 10 }).map((_, rowIdx) => (
-                <div key={rowIdx} className="h-14 w-full animate-pulse rounded-xl bg-slate-100" />
-              ))}
-            </div>
-          ))}
-        </div>
-      ) : viewMode === "overview" ? (
+      {viewMode === "overview" ? (
         /* ------------------------------------------------------------- */
         /* MODE 1: 3-Column Overview (Clean side-by-side leaderboard)     */
         /* ------------------------------------------------------------- */
@@ -474,7 +463,7 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
               {filteredCards.slice(0, 15).map((card) => (
                 <CardRow key={card.card_id} item={card} />
               ))}
-              {filteredCards.length === 0 && (
+              {!isLoading && filteredCards.length === 0 && (
                 <div className="p-8 text-center font-mono text-xs text-slate-400">
                   No cards found matching “{searchQuery}”
                 </div>
@@ -504,7 +493,7 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
               {filteredPokemon.slice(0, 15).map((poke) => (
                 <PokemonRow key={poke.pokemon_name} item={poke} />
               ))}
-              {filteredPokemon.length === 0 && (
+              {!isLoading && filteredPokemon.length === 0 && (
                 <div className="p-8 text-center font-mono text-xs text-slate-400">
                   No Pokémon found matching “{searchQuery}”
                 </div>
@@ -512,7 +501,7 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
             </div>
           </div>
 
-          <SalesActivityPanel compact query={searchQuery} />
+          <GradedSalesActivityPanel compact query={searchQuery} />
         </div>
       ) : viewMode === "cards" ? (
         /* ------------------------------------------------------------- */
@@ -569,7 +558,7 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
           </div>
         </div>
       ) : (
-        <SalesActivityPanel query={searchQuery} />
+        <GradedSalesActivityPanel query={searchQuery} />
       )}
     </div>
   );

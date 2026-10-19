@@ -9,6 +9,14 @@ from app.services.market_data_service import freshness, history_series, sales_ac
 router = APIRouter(tags=["Provider market data"])
 
 
+@router.get("/market/graded-sales-activity")
+def get_graded_sales_activity(response: Response, q: str = Query(default="", max_length=120),
+                              db: Session = Depends(get_db)):
+    from app.services.ppt_prices import graded_sales_activity
+    response.headers["Cache-Control"] = "public, max-age=60"
+    return graded_sales_activity(db, q)
+
+
 @router.get("/market/sales-activity")
 def get_sales_activity(response: Response, days: Literal["7", "30", "90"] = "30",
                        q: str = Query(default="", max_length=120), db: Session = Depends(get_db)):

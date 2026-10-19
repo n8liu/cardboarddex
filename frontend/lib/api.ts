@@ -1,5 +1,5 @@
 import type { HomeOverview, HomeStats } from "@/types/home";
-import type { MarketHistory, SalesActivity } from "@/types/market-data";
+import type { MarketHistory, SalesActivity, GradedSalesActivity } from "@/types/market-data";
 import type {
   CardDetail,
   CardPricing,
@@ -587,4 +587,8 @@ export function getHomeOverview(signal?: AbortSignal, options: CacheOptions = {}
 
 export function getHomeStats(signal?: AbortSignal): Promise<HomeStats> {
   return request("/home/stats", { signal, cache: "no-store" });
+}
+
+export function getGradedSalesActivity(query = "", signal?: AbortSignal): Promise<GradedSalesActivity> {
+  return request(`/market/graded-sales-activity${buildQueryString({ q: query })}`, { signal, cache: "no-store" });
 }

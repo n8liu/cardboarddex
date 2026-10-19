@@ -28,3 +28,15 @@ export interface CatalogHealth {
     provider_set_count: number | null; discovered_set_count: number; local_set_count: number;
     provider_card_count: number | null; local_card_count: number; missing_sets: CatalogSet[]; latest_sets: CatalogSet[] }[];
 }
+
+export interface GradedSalesActivity {
+  status: "ready" | "provider_disabled" | "not_synced" | "no_matches";
+  synced_at: string | null;
+  coverage: string;
+  products_with_sales_data: number;
+  items: {
+    card_id: string; name: string; set_name: string; image_url: string | null;
+    sales: number; last_sale_date: string | null; synced_at: string; stale: boolean;
+    grades: { grade: string; sales: number; last_sale_date: string | null }[];
+  }[];
+}

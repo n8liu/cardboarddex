@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 
 export default function SealedSignalsPage() {
   return (
-    <main className="min-h-[calc(100vh-65px)] bg-white text-slate-950">
+    <main className="min-h-[calc(100vh-65px)] bg-[#f7f8f6] text-slate-950">
       <Suspense fallback={<SealedSignalsLoading />}>
         <SealedSignalsDashboard initialData={{ newer: null, older: null }} />
       </Suspense>
