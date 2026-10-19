@@ -64,6 +64,13 @@ if settings.ppt_ingestion_enabled:
     }
 
 if settings.ppt_ingestion_enabled:
+    # No-op once the week's pool exists; sync_ppt falls back until then.
+    celery_app.conf.beat_schedule["ppt-priority-pool"] = {
+        "task": "jobs.sync_ppt.build_priority_pool", "schedule": 900.0,
+        "options": {"expires": 840, "time_limit": 240},
+    }
+
+if settings.ppt_ingestion_enabled:
     celery_app.conf.beat_schedule["ppt-health-report"] = {
         "task": "jobs.ppt_report.publish_report", "schedule": 60.0,
         "options": {"expires": 55, "time_limit": 20},

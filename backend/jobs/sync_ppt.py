@@ -4,7 +4,7 @@ import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from celery import shared_task
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, text
 from app.common.redis import get_durable_redis
 from app.config import get_settings
 from app.database import SessionLocal
@@ -15,6 +15,13 @@ from app.services.passive_refresh import interest_scores, rank_priority, percent
 
 logger = logging.getLogger(__name__)
 SEGMENTS = ("english:cards", "japanese:cards", "english:sealed", "japanese:sealed")
+POOL_LEASE_SECONDS = 300
+# Worker-only bound for the weekly ranking; public SQL keeps its five-second deadline.
+POOL_STATEMENT_TIMEOUT = "120000ms"
+
+
+def pool_key(now):
+    return "priority:" + (now.date() - timedelta(days=now.weekday())).isoformat()
 
 
 def checkpoint(db, key, default):
@@ -81,6 +88,50 @@ def rank_ppt_priority(db, popularity, limit=1500):
     return ranked[:limit]
 
 
+def current_priority(db, now):
+    """This week's pool, else the latest earlier pool, else none (rotation still runs)."""
+    key = pool_key(now)
+    row = db.get(PPTCheckpoint, key)
+    if row is None or "cards" not in row.payload:
+        row = db.scalar(select(PPTCheckpoint).where(PPTCheckpoint.key.like("priority:%"), PPTCheckpoint.key < key)
+                        .order_by(PPTCheckpoint.key.desc()).limit(1))
+        logger.warning("PPT priority pool %s not built; using %s", key, row.key if row else "no priority pool")
+    return list((row.payload if row else {}).get("cards", []))
+
+
+@shared_task(name="jobs.sync_ppt.build_priority_pool", time_limit=240, autoretry_for=(), max_retries=0)
+def build_priority_pool():
+    if not get_settings().ppt_ingestion_enabled:
+        return {"status": "disabled"}
+    now = datetime.now(UTC)
+    key = pool_key(now)
+    with SessionLocal() as db:
+        existing = db.get(PPTCheckpoint, key)
+        if existing is not None and "cards" in existing.payload:
+            return {"status": "exists", "key": key}
+    redis = get_durable_redis()
+    token, lease = uuid.uuid4().hex, PREFIX + ":priority-build"
+    if not redis.set(lease, token, nx=True, ex=POOL_LEASE_SECONDS):
+        return {"status": "leased"}
+    started = time.monotonic()
+    try:
+        with SessionLocal() as db:
+            if db.get_bind().dialect.name == "postgresql":
+                db.execute(text(f"SET LOCAL statement_timeout = '{POOL_STATEMENT_TIMEOUT}'"))
+            cards = rank_ppt_priority(db, interest_scores(now.timestamp()), 1500)
+            checkpoint(db, key, {}).payload = {"cards": cards}
+            db.commit()
+        logger.info("PPT priority pool built key=%s cards=%s duration_ms=%.1f", key, len(cards),
+                    (time.monotonic() - started) * 1000)
+        return {"status": "built", "key": key, "cards": len(cards)}
+    except Exception as exc:
+        logger.exception("PPT priority pool build failed key=%s duration_ms=%.1f error=%s: %s", key,
+                         (time.monotonic() - started) * 1000, type(exc).__name__, exc)
+        return {"status": "failed", "key": key}
+    finally:
+        redis.eval(RELEASE, 1, lease, token)
+
+
 def due_query(now):
     start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     return select(PPTProduct).where(PPTProduct.status == "matched",
@@ -134,12 +185,8 @@ def sync_ppt():
     try:
         with SessionLocal() as db:
             now = datetime.now(UTC)
-            weekly = now.date() - timedelta(days=now.weekday())
-            pool = checkpoint(db, "priority:" + weekly.isoformat(), {})
-            if "cards" not in pool.payload:
-                pool.payload = {"cards": rank_ppt_priority(db, interest_scores(now.timestamp()), 1500)}
-                db.commit()
-            priority = pool.payload["cards"]
+            # Ranking runs in build_priority_pool; provider work never waits on it.
+            priority = current_priority(db, now)
             scheduling = checkpoint(db, "scheduler", {"turn": 0})
             turn = scheduling.payload["turn"]
             db.commit()

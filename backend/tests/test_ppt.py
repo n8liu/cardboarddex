@@ -378,7 +378,6 @@ def test_scheduler_processes_priority_once_and_preserves_checkpoint(db, payload,
     redis = fakeredis.FakeRedis(decode_responses=True)
     monkeypatch.setattr(job, "get_durable_redis", lambda: redis)
     monkeypatch.setattr(job, "SessionLocal", lambda: Session(db.get_bind(), expire_on_commit=False))
-    monkeypatch.setattr(job, "rank_priority", lambda *args: ["legacy-card"])
     monkeypatch.setattr(job, "interest_scores", lambda *args: {})
     client = Mock()
     client.request.return_value = [payload]
@@ -391,6 +390,78 @@ def test_scheduler_processes_priority_once_and_preserves_checkpoint(db, payload,
     assert db.scalar(select(PPTProduct.last_success_at)) is not None
     job.sync_ppt()
     assert client.request.call_count == 1
+
+
+def _scheduler(db, monkeypatch):
+    import fakeredis
+    from jobs import sync_ppt as job
+    monkeypatch.setattr(get_settings(), "ppt_ingestion_enabled", True)
+    redis = fakeredis.FakeRedis(decode_responses=True)
+    monkeypatch.setattr(job, "get_durable_redis", lambda: redis)
+    monkeypatch.setattr(job, "SessionLocal", lambda: Session(db.get_bind(), expire_on_commit=False))
+    monkeypatch.setattr(job, "interest_scores", lambda *args: {})
+    return job, redis
+
+
+def test_sync_never_ranks_and_falls_back_to_latest_pool(db, payload, now, monkeypatch):
+    from app.models import PPTCheckpoint
+    job, _ = _scheduler(db, monkeypatch)
+    monkeypatch.setattr(job, "rank_ppt_priority", Mock(side_effect=AssertionError("sync must not rank")))
+    monkeypatch.setattr(get_settings(), "ppt_batch_size", 1)
+    client = Mock()
+    client.request.return_value = [payload]
+    monkeypatch.setattr(job, "PPTClient", lambda: client)
+    map_product(db, payload, "english", "cards")
+    db.add_all([PPTCheckpoint(key="priority:2026-10-05", payload={"cards": ["old"]}),
+                PPTCheckpoint(key="priority:2026-10-12", payload={"cards": ["legacy-card"]})])
+    db.commit()
+    current = datetime.now(UTC)
+    assert job.current_priority(db, current) == ["legacy-card"]
+    assert job.sync_ppt()["requests_completed"] == 1  # provider work proceeds without a fresh pool
+    db.add(PPTCheckpoint(key=job.pool_key(current), payload={"cards": ["fresh"]}))
+    db.commit()
+    assert job.current_priority(db, current) == ["fresh"]
+
+
+def test_sync_without_any_pool_still_rotates(db, payload, monkeypatch):
+    job, _ = _scheduler(db, monkeypatch)
+    assert job.current_priority(db, datetime.now(UTC)) == []
+
+
+def test_pool_builder_is_leased_idempotent_and_logs_failures(db, monkeypatch, caplog):
+    from app.models import PPTCheckpoint
+    job, redis = _scheduler(db, monkeypatch)
+    key = job.pool_key(datetime.now(UTC))
+    redis.set(PREFIX + ":priority-build", "other")
+    rank = Mock(return_value=["a", "b"])
+    monkeypatch.setattr(job, "rank_ppt_priority", rank)
+    assert job.build_priority_pool()["status"] == "leased"
+    rank.assert_not_called()
+    redis.delete(PREFIX + ":priority-build")
+
+    rank.side_effect = RuntimeError("canceling statement due to statement timeout")
+    assert job.build_priority_pool() == {"status": "failed", "key": key}
+    assert "statement timeout" in caplog.text
+    assert db.get(PPTCheckpoint, key) is None
+    assert redis.get(PREFIX + ":priority-build") is None  # lease released
+
+    rank.side_effect = None
+    assert job.build_priority_pool() == {"status": "built", "key": key, "cards": 2}
+    db.expire_all()
+    assert db.get(PPTCheckpoint, key).payload == {"cards": ["a", "b"]}
+    assert job.build_priority_pool()["status"] == "exists"
+    assert rank.call_count == 2
+
+
+def test_pool_builder_is_scheduled_with_ingestion(monkeypatch):
+    import importlib
+    import app.celery_app as module
+    monkeypatch.setattr(get_settings(), 'ppt_ingestion_enabled', True)
+    importlib.reload(module)
+    entries = {x['task']: x for x in module.celery_app.conf.beat_schedule.values()}
+    assert entries['jobs.sync_ppt.build_priority_pool']['options']['time_limit'] == 240
+    monkeypatch.undo()
+    importlib.reload(module)
 
 
 def test_discovery_is_bounded_and_does_not_emit_feed_entries(db, payload, now):
