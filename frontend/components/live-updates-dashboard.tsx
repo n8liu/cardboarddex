@@ -21,6 +21,7 @@ import type {
   LiveUpdateProviderFilter,
   LiveFeedResponse,
 } from "@/types/card";
+import { IMAGE_HOVER, TILE_HOVER } from "@/lib/card-hover";
 
 type LiveUpdatesDashboardProps = {
   initialData: LiveFeedResponse;
@@ -96,10 +97,10 @@ function LiveUpdateRow({ item, grid = false }: { item: LiveUpdateItem; grid?: bo
   const isEbay = item.provider.toLowerCase().includes("ebay");
 
   return (
-    <div className={`group relative flex min-w-0 flex-col justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-xs transition duration-150 hover:border-slate-300 hover:bg-slate-50/60 hover:shadow-md ${grid ? "" : "sm:flex-row sm:items-center sm:p-4"}`}>
+    <div className={`group relative flex min-w-0 flex-col justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-xs ${TILE_HOVER} ${grid ? "" : "sm:flex-row sm:items-center sm:p-4"}`}>
       {/* Left: Thumbnail & Card Details */}
       <div className={`flex min-w-0 gap-3.5 ${grid ? "flex-col" : "items-center"}`}>
-        <div className={`relative shrink-0 overflow-hidden rounded-lg bg-slate-100 p-0.5 shadow-xs ${grid ? "aspect-[5/7] w-full" : "h-14 w-10"}`}>
+        <div className={`relative shrink-0 overflow-hidden rounded-lg bg-slate-100 shadow-xs ${grid ? "aspect-[5/7] w-full" : "h-14 w-10"}`}>
           {imageFailed ? (
             <div className="flex h-full w-full items-center justify-center bg-slate-100 text-xs font-bold text-slate-400">
               {item.card_name.slice(0, 1).toUpperCase()}
@@ -109,7 +110,7 @@ function LiveUpdateRow({ item, grid = false }: { item: LiveUpdateItem; grid?: bo
               src={cardImageUrl(item.image_url)}
               alt={item.card_name}
               fill
-              className="object-contain transition group-hover:scale-105"
+              className={`object-contain ${grid ? "p-1.5" : "p-0.5"} ${IMAGE_HOVER}`}
               sizes={grid ? "(min-width: 1536px) 230px, (min-width: 1280px) 200px, (min-width: 1024px) 23vw, (min-width: 640px) 30vw, 45vw" : "40px"}
               onError={() => setImageFailed(true)}
             />

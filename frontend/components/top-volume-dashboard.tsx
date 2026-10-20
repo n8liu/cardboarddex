@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useCurrency } from "@/context/currency-context";
 import { cardImageUrl, getTrendingDashboard } from "@/lib/api";
 import { shimmerBlurDataUrl } from "@/lib/shimmer";
-import { GradedSalesActivityPanel } from "@/components/graded-sales-activity-panel";
+import { GradedSalesActivityPanel, TILE_GRID_CLASS } from "@/components/graded-sales-activity-panel";
 import { SearchInput } from "@/components/ui/search-input";
 import { getPokemonByIdOrSlug } from "@/lib/pokedex-data";
 import type {
@@ -17,6 +17,7 @@ import type {
   TrendingPokemonItem,
   VolumeTimeframe,
 } from "@/types/card";
+import { IMAGE_HOVER, TILE_HOVER } from "@/lib/card-hover";
 
 type TopVolumeDashboardProps = {
   initialData: TrendingDashboardResponse;
@@ -28,14 +29,123 @@ function formatRank(rank: number): string {
   return rank < 10 ? `#0${rank}` : `#${rank}`;
 }
 
+function rankBadgeClass(rank: number): string {
+  if (rank === 1) return "text-amber-700 bg-amber-50 rounded px-1 py-0.5 border border-amber-200/60";
+  if (rank === 2) return "text-slate-700 bg-slate-100 rounded px-1 py-0.5 border border-slate-200";
+  if (rank === 3) return "text-amber-900 bg-amber-50/60 rounded px-1 py-0.5 border border-amber-200/40";
+  return "text-slate-400";
+}
+
+function pokemonDisplay(item: TrendingPokemonItem) {
+  const pokeData = getPokemonByIdOrSlug(item.dex_number > 0 ? item.dex_number : item.pokemon_name);
+  const dexNumber = pokeData?.id ?? item.dex_number;
+  return {
+    dexNumber,
+    spriteUrl: pokeData?.artwork || pokeData?.sprite || (item.dex_number > 0 ? item.sprite_url : ""),
+    href: `/pokemon/${dexNumber || item.pokemon_name.toLowerCase()}?ref=trending`,
+  };
+}
+
+function CardActivity({ item }: { item: TrendingCardItem }) {
+  if (item.clicks_count > 0) return <span className="text-slate-700 font-semibold">{item.clicks_count} clicks</span>;
+  if (item.price_change_7d !== null && item.price_change_7d !== undefined) {
+    return (
+      <span className={item.price_change_7d >= 0 ? "text-emerald-700" : "text-rose-700"}>
+        {item.price_change_7d >= 0 ? "+" : ""}
+        {item.price_change_7d.toFixed(1)}% (7d)
+      </span>
+    );
+  }
+  return <span className="text-slate-400">active comp</span>;
+}
+
+function PokemonActivity({ item }: { item: TrendingPokemonItem }) {
+  if (item.clicks_count > 0) return <span className="text-slate-700 font-semibold">{item.clicks_count} clicks</span>;
+  if (item.searches_count > 0) return <span>{item.searches_count} searches</span>;
+  if (item.top_card_price) return <>{`Top: $${item.top_card_price.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}</>;
+  return <>{`${item.cards_count} cards`}</>;
+}
+
+// ---------------------------------------------------------------------------
+// Tile Component: Trending Card (full view grid)
+// ---------------------------------------------------------------------------
+function CardTile({ item }: { item: TrendingCardItem }) {
+  const { formatPrice } = useCurrency();
+  return (
+    <Link
+      href={`/cards/${encodeURIComponent(item.card_id)}?ref=trending`}
+      prefetch={false}
+      className={`card-cv group flex min-w-0 flex-col rounded-xl border border-slate-200/80 bg-white p-3 ${TILE_HOVER}`}
+    >
+      <span className={`self-start font-mono text-xs font-bold ${rankBadgeClass(item.rank)}`}>{formatRank(item.rank)}</span>
+      <div className="relative mt-2 aspect-[5/7] w-full">
+        <Image
+          src={cardImageUrl(item.image_url)}
+          alt={item.name}
+          fill
+          className={`object-contain p-1.5 ${IMAGE_HOVER}`}
+          placeholder="blur"
+          blurDataURL={shimmerBlurDataUrl(64, 90)}
+          sizes="(min-width: 1536px) 16vw, (min-width: 1280px) 20vw, (min-width: 1024px) 25vw, (min-width: 640px) 33vw, 50vw"
+        />
+      </div>
+      <p className="mt-3 truncate font-mono text-sm font-bold text-slate-900">{item.name}</p>
+      <p className="truncate font-mono text-[11px] text-slate-500">
+        {item.set_name}{item.number ? ` • #${item.number}` : ""}
+      </p>
+      <div className="mt-2 flex items-baseline justify-between gap-2 font-mono">
+        <span className="truncate text-sm font-bold text-slate-950">{formatPrice(item.market_price)}</span>
+        <span className="truncate text-[10px] font-medium"><CardActivity item={item} /></span>
+      </div>
+    </Link>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Tile Component: Popular Pokémon (full view grid)
+// ---------------------------------------------------------------------------
+function PokemonTile({ item }: { item: TrendingPokemonItem }) {
+  const { dexNumber, spriteUrl, href } = pokemonDisplay(item);
+  return (
+    <Link
+      href={href}
+      prefetch={false}
+      className={`group flex min-w-0 flex-col rounded-xl border border-slate-200/80 bg-white p-3 ${TILE_HOVER}`}
+    >
+      <span className={`self-start font-mono text-xs font-bold ${rankBadgeClass(item.rank)}`}>{formatRank(item.rank)}</span>
+      <div className="relative mt-2 flex aspect-square w-full items-center justify-center rounded-lg bg-slate-50/60">
+        {spriteUrl ? (
+          <Image
+            src={spriteUrl}
+            alt={item.pokemon_name}
+            fill
+            className={`object-contain p-2 ${IMAGE_HOVER}`}
+            sizes="(min-width: 1536px) 16vw, (min-width: 1280px) 20vw, (min-width: 1024px) 25vw, (min-width: 640px) 33vw, 50vw"
+            unoptimized
+          />
+        ) : (
+          <span className="font-mono text-2xl font-bold text-slate-400">{item.pokemon_name.slice(0, 2).toUpperCase()}</span>
+        )}
+      </div>
+      <p className="mt-3 truncate font-mono text-sm font-bold text-slate-950">{item.pokemon_name}</p>
+      <p className="truncate font-mono text-[11px] text-slate-500">
+        #{String(dexNumber).padStart(4, "0")}{item.cards_count > 0 ? ` • ${item.cards_count} cards` : ""}
+      </p>
+      <div className="mt-2 flex items-baseline justify-between gap-2 font-mono">
+        <span className="truncate text-sm font-bold text-slate-950">
+          {item.trend_score.toFixed(0)} <span className="text-[10px] font-normal text-slate-400">pts</span>
+        </span>
+        <span className="truncate text-[10px] text-slate-500"><PokemonActivity item={item} /></span>
+      </div>
+    </Link>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Row Component: Trending Card
 // ---------------------------------------------------------------------------
 function CardRow({ item }: { item: TrendingCardItem }) {
   const { formatPrice } = useCurrency();
-  const isRank1 = item.rank === 1;
-  const isRank2 = item.rank === 2;
-  const isRank3 = item.rank === 3;
 
   return (
     <Link
@@ -46,15 +156,7 @@ function CardRow({ item }: { item: TrendingCardItem }) {
       {/* Left: Rank, Thumbnail, Card Title & Set */}
       <div className="flex min-w-0 flex-1 items-center gap-2.5">
         <span
-          className={`w-7 shrink-0 font-mono text-xs font-bold text-center ${
-            isRank1
-              ? "text-amber-700 bg-amber-50 rounded px-1 py-0.5 border border-amber-200/60"
-              : isRank2
-              ? "text-slate-700 bg-slate-100 rounded px-1 py-0.5 border border-slate-200"
-              : isRank3
-              ? "text-amber-900 bg-amber-50/60 rounded px-1 py-0.5 border border-amber-200/40"
-              : "text-slate-400"
-          }`}
+          className={`w-7 shrink-0 font-mono text-xs font-bold text-center ${rankBadgeClass(item.rank)}`}
         >
           {formatRank(item.rank)}
         </span>
@@ -66,7 +168,7 @@ function CardRow({ item }: { item: TrendingCardItem }) {
               src={cardImageUrl(item.image_url)}
               alt={item.name}
               fill
-              className="object-contain transition duration-150 group-hover:scale-105"
+              className={`object-contain ${IMAGE_HOVER}`}
               placeholder="blur"
               blurDataURL={shimmerBlurDataUrl(64, 90)}
               sizes="32px"
@@ -97,16 +199,7 @@ function CardRow({ item }: { item: TrendingCardItem }) {
           {formatPrice(item.market_price)}
         </div>
         <div className="mt-0.5 truncate text-[10px] font-medium">
-          {item.clicks_count > 0 ? (
-            <span className="text-slate-700 font-semibold">{item.clicks_count} clicks</span>
-          ) : item.price_change_7d !== null && item.price_change_7d !== undefined ? (
-            <span className={item.price_change_7d >= 0 ? "text-emerald-700" : "text-rose-700"}>
-              {item.price_change_7d >= 0 ? "+" : ""}
-              {item.price_change_7d.toFixed(1)}% (7d)
-            </span>
-          ) : (
-            <span className="text-slate-400">active comp</span>
-          )}
+          <CardActivity item={item} />
         </div>
       </div>
     </Link>
@@ -117,13 +210,7 @@ function CardRow({ item }: { item: TrendingCardItem }) {
 // Row Component: Popular Pokémon
 // ---------------------------------------------------------------------------
 function PokemonRow({ item }: { item: TrendingPokemonItem }) {
-  const isRank1 = item.rank === 1;
-  const isRank2 = item.rank === 2;
-  const isRank3 = item.rank === 3;
-  const pokeData = getPokemonByIdOrSlug(item.dex_number > 0 ? item.dex_number : item.pokemon_name);
-  const dexNumber = pokeData?.id ?? item.dex_number;
-  const spriteUrl = pokeData?.artwork || pokeData?.sprite || (item.dex_number > 0 ? item.sprite_url : "");
-  const pokemonHref = `/pokemon/${dexNumber || item.pokemon_name.toLowerCase()}?ref=trending`;
+  const { dexNumber, spriteUrl, href: pokemonHref } = pokemonDisplay(item);
 
   return (
     <Link
@@ -134,15 +221,7 @@ function PokemonRow({ item }: { item: TrendingPokemonItem }) {
       {/* Left: Rank, Sprite, Pokémon Name & Dex */}
       <div className="flex min-w-0 flex-1 items-center gap-2.5">
         <span
-          className={`w-7 shrink-0 font-mono text-xs font-bold text-center ${
-            isRank1
-              ? "text-amber-700 bg-amber-50 rounded px-1 py-0.5 border border-amber-200/60"
-              : isRank2
-              ? "text-slate-700 bg-slate-100 rounded px-1 py-0.5 border border-slate-200"
-              : isRank3
-              ? "text-amber-900 bg-amber-50/60 rounded px-1 py-0.5 border border-amber-200/40"
-              : "text-slate-400"
-          }`}
+          className={`w-7 shrink-0 font-mono text-xs font-bold text-center ${rankBadgeClass(item.rank)}`}
         >
           {formatRank(item.rank)}
         </span>
@@ -154,7 +233,7 @@ function PokemonRow({ item }: { item: TrendingPokemonItem }) {
               src={spriteUrl}
               alt={item.pokemon_name}
               fill
-              className="object-contain p-0.5 transition duration-150 group-hover:scale-110"
+              className={`object-contain p-0.5 ${IMAGE_HOVER}`}
               sizes="40px"
               unoptimized
             />
@@ -188,15 +267,7 @@ function PokemonRow({ item }: { item: TrendingPokemonItem }) {
           {item.trend_score.toFixed(0)} <span className="text-[10px] text-slate-400 font-normal">pts</span>
         </div>
         <div className="mt-0.5 truncate text-[10px] text-slate-500">
-          {item.clicks_count > 0 ? (
-            <span className="text-slate-700 font-semibold">{item.clicks_count} clicks</span>
-          ) : item.searches_count > 0 ? (
-            <span>{item.searches_count} searches</span>
-          ) : item.top_card_price ? (
-            `Top: $${item.top_card_price.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
-          ) : (
-            `${item.cards_count} cards`
-          )}
+          <PokemonActivity item={item} />
         </div>
       </div>
     </Link>
@@ -264,15 +335,6 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
   }, [data.trending_pokemon, searchQuery]);
 
 
-
-  // Dual column split helper
-  const splitColumns = <T,>(items: T[]): [T[], T[]] => {
-    const mid = Math.ceil(items.length / 2);
-    return [items.slice(0, mid), items.slice(mid)];
-  };
-
-  const [cardsCol1, cardsCol2] = useMemo(() => splitColumns(filteredCards), [filteredCards]);
-  const [pokeCol1, pokeCol2] = useMemo(() => splitColumns(filteredPokemon), [filteredPokemon]);
 
   // Top summary stats
   const topCard = data.trending_cards[0] || null;
@@ -505,7 +567,7 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
         </div>
       ) : viewMode === "cards" ? (
         /* ------------------------------------------------------------- */
-        /* MODE 2: Trending Cards (Dual Column: Rank 1-25 & 26-50)       */
+        /* MODE 2: Trending Cards (Tile grid)                             */
         /* ------------------------------------------------------------- */
         <div className="space-y-4">
           <div className="flex items-center justify-between px-1">
@@ -517,22 +579,15 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
             </span>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              {cardsCol1.map((card) => (
-                <CardRow key={card.card_id} item={card} />
-              ))}
-            </div>
-            <div className="space-y-2">
-              {cardsCol2.map((card) => (
-                <CardRow key={card.card_id} item={card} />
-              ))}
-            </div>
+          <div className={TILE_GRID_CLASS}>
+            {filteredCards.map((card) => (
+              <CardTile key={card.card_id} item={card} />
+            ))}
           </div>
         </div>
       ) : viewMode === "pokemon" ? (
         /* ------------------------------------------------------------- */
-        /* MODE 3: Popular Pokémon (Dual Column: Rank 1-25 & 26-50)      */
+        /* MODE 3: Popular Pokémon (Tile grid)                            */
         /* ------------------------------------------------------------- */
         <div className="space-y-4">
           <div className="flex items-center justify-between px-1">
@@ -544,17 +599,10 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
             </span>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              {pokeCol1.map((poke) => (
-                <PokemonRow key={poke.pokemon_name} item={poke} />
-              ))}
-            </div>
-            <div className="space-y-2">
-              {pokeCol2.map((poke) => (
-                <PokemonRow key={poke.pokemon_name} item={poke} />
-              ))}
-            </div>
+          <div className={TILE_GRID_CLASS}>
+            {filteredPokemon.map((poke) => (
+              <PokemonTile key={poke.pokemon_name} item={poke} />
+            ))}
           </div>
         </div>
       ) : (

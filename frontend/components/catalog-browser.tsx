@@ -206,7 +206,7 @@ export function CatalogBrowser({
     let cancelled = false;
     setSetsLoading(true);
     setSetsError(false);
-    void getCardSets(undefined, { bypassCache: retry > 0 }).then((latestSets) => {
+    void getCardSets("all", { bypassCache: retry > 0 }).then((latestSets) => {
       if (!cancelled) setSetsList(latestSets);
     }).catch((err) => {
       console.error("Failed loading catalog sets:", err);

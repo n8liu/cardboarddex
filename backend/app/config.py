@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     ebay_marketplace_id: str = "EBAY_US"
     ebay_daily_request_limit: int = 500
     market_history_enabled: bool = False
+    # Local development only: rebuild a missing/stale Trending snapshot on request instead of
+    # returning 503. Production keeps this off; the worker is the only snapshot publisher.
+    trending_on_demand_fallback: bool = False
     price_collection_card_limit: int = Field(default=8, ge=1, le=50)
     passive_refresh_enabled: bool = True
     passive_priority_card_count: int = Field(default=1500, ge=1, le=1500)

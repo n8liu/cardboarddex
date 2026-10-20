@@ -161,8 +161,17 @@ it("a bypassed old request cannot overwrite its newer retry", async () => {
 
 it("does not stack a Next server cache over backend freshness", async () => {
   vi.stubGlobal("window", undefined);
-  fetchMock.mockResolvedValue(response([]));
+  fetchMock.mockImplementation(async () => response([]));
   await getCardSets();
   expect(fetchMock.mock.calls[0][1].cache).toBe("no-store");
   expect(fetchMock.mock.calls[0][1].next).toBeUndefined();
+});
+
+it("requests every language's sets explicitly instead of the backend's English-only default", async () => {
+  fetchMock.mockImplementation(async () => response([]));
+  await getCardSets();
+  expect(String(fetchMock.mock.calls[0][0])).toContain("/cards/sets?game=all");
+  clearClientCache();
+  await getCardSets("pokemon-japan");
+  expect(String(fetchMock.mock.calls[1][0])).toContain("/cards/sets?game=pokemon-japan");
 });

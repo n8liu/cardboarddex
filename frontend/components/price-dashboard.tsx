@@ -6,7 +6,7 @@ import { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { ShopOnEbayButton, type EbaySearchCardTarget } from "@/components/shop-ebay-button";
 import type { CardPricing, PriceObservation } from "@/types/card";
-import { mergeProviderHistory, providerSeriesName } from "@/lib/provider-history";
+import { GRADING_COMPANIES, gradeCompany, mergeProviderHistory, providerSeriesName, selectHistorySeries, seriesPrinting, type GradingCompany } from "@/lib/provider-history";
 import type { ChartPoint } from "@/components/price-history-chart";
 
 const PriceHistoryChart = dynamic(
@@ -215,7 +215,7 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
     observations: originalPricing.observations.filter((item) => !group || !isEbayObservation(item) || item.grading_company ||
       (item.printing === group.printing && item.condition === group.condition)),
   }), [originalPricing, group]);
-  const [timeframe, setTimeframe] = useState<"1M" | "3M" | "6M" | "1Y">("6M");
+  const [timeframe, setTimeframe] = useState<"1M" | "3M" | "6M" | "1Y">("3M");
   const [sortBy, setSortBy] = useState<"date" | "price" | "printing" | "variant" | "name">("date");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [showAllVariants, setShowAllVariants] = useState(false);
@@ -293,18 +293,25 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
   // --- Multi-series History & Timeframe Filtering ---
   const historyData = useMemo(() => buildMultiSeriesHistory(pricing.market_history_series ? pricing.observations.filter(isEbayObservation) : pricing.observations), [pricing.observations, pricing.market_history_series]);
 
-  const [selectedSeries, setSelectedSeries] = useState<string[] | null>(null);
+  // Printings start on (hidden ones are tracked) and grading companies start off.
+  const [hiddenPrintings, setHiddenPrintings] = useState<string[]>([]);
+  const [shownCompanies, setShownCompanies] = useState<GradingCompany[]>([]);
   const providerHistory = pricing.market_history_series ?? pricing.provider_history ?? [];
-  const defaultRawSeries = providerHistory.find((series) => !series.grade && series.printing === pptPrimary?.printing && series.condition === pptPrimary?.condition)
-    ?? providerHistory.find((series) => !series.grade && series.condition === "Near Mint")
-    ?? providerHistory.find((series) => !series.grade);
-  const visibleProviderHistory = providerHistory.filter((series) => selectedSeries
-    ? selectedSeries.includes(series.id)
-    : (series.grade === "psa10" || series.grade === "psa9" || series.provider === "tcgapi" || (series.id === defaultRawSeries?.id)));
-  const colors = ["#e11d48", "#0891b2", "#d97706", "#4f46e5", "#16a34a"];
+  const historyPrintings = [...new Set(providerHistory.filter((series) => !series.grade).map(seriesPrinting))];
+  const companySeriesCount = (company: GradingCompany) => providerHistory.filter((series) => gradeCompany(series.grade) === company).length
+    + (company === "psa" ? (historyData.obsCounts.psa10 ? 1 : 0) + (historyData.obsCounts.psa9 ? 1 : 0) : 0);
+  const visibleProviderHistory = selectHistorySeries(providerHistory, {
+    printings: new Set(historyPrintings.filter((printing) => !hiddenPrintings.includes(printing))),
+    companies: new Set(shownCompanies),
+    preferredCondition: pptPrimary?.condition,
+  });
+  const colors = ["#e11d48", "#0891b2", "#d97706", "#4f46e5", "#16a34a", "#db2777", "#0d9488", "#9333ea", "#ca8a04", "#2563eb"];
   const extraSeries = visibleProviderHistory.map((series, index) => ({ key: series.id, name: providerSeriesName(series), color: colors[index % colors.length] }));
   const days = timeframe === "1M" ? 30 : timeframe === "3M" ? 90 : timeframe === "6M" ? 180 : 365;
-  const filteredHistory = mergeProviderHistory(historyData.history, visibleProviderHistory,
+  // eBay PSA asking-price lines follow the PSA toggle too.
+  const ebayHistory = shownCompanies.includes("psa") ? historyData.history
+    : historyData.history.map(({ psa10Price: _psa10, psa9Price: _psa9, ...point }) => point);
+  const filteredHistory = mergeProviderHistory(ebayHistory, visibleProviderHistory,
     new Date(Date.now() - days * 86400000).toISOString().slice(0, 10), new Date().toISOString().slice(0, 10));
 
   const historyCurrency = (rawEbayListings[0] ?? primaryRaw)?.currency ?? "USD";
@@ -357,7 +364,7 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
 
   const displayedVariants = showAllVariants ? sortedVariants : sortedVariants.slice(0, 15);
 
-  if (pricing.observations.length === 0 && !tcgPrimary && !pricing.eligibility_version && !pricing.provider_history?.length) {
+  if (pricing.observations.length === 0 && !tcgPrimary && !pricing.eligibility_version && !providerHistory.length) {
     return (
       <section className="mt-8 border-t border-stone-200 pt-6 sm:mt-10 sm:pt-8">
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-lime-700">Market data</p>
@@ -543,21 +550,40 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
                 Price history
               </h3>
               <p className="mt-1 text-xs leading-5 text-slate-500">
-                PPT market history includes earlier recorded prices. Lines connect available observations; prices between observations are not reported values. Different printings and grades remain separate. eBay lines are asking prices.
+                PPT market history includes earlier recorded prices. Each line holds its last recorded price until a new one arrives; held days are not new reported values. Different printings and grades remain separate. eBay lines are asking prices.
               </p>
             </div>
           </div>
           <div className="mt-5">
-            {providerHistory.length > 0 && <fieldset className="mb-3 flex flex-wrap gap-3 text-xs">
-              <legend className="mb-2 font-semibold">Market history series</legend>
-              {providerHistory.filter(s => s.cutover_date).map(s => <p key={`cutover-${s.id}`}>PPT continuation: {s.cutover_date} · {s.printing} · {s.condition || "Unknown condition"}</p>)}
-              {providerHistory.map((series) => <label key={series.id} className="flex items-center gap-1">
-                <input type="checkbox" checked={visibleProviderHistory.some((item) => item.id === series.id)} onChange={(event) => {
-                  const ids = visibleProviderHistory.map((item) => item.id);
-                  setSelectedSeries(event.target.checked ? [...ids, series.id] : ids.filter((id) => id !== series.id));
-                }} />{providerSeriesName(series)}
-              </label>)}
-            </fieldset>}
+            {(historyPrintings.length > 0 || GRADING_COMPANIES.some((company) => companySeriesCount(company) > 0)) && (
+              <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+                {historyPrintings.length > 0 && <div role="group" aria-label="Printings" className="flex flex-wrap items-center gap-1.5">
+                  {historyPrintings.map((printing) => {
+                    const on = !hiddenPrintings.includes(printing);
+                    return <button key={printing} type="button" aria-pressed={on}
+                      onClick={() => setHiddenPrintings((hidden) => on ? [...hidden, printing] : hidden.filter((item) => item !== printing))}
+                      className={`rounded-lg border px-2.5 py-1 font-semibold transition ${on ? "border-slate-900 bg-slate-900 text-white" : "border-stone-200 bg-white text-slate-500 hover:border-slate-300"}`}>
+                      {printing}
+                    </button>;
+                  })}
+                </div>}
+                <div role="group" aria-label="Graded" className="flex flex-wrap items-center gap-1.5">
+                  {GRADING_COMPANIES.map((company) => {
+                    const on = shownCompanies.includes(company);
+                    const count = companySeriesCount(company);
+                    return <button key={company} type="button" aria-pressed={on} disabled={count === 0}
+                      title={count === 0 ? `No ${company.toUpperCase()} history for this card` : `Show all ${company.toUpperCase()} grades`}
+                      onClick={() => setShownCompanies((shown) => on ? shown.filter((item) => item !== company) : [...shown, company])}
+                      className={`rounded-lg border px-2.5 py-1 font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${on ? "border-amber-600 bg-amber-500 text-white" : "border-stone-200 bg-white text-slate-600 hover:border-slate-300"}`}>
+                      {company.toUpperCase()}{count > 0 ? <span className="ml-1 font-normal opacity-70">{count}</span> : null}
+                    </button>;
+                  })}
+                </div>
+              </div>
+            )}
+            {visibleProviderHistory.some((series) => series.cutover_date) && <p className="mb-2 text-[11px] text-slate-500">
+              {visibleProviderHistory.filter((series) => series.cutover_date).map((series) => `PPT continuation from ${series.cutover_date} · ${providerSeriesName(series)}`).join(" · ")}
+            </p>}
             <PriceHistoryChart
               data={filteredHistory}
               currency={historyCurrency}
@@ -578,6 +604,7 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
                   <button
                     key={range}
                     type="button"
+                    aria-pressed={active}
                     onClick={() => setTimeframe(range)}
                     className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
                       active

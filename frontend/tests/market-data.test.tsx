@@ -1,11 +1,9 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { HistorySparkline, MarketHistoryPanel, PriceFreshness, PurchaseReturn } from "@/components/market-history-panel";
+import { HistorySparkline, PriceFreshness, PurchaseReturn } from "@/components/market-history-panel";
 import { CatalogHealth } from "@/components/admin/catalog-health";
-import { getMarketHistory } from "@/lib/api";
 import { adminRequest } from "@/lib/admin-api";
 import type { MarketHistory } from "@/types/market-data";
-vi.mock("@/lib/api", () => ({ getMarketHistory: vi.fn() }));
 vi.mock("@/lib/admin-api", () => ({ adminRequest: vi.fn() }));
 const history: MarketHistory = {
   card_id: "box", printing: "Normal", currency: "USD", days: 30, status: "ready", synced_at: "2026-10-11",
@@ -32,23 +30,6 @@ it("calculates purchase return and rejects zero or negative costs", () => {
   expect(screen.getByText("Enter a positive cost to estimate your return.")).toBeInTheDocument();
   fireEvent.change(input, { target: { value: "-10" } });
   expect(screen.queryByText(/Estimated unrealized return:/)).not.toBeInTheDocument();
-});
-
-it("renders actual history, missing sales, and valid zero growth", async () => {
-  vi.mocked(getMarketHistory).mockResolvedValue(history);
-  render(<MarketHistoryPanel cardId="box" />);
-  expect(await screen.findByText(/30-day price growth: 0.0%/)).toBeInTheDocument();
-  expect(screen.getByText("Not reported")).toBeInTheDocument();
-  expect(screen.getByRole("img", { name: /Market price history/ })).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("Period"), { target: { value: "90" } });
-  await waitFor(() => expect(getMarketHistory).toHaveBeenLastCalledWith("box", 90, expect.any(AbortSignal)));
-});
-
-it("shows unavailable history without fabricating a return", async () => {
-  vi.mocked(getMarketHistory).mockResolvedValue({ ...history, points: [], coverage_start: null, coverage_end: null, return_percent: null, status: "restricted" });
-  render(<MarketHistoryPanel cardId="box" />);
-  expect(await screen.findByText(/30-day return unavailable/)).toBeInTheDocument();
-  expect(screen.getByText(/Provider access is restricted/)).toBeInTheDocument();
 });
 
 it("loads catalog health only when expanded and displays discovered missing sets", async () => {

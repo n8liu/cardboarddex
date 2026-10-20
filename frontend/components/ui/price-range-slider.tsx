@@ -3,41 +3,44 @@
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useCurrency } from "@/context/currency-context";
 
-export const PRICE_RANGE_STEPS = [1, 10, 25, 50, 100, 150, 200, 250, 500, 1000, 2500, 5000] as const;
+/** Highest bounded price; the max thumb at the end of the track means "no upper limit". */
+export const PRICE_RANGE_MAX = 5000;
+const LOG_SPAN = Math.log(PRICE_RANGE_MAX + 1);
+const KEY_STEP = 0.01;
+const PAGE_STEP = 0.1;
+const TICKS: { price: number; label: string }[] = [
+  { price: 0, label: "$0" },
+  { price: 10, label: "$10" },
+  { price: 100, label: "$100" },
+  { price: 1000, label: "$1k" },
+  { price: PRICE_RANGE_MAX, label: "$5k+" },
+];
 
 export type PriceRangeValue = {
   min: number | null;
   max: number | null;
 };
 
-export function priceToStepIndex(price: number | null | undefined, isMax: boolean): number {
-  if (price === null || price === undefined) {
-    return isMax ? PRICE_RANGE_STEPS.length - 1 : 0;
-  }
-  if (price <= 1) return 0;
-  if (price >= PRICE_RANGE_STEPS[PRICE_RANGE_STEPS.length - 1]) {
-    return PRICE_RANGE_STEPS.length - 1;
-  }
-  // Find closest step
-  let closestIndex = 0;
-  let minDiff = Infinity;
-  for (let i = 0; i < PRICE_RANGE_STEPS.length; i++) {
-    const diff = Math.abs(PRICE_RANGE_STEPS[i] - price);
-    if (diff < minDiff) {
-      minDiff = diff;
-      closestIndex = i;
-    }
-  }
-  return closestIndex;
+/**
+ * Continuous logarithmic scale: track position 0–1 maps to $0–$5,000 in whole dollars,
+ * giving the dense low-price range as much room as the sparse high end.
+ */
+export function positionToPrice(position: number): number {
+  const clamped = Math.max(0, Math.min(1, position));
+  return Math.round(Math.exp(clamped * LOG_SPAN) - 1);
 }
 
-export function stepIndexToPrice(index: number, isMax: boolean): number | null {
-  if (isMax) {
-    if (index >= PRICE_RANGE_STEPS.length - 1) return null; // unbounded 5000+
-    return PRICE_RANGE_STEPS[index];
-  }
-  if (index <= 0) return 0; // index 0 includes cards down to 0
-  return PRICE_RANGE_STEPS[index];
+export function priceToPosition(price: number | null | undefined, isMax: boolean): number {
+  if (price === null || price === undefined) return isMax ? 1 : 0;
+  if (price <= 0) return 0;
+  if (price >= PRICE_RANGE_MAX) return 1;
+  return Math.log(price + 1) / LOG_SPAN;
+}
+
+/** Filter value for a thumb position: the min floor is $0, and the max at the end is unbounded. */
+export function positionToFilter(position: number, isMax: boolean): number | null {
+  if (isMax && position >= 1) return null;
+  return positionToPrice(position);
 }
 
 type PriceRangeSliderProps = {
@@ -58,53 +61,34 @@ export function PriceRangeSlider({
   const minThumbId = useId();
   const maxThumbId = useId();
 
-  // Internal step indices (0 to PRICE_RANGE_STEPS.length - 1)
-  const [minStep, setMinStep] = useState(() => priceToStepIndex(minPrice, false));
-  const [maxStep, setMaxStep] = useState(() => priceToStepIndex(maxPrice, true));
+  // Track positions (0–1). Dragging updates these locally and commits once on release.
+  const [minPos, setMinPos] = useState(() => priceToPosition(minPrice, false));
+  const [maxPos, setMaxPos] = useState(() => priceToPosition(maxPrice, true));
   const [activeThumb, setActiveThumb] = useState<"min" | "max" | null>(null);
 
-  // Synchronize when external props change
+  // Synchronize when external props change, but never fight an in-progress drag.
   useEffect(() => {
-    const nextMin = priceToStepIndex(minPrice, false);
-    const nextMax = priceToStepIndex(maxPrice, true);
-    setMinStep(nextMin);
-    setMaxStep(nextMax);
-  }, [minPrice, maxPrice]);
+    if (activeThumb) return;
+    setMinPos(priceToPosition(minPrice, false));
+    setMaxPos(priceToPosition(maxPrice, true));
+  }, [minPrice, maxPrice, activeThumb]);
 
-  const totalSteps = PRICE_RANGE_STEPS.length - 1;
-  const leftPercent = (minStep / totalSteps) * 100;
-  const rightPercent = (maxStep / totalSteps) * 100;
+  const minValue = positionToPrice(minPos);
+  const maxValue = positionToFilter(maxPos, true);
+  const isFiltered = minValue > 0 || maxValue !== null;
 
-  const isFiltered = minStep > 0 || maxStep < totalSteps;
-
-  const handleStepCommit = useCallback(
-    (newMin: number, newMax: number) => {
-      const minVal = stepIndexToPrice(newMin, false);
-      const maxVal = stepIndexToPrice(newMax, true);
-      onChange({ min: minVal, max: maxVal });
+  const commit = useCallback(
+    (nextMin: number, nextMax: number) => {
+      onChange({ min: positionToFilter(nextMin, false), max: positionToFilter(nextMax, true) });
     },
     [onChange]
   );
 
-  const updateThumbFromPointer = useCallback(
-    (clientX: number, thumb: "min" | "max") => {
-      if (!trackRef.current) return;
-      const rect = trackRef.current.getBoundingClientRect();
-      const rawFrac = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-      const stepIndex = Math.round(rawFrac * totalSteps);
-
-      if (thumb === "min") {
-        const clampedMin = Math.min(stepIndex, maxStep);
-        setMinStep(clampedMin);
-        handleStepCommit(clampedMin, maxStep);
-      } else {
-        const clampedMax = Math.max(stepIndex, minStep);
-        setMaxStep(clampedMax);
-        handleStepCommit(minStep, clampedMax);
-      }
-    },
-    [handleStepCommit, maxStep, minStep, totalSteps]
-  );
+  const positionFromClientX = (clientX: number): number | null => {
+    if (!trackRef.current) return null;
+    const rect = trackRef.current.getBoundingClientRect();
+    return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+  };
 
   const handlePointerDown = (thumb: "min" | "max") => (e: React.PointerEvent) => {
     if (disabled) return;
@@ -116,97 +100,81 @@ export function PriceRangeSlider({
 
   const handlePointerMove = (thumb: "min" | "max") => (e: React.PointerEvent) => {
     if (activeThumb !== thumb || disabled) return;
-    updateThumbFromPointer(e.clientX, thumb);
+    const position = positionFromClientX(e.clientX);
+    if (position === null) return;
+    if (thumb === "min") setMinPos(Math.min(position, maxPos));
+    else setMaxPos(Math.max(position, minPos));
   };
 
   const handlePointerUp = (thumb: "min" | "max") => (e: React.PointerEvent) => {
-    if (activeThumb === thumb) {
-      setActiveThumb(null);
-      try {
-        (e.target as HTMLElement).releasePointerCapture(e.pointerId);
-      } catch {}
+    if (activeThumb !== thumb) return;
+    setActiveThumb(null);
+    try {
+      (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch (err) {
+      // Capture may already be released (e.g. pointercancel); nothing to undo.
+      console.debug("Price slider pointer capture release skipped:", err);
     }
+    commit(minPos, maxPos);
   };
 
   const handleTrackClick = (e: React.MouseEvent) => {
-    if (disabled || !trackRef.current) return;
-    const rect = trackRef.current.getBoundingClientRect();
-    const rawFrac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    const stepIndex = Math.round(rawFrac * totalSteps);
-
-    // Determine which thumb is closer
-    const distToMin = Math.abs(stepIndex - minStep);
-    const distToMax = Math.abs(stepIndex - maxStep);
-
-    if (distToMin <= distToMax) {
-      const newMin = Math.min(stepIndex, maxStep);
-      setMinStep(newMin);
-      handleStepCommit(newMin, maxStep);
+    if (disabled) return;
+    const position = positionFromClientX(e.clientX);
+    if (position === null) return;
+    // Move whichever thumb is closer.
+    if (Math.abs(position - minPos) <= Math.abs(position - maxPos)) {
+      const nextMin = Math.min(position, maxPos);
+      setMinPos(nextMin);
+      commit(nextMin, maxPos);
     } else {
-      const newMax = Math.max(stepIndex, minStep);
-      setMaxStep(newMax);
-      handleStepCommit(minStep, newMax);
+      const nextMax = Math.max(position, minPos);
+      setMaxPos(nextMax);
+      commit(minPos, nextMax);
     }
   };
 
   const handleKeyDown = (thumb: "min" | "max") => (e: React.KeyboardEvent) => {
     if (disabled) return;
-    let delta = 0;
-    if (e.key === "ArrowRight" || e.key === "ArrowUp") delta = 1;
-    else if (e.key === "ArrowLeft" || e.key === "ArrowDown") delta = -1;
-    else if (e.key === "Home") {
-      if (thumb === "min") {
-        setMinStep(0);
-        handleStepCommit(0, maxStep);
-      }
-      return;
-    } else if (e.key === "End") {
-      if (thumb === "max") {
-        setMaxStep(totalSteps);
-        handleStepCommit(minStep, totalSteps);
-      }
-      return;
-    }
-
-    if (delta !== 0) {
-      e.preventDefault();
-      if (thumb === "min") {
-        const nextMin = Math.max(0, Math.min(minStep + delta, maxStep));
-        setMinStep(nextMin);
-        handleStepCommit(nextMin, maxStep);
-      } else {
-        const nextMax = Math.min(totalSteps, Math.max(maxStep + delta, minStep));
-        setMaxStep(nextMax);
-        handleStepCommit(minStep, nextMax);
-      }
+    const step = e.shiftKey ? PAGE_STEP : KEY_STEP;
+    let target: number | null = null;
+    const current = thumb === "min" ? minPos : maxPos;
+    if (e.key === "ArrowRight" || e.key === "ArrowUp") target = current + step;
+    else if (e.key === "ArrowLeft" || e.key === "ArrowDown") target = current - step;
+    else if (e.key === "PageUp") target = current + PAGE_STEP;
+    else if (e.key === "PageDown") target = current - PAGE_STEP;
+    else if (e.key === "Home") target = thumb === "min" ? 0 : minPos;
+    else if (e.key === "End") target = thumb === "max" ? 1 : maxPos;
+    if (target === null) return;
+    e.preventDefault();
+    if (thumb === "min") {
+      const nextMin = Math.max(0, Math.min(target, maxPos));
+      setMinPos(nextMin);
+      commit(nextMin, maxPos);
+    } else {
+      const nextMax = Math.min(1, Math.max(target, minPos));
+      setMaxPos(nextMax);
+      commit(minPos, nextMax);
     }
   };
 
   const handleReset = () => {
-    setMinStep(0);
-    setMaxStep(totalSteps);
+    setMinPos(0);
+    setMaxPos(1);
     onChange({ min: 0, max: null });
   };
 
   // Human-readable range display
   const rangeDisplay = useMemo(() => {
-    if (minStep === 0 && maxStep === totalSteps) {
-      return "All Prices";
-    }
-    const minVal = PRICE_RANGE_STEPS[minStep];
-    const maxVal = PRICE_RANGE_STEPS[maxStep];
+    if (!isFiltered) return "All Prices";
+    if (maxValue === null) return `${formatPrice(minValue)}+`;
+    if (minValue === 0) return `Up to ${formatPrice(maxValue)}`;
+    if (minValue === maxValue) return formatPrice(minValue);
+    return `${formatPrice(minValue)} – ${formatPrice(maxValue)}`;
+  }, [formatPrice, isFiltered, maxValue, minValue]);
 
-    if (minStep === 0) {
-      return `${formatPrice(maxVal)}`;
-    }
-    if (maxStep === totalSteps) {
-      return `${formatPrice(minVal)}+`;
-    }
-    if (minStep === maxStep) {
-      return formatPrice(minVal);
-    }
-    return `${formatPrice(minVal)} – ${formatPrice(maxVal)}`;
-  }, [formatPrice, maxStep, minStep, totalSteps]);
+  const leftPercent = minPos * 100;
+  const rightPercent = maxPos * 100;
 
   return (
     <div className="w-full select-none">
@@ -258,7 +226,7 @@ export function PriceRangeSlider({
         >
           {/* Active Highlighted Range Bar */}
           <div
-            className="absolute top-0 h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 shadow-xs transition-all duration-75"
+            className="absolute top-0 h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 shadow-xs"
             style={{
               left: `${leftPercent}%`,
               width: `${Math.max(0, rightPercent - leftPercent)}%`,
@@ -272,9 +240,9 @@ export function PriceRangeSlider({
             tabIndex={disabled ? -1 : 0}
             aria-label="Minimum price range handle"
             aria-valuemin={0}
-            aria-valuemax={PRICE_RANGE_STEPS[maxStep]}
-            aria-valuenow={PRICE_RANGE_STEPS[minStep]}
-            aria-valuetext={formatPrice(PRICE_RANGE_STEPS[minStep])}
+            aria-valuemax={maxValue ?? PRICE_RANGE_MAX}
+            aria-valuenow={minValue}
+            aria-valuetext={formatPrice(minValue)}
             onPointerDown={handlePointerDown("min")}
             onPointerMove={handlePointerMove("min")}
             onPointerUp={handlePointerUp("min")}
@@ -294,14 +262,10 @@ export function PriceRangeSlider({
             role="slider"
             tabIndex={disabled ? -1 : 0}
             aria-label="Maximum price range handle"
-            aria-valuemin={PRICE_RANGE_STEPS[minStep]}
-            aria-valuemax={PRICE_RANGE_STEPS[totalSteps]}
-            aria-valuenow={PRICE_RANGE_STEPS[maxStep]}
-            aria-valuetext={
-              maxStep === totalSteps
-                ? "Highest / Any price"
-                : formatPrice(PRICE_RANGE_STEPS[maxStep])
-            }
+            aria-valuemin={minValue}
+            aria-valuemax={PRICE_RANGE_MAX}
+            aria-valuenow={maxValue ?? PRICE_RANGE_MAX}
+            aria-valuetext={maxValue === null ? "Highest / Any price" : formatPrice(maxValue)}
             onPointerDown={handlePointerDown("max")}
             onPointerMove={handlePointerMove("max")}
             onPointerUp={handlePointerUp("max")}
@@ -316,14 +280,22 @@ export function PriceRangeSlider({
           </div>
         </div>
 
-        {/* Milestone Tick Marks & Labels */}
-        <div className="mt-2.5 flex justify-between text-[10px] font-mono text-slate-400 font-semibold px-0.5">
-          <span className={minStep === 0 ? "text-emerald-700 font-bold" : ""}>$1</span>
-          <span className={minStep <= 2 && maxStep >= 2 ? "text-slate-700 font-bold" : ""}>$25</span>
-          <span className={minStep <= 4 && maxStep >= 4 ? "text-slate-700 font-bold" : ""}>$100</span>
-          <span className={minStep <= 7 && maxStep >= 7 ? "text-slate-700 font-bold" : ""}>$250</span>
-          <span className={minStep <= 9 && maxStep >= 9 ? "text-slate-700 font-bold" : ""}>$1k</span>
-          <span className={maxStep === totalSteps ? "text-emerald-700 font-bold" : ""}>$5k+</span>
+        {/* Scale labels at their true positions on the log track */}
+        <div className="relative mt-2.5 h-3 text-[10px] font-mono text-slate-400 font-semibold">
+          {TICKS.map((tick, index) => {
+            const position = priceToPosition(tick.price, false);
+            const inRange = position >= minPos && position <= maxPos;
+            const align = index === 0 ? "" : index === TICKS.length - 1 ? "-translate-x-full" : "-translate-x-1/2";
+            return (
+              <span
+                key={tick.label}
+                className={`absolute top-0 ${align} ${inRange && isFiltered ? "text-slate-700 font-bold" : ""}`}
+                style={{ left: `${position * 100}%` }}
+              >
+                {tick.label}
+              </span>
+            );
+          })}
         </div>
       </div>
     </div>

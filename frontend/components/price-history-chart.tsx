@@ -11,6 +11,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { carryForward } from "@/lib/provider-history";
 
 export type ChartPoint = {
   [key: string]: string | number | null | undefined;
@@ -46,6 +47,25 @@ function money(value: number, currency: string, compact = false): string {
     maximumFractionDigits: compact ? 0 : 2,
     notation: compact ? "compact" : "standard",
   }).format(value);
+}
+
+function shortDate(value: unknown): string {
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).format(
+    new Date(`${String(value)}T00:00:00Z`),
+  );
+}
+
+/** Recorded value, else the held previous value labelled with its source date. */
+function PointValue({ point, dataKey, currency }: { point: ChartPoint; dataKey: string; currency: string }) {
+  const value = point[dataKey];
+  if (typeof value === "number") return <>{money(value, currency)}</>;
+  const carried = point[`${dataKey}:carried`];
+  if (typeof carried !== "number") return <>—</>;
+  return (
+    <span title="Last recorded price; no new data for this day">
+      {money(carried, currency)} <span className="text-[10px] font-normal text-zinc-500">· since {shortDate(point[`${dataKey}:carriedFrom`])}</span>
+    </span>
+  );
 }
 
 function MultiLineTooltip({
@@ -95,17 +115,17 @@ function MultiLineTooltip({
                 <span>{s.name}{point[`${s.key}:source`] ? ` · ${point[`${s.key}:source`] === "tcgapi" ? "Legacy (TCGAPI)" : "PPT"}` : ""}{point[`${s.key}:condition`] ? ` · ${point[`${s.key}:condition`]}` : ""}</span>
               </span>
               <span className="font-semibold text-zinc-900">
-                {s.val !== null && s.val !== undefined ? money(s.val, currency) : "—"}
+                <PointValue point={point} dataKey={s.key} currency={currency} />
               </span>
             </div>
           ))
-        ) : point.price !== null && point.price !== undefined ? (
+        ) : typeof point.price === "number" || typeof point["price:carried"] === "number" ? (
           <div className="flex items-center justify-between gap-4">
             <span className="flex items-center gap-1.5 text-zinc-600">
               <span className="inline-block h-2 w-2 rounded-full bg-lime-600" />
               <span>{customLabel}</span>
             </span>
-            <span className="font-semibold text-zinc-900">{money(point.price, currency)}</span>
+            <span className="font-semibold text-zinc-900"><PointValue point={point} dataKey="price" currency={currency} /></span>
           </div>
         ) : (
           <div className="text-zinc-400">No data</div>
@@ -147,7 +167,9 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
     );
   }
 
-  const chartData = data;
+  const activeKeys: (keyof ChartPoint)[] = ["rawPrice", "tcgPrice", "psa10Price", "psa9Price", "price", ...extraSeries.map((s) => s.key)];
+  // Each line holds its last recorded price through today; recorded data stays unfilled.
+  const chartData = carryForward(data, activeKeys as string[]);
 
   // Compute Y-axis domain based on currently displayed lines with 2 or more points
   const qualifyingKeys: (keyof ChartPoint)[] = extraSeries.map((s) => s.key);
@@ -155,8 +177,6 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
   if ((obsCounts?.tcg ?? 0) >= 2) qualifyingKeys.push("tcgPrice");
   if ((obsCounts?.psa10 ?? 0) >= 2) qualifyingKeys.push("psa10Price");
   if ((obsCounts?.psa9 ?? 0) >= 2) qualifyingKeys.push("psa9Price");
-
-  const activeKeys: (keyof ChartPoint)[] = ["rawPrice", "tcgPrice", "psa10Price", "psa9Price", "price", ...extraSeries.map((s) => s.key)];
 
   const scaleValues: number[] = [];
   for (const d of chartData) {
@@ -218,6 +238,7 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
             width={54}
           />
           <Tooltip
+            filterNull={false}
             cursor={{ stroke: "#10b981", strokeWidth: 1, strokeDasharray: "3 3", strokeOpacity: 0.6 }}
             content={
               <MultiLineTooltip
@@ -238,11 +259,11 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
             iconType="line"
             iconSize={8}
           />
-          {extraSeries.map((s) => <Line key={s.key} dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} connectNulls={true} dot={pointDot(s.key)} type="linear" />)}
+          {extraSeries.map((s) => <Line key={s.key} dataKey={`${s.key}:line`} name={s.name} stroke={s.color} strokeWidth={2} connectNulls={true} dot={pointDot(s.key)} type="stepAfter" />)}
           {hasRaw && (
             <Area
               connectNulls={true}
-              dataKey="rawPrice"
+              dataKey="rawPrice:line"
               fill="url(#rawGradient)"
               isAnimationActive={true}
               animationDuration={700}
@@ -250,14 +271,14 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
               legendType="none"
               stroke="none"
               tooltipType="none"
-              type="linear"
+              type="stepAfter"
             />
           )}
           {hasRaw && (
             <Line
               activeDot={{ fill: "#059669", r: 5, stroke: "#ffffff", strokeWidth: 2 }}
               connectNulls={true}
-              dataKey="rawPrice"
+              dataKey="rawPrice:line"
               dot={pointDot("rawPrice")}
               isAnimationActive={true}
               animationDuration={700}
@@ -265,14 +286,14 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
               name="Raw eBay"
               stroke="#10b981"
               strokeWidth={2.25}
-              type="linear"
+              type="stepAfter"
             />
           )}
           {hasTcg && (
             <Line
               activeDot={{ fill: "#7c3aed", r: 5, stroke: "#ffffff", strokeWidth: 2 }}
               connectNulls={true}
-              dataKey="tcgPrice"
+              dataKey="tcgPrice:line"
               dot={pointDot("tcgPrice")}
               isAnimationActive={true}
               animationDuration={700}
@@ -280,14 +301,14 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
               name="PPT market"
               stroke="#8b5cf6"
               strokeWidth={2}
-              type="linear"
+              type="stepAfter"
             />
           )}
           {hasPsa10 && (
             <Line
               activeDot={{ fill: "#d97706", r: 5, stroke: "#ffffff", strokeWidth: 2 }}
               connectNulls={true}
-              dataKey="psa10Price"
+              dataKey="psa10Price:line"
               dot={pointDot("psa10Price")}
               isAnimationActive={true}
               animationDuration={700}
@@ -295,14 +316,14 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
               name="PSA 10 eBay"
               stroke="#f59e0b"
               strokeWidth={2}
-              type="linear"
+              type="stepAfter"
             />
           )}
           {hasPsa9 && (
             <Line
               activeDot={{ fill: "#0369a1", r: 5, stroke: "#ffffff", strokeWidth: 2 }}
               connectNulls={true}
-              dataKey="psa9Price"
+              dataKey="psa9Price:line"
               dot={pointDot("psa9Price")}
               isAnimationActive={true}
               animationDuration={700}
@@ -310,14 +331,14 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
               name="PSA 9 eBay"
               stroke="#0284c7"
               strokeWidth={2}
-              type="linear"
+              type="stepAfter"
             />
           )}
           {hasLegacyPrice && (
             <Line
               activeDot={{ fill: "#4d7c0f", r: 5, stroke: "#ffffff", strokeWidth: 2 }}
               connectNulls={true}
-              dataKey="price"
+              dataKey="price:line"
               dot={pointDot("price")}
               isAnimationActive={true}
               animationDuration={700}
@@ -325,7 +346,7 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
               name={label}
               stroke="#65a30d"
               strokeWidth={2}
-              type="linear"
+              type="stepAfter"
             />
           )}
         </ComposedChart>

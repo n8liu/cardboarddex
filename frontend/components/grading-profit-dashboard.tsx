@@ -17,6 +17,7 @@ import type {
   GradingProfitResponse,
   GradingSortOption,
 } from "@/types/card";
+import { IMAGE_HOVER, TILE_HOVER } from "@/lib/card-hover";
 
 type PresetFilter = "all" | "safe" | "high_profit" | "high_roi" | "budget" | "high_spread";
 
@@ -532,7 +533,7 @@ export function GradingProfitDashboard({ initialData }: GradingProfitDashboardPr
             return (
               <div
                 key={item.card_id}
-                className="group relative flex flex-col justify-between rounded-2xl border border-slate-200/90 bg-white p-4 shadow-2xs transition duration-150 hover:border-slate-400 hover:shadow-md"
+                className={`group relative flex flex-col justify-between rounded-2xl border border-slate-200/90 bg-white p-4 shadow-2xs ${TILE_HOVER}`}
               >
                 <div>
                   {/* Top Bar: Safe Tag & Spread Multiplier */}
@@ -557,13 +558,13 @@ export function GradingProfitDashboard({ initialData }: GradingProfitDashboardPr
 
                   {/* Thumbnail & Core Info */}
                   <div className="flex gap-3.5">
-                    <div className="relative h-40 w-28 shrink-0 sm:h-52 sm:w-36 overflow-hidden rounded-xl border border-slate-100 bg-slate-50 p-1">
+                    <div className="relative h-40 w-28 shrink-0 sm:h-52 sm:w-36 overflow-hidden rounded-xl border border-slate-100 bg-slate-50">
                       <Image
                         src={cardImageUrl(item.image_url)}
                         alt={item.name}
                         fill
                         sizes="(min-width: 640px) 144px, 112px"
-                        className="object-contain transition duration-200 group-hover:scale-105"
+                        className={`object-contain p-1.5 ${IMAGE_HOVER}`}
                       />
                     </div>
 

@@ -471,6 +471,31 @@ def test_missing_corrupt_or_stale_snapshot_returns_503_without_building(seeded_d
     assert error.value.headers["Retry-After"] == "60"
 
 
+def test_dev_fallback_publishes_missing_snapshot_once_then_serves_it(seeded_db: Session, monkeypatch) -> None:
+    from app.config import get_settings
+    monkeypatch.setattr(get_settings(), "trending_on_demand_fallback", True)
+    store: dict[str, str] = {}
+    redis = Mock(get=Mock(side_effect=lambda key: store.get(key)))
+    monkeypatch.setattr(trending_service, "get_redis", lambda: redis)
+    refresh = Mock(side_effect=lambda: store.update({trending_service.snapshot_key(): _published(seeded_db)}) or True)
+    monkeypatch.setattr(trending_service, "refresh_snapshot", refresh)
+
+    first = trending_service.get_trending_dashboard(Mock(), timeframe="7d")
+    assert first.trending_cards and refresh.call_count == 1
+    trending_service.get_trending_dashboard(Mock(), timeframe="7d")
+    assert refresh.call_count == 1  # later reads use the published snapshot
+
+
+def test_dev_fallback_still_503s_when_publishing_fails(monkeypatch) -> None:
+    from app.config import get_settings
+    monkeypatch.setattr(get_settings(), "trending_on_demand_fallback", True)
+    monkeypatch.setattr(trending_service, "get_redis", lambda: Mock(get=Mock(return_value=None)))
+    monkeypatch.setattr(trending_service, "refresh_snapshot", Mock(return_value=False))
+    with pytest.raises(HTTPException) as error:
+        trending_service.get_trending_dashboard(Mock(), timeframe="7d")
+    assert error.value.status_code == 503
+
+
 def test_unreachable_redis_falls_back_to_bounded_compute(client: TestClient, monkeypatch) -> None:
     monkeypatch.setattr(trending_service, "get_redis", lambda: Mock(get=Mock(side_effect=ConnectionError("offline"))))
     res = client.get("/cards/trending?timeframe=7d")

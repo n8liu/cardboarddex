@@ -323,10 +323,11 @@ export function NavHeader() {
       </div>
 
       {/* Scrollable Navigation Row with Animated Sliding Pill */}
-      <div className="flex 2xl:hidden overflow-x-auto border-t border-slate-200/60 bg-slate-50/90 backdrop-blur-md p-2 scrollbar-none justify-start">
+      <div className="flex 2xl:hidden overflow-x-auto border-t border-slate-200/60 bg-slate-50/90 backdrop-blur-md p-2 scrollbar-none">
+        {/* mx-auto centers when it fits but, unlike justify-center, never clips the overflowing start. */}
         <nav
           ref={mobileNavRef}
-          className="relative flex items-center gap-1 text-xs font-mono p-1 rounded-xl bg-slate-100/70"
+          className="relative mx-auto flex shrink-0 items-center gap-1 text-xs font-mono p-1 rounded-xl bg-slate-100/70"
           aria-label="Mobile Navigation"
         >
           {/* Animated Sliding Pill Background for Mobile */}

@@ -1,43 +1,58 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
 import {
-  PRICE_RANGE_STEPS,
-  priceToStepIndex,
-  stepIndexToPrice,
+  PRICE_RANGE_MAX,
+  PriceRangeSlider,
+  positionToFilter,
+  positionToPrice,
+  priceToPosition,
 } from "@/components/ui/price-range-slider";
 
-describe("PriceRangeSlider step index mapping", () => {
-  it("converts null or undefined price to boundary indices", () => {
-    expect(priceToStepIndex(null, false)).toBe(0);
-    expect(priceToStepIndex(undefined, false)).toBe(0);
-    expect(priceToStepIndex(null, true)).toBe(PRICE_RANGE_STEPS.length - 1);
-    expect(priceToStepIndex(undefined, true)).toBe(PRICE_RANGE_STEPS.length - 1);
+vi.mock("@/context/currency-context", () => ({ useCurrency: () => ({ formatPrice: (value: number) => `$${value}` }) }));
+
+describe("PriceRangeSlider continuous scale", () => {
+  it("maps unset prices to the track ends", () => {
+    expect(priceToPosition(null, false)).toBe(0);
+    expect(priceToPosition(undefined, false)).toBe(0);
+    expect(priceToPosition(null, true)).toBe(1);
+    expect(priceToPosition(undefined, true)).toBe(1);
   });
 
-  it("maps exact step prices to corresponding index", () => {
-    expect(priceToStepIndex(1, false)).toBe(0);
-    expect(priceToStepIndex(10, false)).toBe(1);
-    expect(priceToStepIndex(25, false)).toBe(2);
-    expect(priceToStepIndex(50, false)).toBe(3);
-    expect(priceToStepIndex(100, false)).toBe(4);
-    expect(priceToStepIndex(5000, true)).toBe(11);
+  it("round-trips any whole-dollar price, not just fixed steps", () => {
+    for (const price of [0, 1, 7, 28, 45, 137, 999, 2468, PRICE_RANGE_MAX]) {
+      expect(positionToPrice(priceToPosition(price, false))).toBe(price);
+    }
   });
 
-  it("maps intermediate prices to the closest step index", () => {
-    // 28 is closer to 25 than 50
-    expect(priceToStepIndex(28, false)).toBe(2);
-    // 45 is closer to 50 than 25
-    expect(priceToStepIndex(45, false)).toBe(3);
+  it("is monotonic and gives low prices proportionate room", () => {
+    const prices = Array.from({ length: 101 }, (_, i) => positionToPrice(i / 100));
+    expect(prices.every((price, i) => i === 0 || price >= prices[i - 1])).toBe(true);
+    // Log scale: $100 sits a little past the middle rather than in the first 2% of the track.
+    expect(priceToPosition(100, false)).toBeGreaterThan(0.5);
+    expect(priceToPosition(100, false)).toBeLessThan(0.6);
   });
 
-  it("converts step index to price values correctly", () => {
-    // Min slider at index 0 allows cards down to 0
-    expect(stepIndexToPrice(0, false)).toBe(0);
-    expect(stepIndexToPrice(2, false)).toBe(25);
-    expect(stepIndexToPrice(4, false)).toBe(100);
+  it("clamps out-of-range positions and prices", () => {
+    expect(positionToPrice(-1)).toBe(0);
+    expect(positionToPrice(2)).toBe(PRICE_RANGE_MAX);
+    expect(priceToPosition(-5, false)).toBe(0);
+    expect(priceToPosition(99999, false)).toBe(1);
+  });
 
-    // Max slider at last index is unbounded (null)
-    expect(stepIndexToPrice(PRICE_RANGE_STEPS.length - 1, true)).toBeNull();
-    // Max slider below last index returns exact price
-    expect(stepIndexToPrice(4, true)).toBe(100);
+  it("treats the max thumb at the end as unbounded", () => {
+    expect(positionToFilter(1, true)).toBeNull();
+    expect(positionToFilter(1, false)).toBe(PRICE_RANGE_MAX);
+    expect(positionToFilter(0, false)).toBe(0);
+  });
+
+  it("moves by small continuous increments from the keyboard", () => {
+    const onChange = vi.fn();
+    render(<PriceRangeSlider minPrice={null} maxPrice={100} onChange={onChange} />);
+    fireEvent.keyDown(screen.getByRole("slider", { name: "Maximum price range handle" }), { key: "ArrowRight" });
+    const { min, max } = onChange.mock.calls[0][0];
+    expect(min).toBe(0);
+    // One percent of the track above $100: a few dollars, not the next fixed step ($150).
+    expect(max).toBeGreaterThan(100);
+    expect(max).toBeLessThan(115);
   });
 });

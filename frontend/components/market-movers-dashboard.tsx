@@ -16,6 +16,7 @@ import { BackToTop } from "@/components/ui/back-to-top";
 import { InfiniteScrollSentinel } from "@/components/ui/infinite-scroll-sentinel";
 import { SearchInput } from "@/components/ui/search-input";
 import type { MarketMoverItem, MarketMoversResponse, MoverDirection, MoverPeriod } from "@/types/card";
+import { IMAGE_HOVER, TILE_HOVER } from "@/lib/card-hover";
 
 type MoverQuickFilter = "all" | "surge25" | "dip15" | "high50" | "budget15";
 
@@ -64,11 +65,11 @@ function MoverCard({ item }: { item: MarketMoverItem }) {
     <Link
       href={`/cards/${encodeURIComponent(item.card_id)}`}
       prefetch={false}
-      className="card-cv animate-card-cascade group relative flex flex-col justify-between rounded-2xl border border-slate-200/90 bg-white p-4 shadow-2xs transition duration-150 hover:border-slate-400 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-slate-900"
+      className={`card-cv animate-card-cascade group relative flex flex-col justify-between rounded-2xl border border-slate-200/90 bg-white p-4 shadow-2xs ${TILE_HOVER} focus:outline-none focus:ring-2 focus:ring-slate-900`}
     >
       <div className="flex gap-3.5">
         {/* Card Image Thumbnail */}
-        <div className="relative h-40 w-28 shrink-0 sm:h-52 sm:w-36 overflow-hidden rounded-xl border border-slate-100 bg-slate-50 p-1">
+        <div className="relative h-40 w-28 shrink-0 sm:h-52 sm:w-36 overflow-hidden rounded-xl border border-slate-100 bg-slate-50">
           {imageFailed ? (
             <div className="flex h-full w-full items-center justify-center text-xs font-bold text-slate-400">
               {item.name.slice(0, 1).toUpperCase()}
@@ -78,7 +79,7 @@ function MoverCard({ item }: { item: MarketMoverItem }) {
               src={cardImageUrl(item.image_url)}
               alt={item.name}
               fill
-              className="object-contain transition duration-200 group-hover:scale-105"
+              className={`object-contain p-1.5 ${IMAGE_HOVER}`}
               placeholder="blur"
               blurDataURL={shimmerBlurDataUrl(80, 110)}
               sizes="(min-width: 640px) 144px, 112px"

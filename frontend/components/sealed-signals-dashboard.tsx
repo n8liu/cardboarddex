@@ -12,6 +12,7 @@ import { SearchInput } from "@/components/ui/search-input";
 import { useCurrency } from "@/context/currency-context";
 import { cardImageUrl, getSealedSignals } from "@/lib/api";
 import type { GameLanguage, SealedProductType, SealedSignalItem, SealedSignalsResponse, SealedSignalType, SealedSortOption } from "@/types/card";
+import { IMAGE_HOVER, TILE_HOVER } from "@/lib/card-hover";
 
 type Layout = "cards" | "table";
 type View = "split" | "newer" | "older";
@@ -69,14 +70,14 @@ function ProductCard({ item, rank, period }: { item: SealedSignalItem; rank: num
     : item.signal_label === "UNDERPERFORM" ? "border-rose-200/60 bg-rose-50 text-rose-700"
     : "border-slate-200 bg-slate-50 text-slate-700";
   return (
-    <li className="group relative flex min-w-0 flex-col rounded-2xl border border-slate-200/90 bg-white p-4 shadow-2xs transition duration-150 hover:border-slate-400 hover:shadow-md focus-within:border-slate-400">
+    <li className={`group relative flex min-w-0 flex-col rounded-2xl border border-slate-200/90 bg-white p-4 shadow-2xs focus-within:border-slate-400 ${TILE_HOVER}`}>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-700">#{String(rank).padStart(2, "0")} · {item.product_type}</span>
         <span className={`rounded-md border px-2 py-0.5 text-[10px] font-bold ${signalStyle}`}>{item.signal_label.replaceAll("_", " ")}</span>
       </div>
       <div className="flex gap-3.5">
         <Link href={`/cards/${encodeURIComponent(item.card_id)}`} prefetch={false} tabIndex={-1} aria-hidden="true" className="relative h-40 w-28 shrink-0 overflow-hidden rounded-xl border border-slate-100 bg-slate-50 sm:h-52 sm:w-36">
-          <Image src={cardImageUrl(item.image_url)} alt="" fill sizes="(min-width: 640px) 144px, 112px" className="object-contain p-1 transition duration-200 group-hover:scale-105" />
+          <Image src={cardImageUrl(item.image_url)} alt="" fill sizes="(min-width: 640px) 144px, 112px" className={`object-contain p-1.5 ${IMAGE_HOVER}`} />
         </Link>
         <div className="flex min-w-0 flex-1 flex-col justify-between">
           <div>

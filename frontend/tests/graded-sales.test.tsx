@@ -27,11 +27,11 @@ it.each([
   expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
 });
 
-it("shows explicit zero, grade labels, coverage and stale sync dates", async () => {
+it("shows explicit zero, coverage and stale sync dates without per-grade counts", async () => {
   vi.mocked(getGradedSalesActivity).mockResolvedValue(ready);
   render(<GradedSalesActivityPanel />);
   expect(await screen.findByText("0 reported graded sales")).toBeVisible();
-  expect(screen.getByText("psa10: 0")).toBeVisible();
+  expect(screen.queryByText(/psa10/)).not.toBeInTheDocument();
   expect(screen.getByText(/Stale snapshot.*2026-10-01/)).toBeVisible();
   expect(screen.getByText("Latest sale unknown")).toBeVisible();
   expect(screen.getByText(/not a selected-period total/)).toBeVisible();
@@ -70,4 +70,13 @@ it("limits overview to 15 cards and the full view to 50", async () => {
   await waitFor(() => expect(screen.getAllByRole("link")).toHaveLength(15));
   rerender(<GradedSalesActivityPanel />);
   expect(screen.getAllByRole("link")).toHaveLength(50);
+});
+
+it("uses a compact list in the overview and a tile grid in the full view", async () => {
+  vi.mocked(getGradedSalesActivity).mockResolvedValue(ready);
+  const { rerender } = render(<GradedSalesActivityPanel compact />);
+  expect((await screen.findByRole("list")).className).toContain("space-y-2");
+  rerender(<GradedSalesActivityPanel />);
+  expect(screen.getByRole("list").className).toContain("grid-cols-2");
+  expect(screen.getByText("0 reported graded sales")).toBeVisible();
 });

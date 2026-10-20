@@ -1,5 +1,5 @@
 import type { HomeOverview, HomeStats } from "@/types/home";
-import type { MarketHistory, SalesActivity, GradedSalesActivity } from "@/types/market-data";
+import type { SalesActivity, GradedSalesActivity } from "@/types/market-data";
 import type {
   CardDetail,
   CardPricing,
@@ -323,10 +323,9 @@ export function getPokemonCards(
   );
 }
 
-export function getCardSets(game?: GameLanguage, options: CacheOptions = {}): Promise<CardSetOption[]> {
-  const qs = buildQueryString({
-    game: game && game !== "all" ? game : undefined,
-  });
+export function getCardSets(game: GameLanguage = "all", options: CacheOptions = {}): Promise<CardSetOption[]> {
+  // Always explicit: the backend defaults to English-only sets when `game` is omitted.
+  const qs = buildQueryString({ game });
   return request<CardSetOption[]>(`/cards/sets${qs}`, {
     next: { revalidate: 86400 },
   }, options);
@@ -574,9 +573,6 @@ export function cardImageUrl(path: string): string {
   return `${baseUrl}${path.startsWith("/") ? "" : "/"}${path}`;
 }
 
-export function getMarketHistory(cardId: string, days: 30 | 90 | 365 = 30, signal?: AbortSignal): Promise<MarketHistory> {
-  return request(`/cards/${encodeURIComponent(cardId)}/market-history?days=${days}`, { signal, cache: "no-store" });
-}
 export function getSalesActivity(days: 7 | 30 | 90 = 30, query = "", signal?: AbortSignal): Promise<SalesActivity> {
   return request(`/market/sales-activity${buildQueryString({ days, q: query })}`, { signal, cache: "no-store" });
 }

@@ -7,6 +7,7 @@ import { HoloCard } from "@/components/ui/holo-card";
 import { cardImageUrl } from "@/lib/api";
 import { shimmerBlurDataUrl } from "@/lib/shimmer";
 import type { PortfolioCardItem } from "@/types/binder";
+import { IMAGE_HOVER } from "@/lib/card-hover";
 
 interface BinderSleeveSlotProps {
   pageIndex: number;
@@ -140,7 +141,7 @@ export function BinderSleeveSlot({
           ) : (
             <Image
               alt={`${card.name} from ${card.set_name}`}
-              className="object-contain transition duration-300 group-hover:scale-[1.03]"
+              className={`object-contain p-1 ${IMAGE_HOVER}`}
               fill
               onError={() => setImageFailed(true)}
               placeholder="blur"

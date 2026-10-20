@@ -15,6 +15,7 @@ import { HoloCard } from "@/components/ui/holo-card";
 import { useCurrency } from "@/context/currency-context";
 import { isSealedProduct, summarizeDisplayedCards } from "@/lib/pokemon-card-summary";
 import { shimmerBlurDataUrl } from "@/lib/shimmer";
+import { IMAGE_HOVER, TILE_HOVER } from "@/lib/card-hover";
 
 type Props = {
   pokemonName: string;
@@ -321,12 +322,12 @@ function CardItem({
       href={`/cards/${encodeURIComponent(card.id)}`}
       prefetch={false}
       style={{ animationDelay: `${Math.min(idx * 25, 300)}ms` }}
-      className="card-cv animate-card-cascade group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-slate-200/90 bg-white p-3 shadow-xs transition-all duration-300 hover:-translate-y-1 hover:border-emerald-300 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
+      className={`card-cv animate-card-cascade group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-slate-200/90 bg-white p-3 shadow-xs ${TILE_HOVER} focus:outline-none focus:ring-2 focus:ring-emerald-500`}
     >
       <div>
         {/* 3D Holo Card Tilt with Rarity Shader */}
         <HoloCard maxTilt={8} rarity={card.rarity} className="w-full">
-          <div className="relative aspect-[5/7] w-full overflow-hidden rounded-xl bg-slate-100 p-1">
+          <div className="relative aspect-[5/7] w-full overflow-hidden rounded-xl bg-slate-100">
             {failed ? (
               <div className="flex h-full w-full flex-col items-center justify-center bg-slate-100 text-center">
                 <span className="flex h-10 w-10 items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 text-xs font-black text-emerald-700">
@@ -340,7 +341,7 @@ function CardItem({
                 alt={card.name}
                 fill
                 sizes="(max-width: 640px) 150px, (max-width: 1024px) 200px, 250px"
-                className="object-contain transition-transform duration-300 group-hover:scale-105"
+                className={`object-contain p-1.5 ${IMAGE_HOVER}`}
                 placeholder="blur"
                 blurDataURL={shimmerBlurDataUrl(150, 210)}
                 onError={() => setFailed(true)}

@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { PriceDashboard } from "@/components/price-dashboard";
 import type { CardPricing, PriceObservation } from "@/types/card";
@@ -82,4 +82,29 @@ it("does not substitute a historical graded listing for missing recent PPT media
   const metric = screen.getByText("PSA 10 · 7-day median").parentElement!;
   expect(metric).toHaveTextContent("—");
   expect(metric).not.toHaveTextContent("900");
+});
+
+it("defaults the price history to every printing on, grading companies off and 3 months", () => {
+  const base = { provider: "market", language: "english", currency: "USD", metric: "market", fetched_at: "2026-10-16", points: [] };
+  render(<PriceDashboard pricing={{ card_id: "card", provider_states: [], observations: [], ppt_mapped: true, market_history_series: [
+    { ...base, id: "holo", printing: "Holofoil", condition: "Near Mint", grade: null },
+    { ...base, id: "rev", printing: "Reverse Holofoil", condition: "Near Mint", grade: null },
+    ...["psa10", "psa9", "psa8"].map((grade) => ({ ...base, id: grade, printing: null, condition: null, grade, metric: "daily_average" })),
+    { ...base, id: "cgc10", printing: null, condition: null, grade: "cgc10", metric: "daily_average" },
+  ] }} />);
+  const printings = screen.getByRole("group", { name: "Printings" });
+  expect(within(printings).getByRole("button", { name: "Holofoil" })).toHaveAttribute("aria-pressed", "true");
+  expect(within(printings).getByRole("button", { name: "Reverse Holofoil" })).toHaveAttribute("aria-pressed", "true");
+  const graded = screen.getByRole("group", { name: "Graded" });
+  const psa = within(graded).getByRole("button", { name: /PSA/ });
+  expect(psa).toHaveAttribute("aria-pressed", "false");
+  expect(psa).toHaveTextContent("3");
+  expect(within(graded).getByRole("button", { name: /CGC/ })).toHaveAttribute("aria-pressed", "false");
+  expect(within(graded).getByRole("button", { name: "TAG" })).toBeDisabled();
+  expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+  fireEvent.click(psa);
+  expect(psa).toHaveAttribute("aria-pressed", "true");
+  fireEvent.click(within(printings).getByRole("button", { name: "Holofoil" }));
+  expect(within(printings).getByRole("button", { name: "Holofoil" })).toHaveAttribute("aria-pressed", "false");
+  expect(screen.getByRole("button", { name: "3 Months" })).toHaveAttribute("aria-pressed", "true");
 });

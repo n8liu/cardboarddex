@@ -19,13 +19,75 @@ export function mergeProviderHistory(legacy: ChartPoint[], series: ProviderHisto
       dates.set(point.date, row);
     }
   }
-  // Explicit null calendar days break lines across missing provider observations.
+  // Every calendar day is a hoverable row; missing values stay null so nothing is plotted for them.
   const first = [...dates.keys()].sort()[0];
-  if (first && series.length) {
+  if (first) {
     for (let time = Date.parse(first + "T00:00:00Z"); time <= Date.parse(end + "T00:00:00Z"); time += 86400000) {
       const date = new Date(time).toISOString().slice(0, 10);
       if (!dates.has(date)) dates.set(date, { date });
     }
   }
   return [...dates.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/**
+ * Display-only fill: `${key}:line` holds each recorded price until the next one (from the
+ * key's first observation through the last row), and `:carried` marks held days for the
+ * tooltip. Recorded keys are never filled.
+ */
+export function carryForward(rows: ChartPoint[], keys: string[]): ChartPoint[] {
+  const last = new Map<string, ChartPoint>();
+  return rows.map((row) => {
+    const out: ChartPoint = { ...row };
+    for (const key of keys) {
+      if (typeof row[key] === "number") {
+        last.set(key, row);
+        out[`${key}:line`] = row[key];
+        continue;
+      }
+      const known = last.get(key);
+      if (!known) continue;
+      out[`${key}:line`] = known[key];
+      out[`${key}:carried`] = known[key];
+      out[`${key}:carriedFrom`] = known.date;
+      for (const meta of ["source", "condition"]) if (known[`${key}:${meta}`] !== undefined) out[`${key}:${meta}`] = known[`${key}:${meta}`];
+    }
+    return out;
+  });
+}
+
+export const GRADING_COMPANIES = ["psa", "cgc", "tag"] as const;
+export type GradingCompany = (typeof GRADING_COMPANIES)[number];
+
+/** "psa10" → "psa", "cgc9_5" → "cgc"; null for raw series. */
+export function gradeCompany(grade: string | null): string | null {
+  return grade ? grade.match(/^[a-z]+/i)?.[0].toLowerCase() ?? null : null;
+}
+
+function gradeValue(grade: string): number {
+  return Number(grade.replace(/^[a-z]+/i, "").replace("_", ".")) || 0;
+}
+
+export function seriesPrinting(series: ProviderHistorySeries): string {
+  return series.printing || "Unknown printing";
+}
+
+/**
+ * Chart series for the toggles: one raw line per enabled printing (its preferred condition,
+ * else Near Mint, else the first listed) and every grade of each enabled grading company,
+ * highest grade first. Other conditions and companies stay hidden to keep the chart readable.
+ */
+export function selectHistorySeries(series: ProviderHistorySeries[], options: {
+  printings: ReadonlySet<string>; companies: ReadonlySet<string>; preferredCondition?: string | null;
+}): ProviderHistorySeries[] {
+  const raw = series.filter((item) => !item.grade && options.printings.has(seriesPrinting(item)));
+  const conditionFor = new Map<string, string | null>();
+  for (const printing of new Set(raw.map(seriesPrinting))) {
+    const conditions = raw.filter((item) => seriesPrinting(item) === printing).map((item) => item.condition);
+    conditionFor.set(printing, [options.preferredCondition, "Near Mint"].find((c) => c && conditions.includes(c)) ?? conditions[0]);
+  }
+  const graded = series.filter((item) => options.companies.has(gradeCompany(item.grade) ?? ""))
+    .sort((a, b) => GRADING_COMPANIES.indexOf(gradeCompany(a.grade) as GradingCompany) - GRADING_COMPANIES.indexOf(gradeCompany(b.grade) as GradingCompany)
+      || gradeValue(b.grade!) - gradeValue(a.grade!));
+  return [...raw.filter((item) => item.condition === conditionFor.get(seriesPrinting(item))), ...graded];
 }

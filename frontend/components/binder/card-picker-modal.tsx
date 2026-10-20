@@ -6,6 +6,7 @@ import { useCurrency } from "@/context/currency-context";
 import { cardImageUrl, searchCards } from "@/lib/api";
 import { shimmerBlurDataUrl } from "@/lib/shimmer";
 import type { CardSummary, GameLanguage } from "@/types/card";
+import { IMAGE_HOVER, TILE_HOVER } from "@/lib/card-hover";
 
 interface CardPickerModalProps {
   isOpen: boolean;
@@ -236,7 +237,7 @@ export function CardPickerModal({
                     onSelectCard(card.id);
                     onClose();
                   }}
-                  className="group relative flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white p-2.5 text-left transition-all duration-200 hover:border-emerald-500 hover:shadow-md hover:scale-[1.02]"
+                  className={`group relative flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white p-2.5 text-left ${TILE_HOVER}`}
                 >
                   {/* Card Thumbnail */}
                   <div className="relative aspect-[5/7] w-full overflow-hidden rounded-lg bg-slate-50 mb-2">
@@ -244,7 +245,7 @@ export function CardPickerModal({
                       alt={card.name}
                       src={cardImageUrl(card.image_url)}
                       fill
-                      className="object-contain p-1 transition duration-200 group-hover:scale-105"
+                      className={`object-contain p-1.5 ${IMAGE_HOVER}`}
                       placeholder="blur"
                       blurDataURL={shimmerBlurDataUrl(160, 220)}
                       sizes="(max-width: 640px) 45vw, 160px"

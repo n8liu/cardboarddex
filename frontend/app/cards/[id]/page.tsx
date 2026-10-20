@@ -7,7 +7,6 @@ import { notFound } from "next/navigation";
 import { BackButton } from "@/components/back-button";
 import { CardDetailClientFallback } from "@/components/card-detail-client-fallback";
 import { RememberViewedCard } from "@/components/recently-viewed";
-import { MarketHistoryPanel } from "@/components/market-history-panel";
 import { PriceDashboard } from "@/components/price-dashboard";
 import { ShopOnEbayButton } from "@/components/shop-ebay-button";
 import { AddToBinderButton } from "@/components/binder/add-to-binder-button";
@@ -182,7 +181,6 @@ async function CardContent({ id, refParam }: { id: string; refParam?: string }) 
         </section>
       </div>
       <RememberViewedCard card={card} />
-      <MarketHistoryPanel cardId={card.id} />
       <Suspense fallback={<SectionLoadingBar label="Loading prices and market comparisons…" />}>
         <CardPrices card={card} pricing={pricing} />
       </Suspense>

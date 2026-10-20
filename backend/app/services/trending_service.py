@@ -555,7 +555,15 @@ def get_trending_dashboard(
     if not clean_q:
         # Card and Pokémon columns use all-time aggregates, so one snapshot serves
         # every timeframe. Only the volume column depends on the window.
-        published = read_snapshot(r)
+        try:
+            published = read_snapshot(r)
+        except HTTPException:
+            if not get_settings().trending_on_demand_fallback:
+                raise
+            # Dev without a worker: publish through the normal leased path, then serve it.
+            logger.warning("Trending snapshot missing; publishing on request (TRENDING_ON_DEMAND_FALLBACK)")
+            refresh_snapshot()
+            published = read_snapshot(r)
         if published is not None:
             if not include_observation_volume:
                 return published.model_copy(update={"timeframe": timeframe, "volume_pokemon": [],
