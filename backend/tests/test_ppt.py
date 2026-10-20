@@ -382,7 +382,10 @@ def test_scheduler_processes_priority_once_and_preserves_checkpoint(db, payload,
     client = Mock()
     client.request.return_value = [payload]
     monkeypatch.setattr(job, "PPTClient", lambda: client)
+    from app.models import PPTCheckpoint
     map_product(db, payload, "english", "cards")
+    # The first lane is priority; seed this week's pool so the result never depends on the hour.
+    db.add(PPTCheckpoint(key=job.pool_key(datetime.now(UTC)), payload={"cards": ["legacy-card"]}))
     db.commit()
     assert job.sync_ppt()["requests_completed"] == 1
     assert client.request.call_args.kwargs["includeEbay"] is True
@@ -744,3 +747,30 @@ def test_unknown_legacy_prefix_continues_single_ppt_series(db, payload, now):
     assert [(p['price'], p['source']) for p in series[0]['points']] == [(88, 'tcgapi'), (110, 'pokemonpricetracker')]
     assert series[0]['points'][0]['condition'] is None
     assert db.get(MarketHistory, ('legacy-card', 'Holofoil', yesterday.date())).market_price == 88
+
+
+def test_worker_ingestion_leads_live_feed_and_skips_unchanged_quotes(db, payload, now):
+    from fastapi import Response
+    from app.routers.market import get_live_feed
+    db.add(PriceObservation(fingerprint="legacy-old", card_id="legacy-card", provider="tcgapi", provider_card_id="x",
+                            variant_id="raw", price=5, currency="USD", observed_at=now - timedelta(hours=1)))
+    product = map_product(db, payload, "english", "cards")
+    ingest(db, product, payload, now)
+    db.commit()
+    page = get_live_feed(Response(), "pokemonpricetracker", "all", None, None, 1, 24, db)
+    assert page.items and all(i.provider == "pokemonpricetracker" for i in page.items)
+    assert page.items[0].observed_at.replace(tzinfo=UTC) == now
+    newest = get_live_feed(Response(), "all", "all", None, None, 1, 1, db).items[0]
+    assert newest.provider == "pokemonpricetracker"
+    count = db.scalar(select(func.count()).select_from(PriceObservation))
+
+    ingest(db, product, payload, now + timedelta(minutes=5))  # same price and price date
+    db.commit()
+    assert db.scalar(select(func.count()).select_from(PriceObservation)) == count
+
+    changed = deepcopy(payload)
+    changed["prices"]["market"] = changed["variants"]["Holofoil"]["marketPrice"] = 120
+    ingest(db, product, changed, now + timedelta(minutes=10))
+    db.commit()
+    top = get_live_feed(Response(), "pokemonpricetracker", "all", None, None, 1, 1, db).items[0]
+    assert top.price == 120
