@@ -348,6 +348,75 @@ def test_lower_pilot_cap_accounts_for_provider_daily_remaining(quota, monkeypatc
         q.reserve(1, 1, "retry")
 
 
+def test_pacing_spreads_credits_until_late_window(quota):
+    q, redis, instant = quota
+    day = int(instant[0] // 86400)
+    key = f"{PREFIX}:credits:{day}"
+    instant[0] = day * 86400 + 3600
+    # 01:00: one hour of 19,500/22h plus one hour of burst = 886 + 886.
+    redis.set(key, 1770)
+    q.finish(q.reserve(2, 1, "rotation"))
+    with pytest.raises(PPTBlocked, match="paced"):
+        q.reserve(1, 1, "priority")
+    q.finish(q.reserve(3, 1, "retry"))  # retry keeps its small reserved allowance
+    instant[0] = day * 86400 + 12 * 3600
+    q.finish(q.reserve(3, 1, "rotation"))
+    instant[0] = day * 86400 + 21 * 3600
+    redis.set(key, 19500)
+    with pytest.raises(PPTBlocked, match="daily"):  # the hard cap still reports daily
+        q.reserve(1, 1, "priority")
+    instant[0] = day * 86400 + 22 * 3600
+    q.finish(q.reserve(3, 1, "rotation"))  # late borrowing is unpaced
+
+
+def test_pacing_can_be_disabled(quota, monkeypatch):
+    q, redis, instant = quota
+    monkeypatch.setattr(get_settings(), "ppt_daily_pacing_enabled", False)
+    day = int(instant[0] // 86400)
+    instant[0] = day * 86400 + 3600
+    redis.set(f"{PREFIX}:credits:{day}", 5000)
+    q.finish(q.reserve(3, 1, "rotation"))
+
+
+def test_paced_spending_is_even_across_the_day(quota, monkeypatch):
+    from app.providers import ppt
+    q, redis, instant = quota
+    monkeypatch.setitem(ppt.LANES, "rotation", 20000)  # isolate pacing from the lane split
+    day = int(instant[0] // 86400)
+    key = f"{PREFIX}:credits:{day}"
+    hourly, previous = [], 0
+    for minute in range(22 * 60):
+        instant[0] = day * 86400 + minute * 60
+        try:
+            q.finish(q.reserve(25, 3, "rotation"))
+        except PPTBlocked as exc:
+            assert str(exc) in {"paced", "daily"}  # the allowance meets the cap near 22:00
+        if minute % 60 == 59:
+            spent = int(redis.get(key) or 0)
+            hourly.append(spent - previous)
+            previous = spent
+    assert hourly[0] <= 1772 and all(hour > 0 for hour in hourly)
+    # Hour 1 may still use leftover burst; afterwards spending tracks 19,500/22h.
+    assert max(hourly[2:]) <= 925 and previous >= 19000
+
+
+def test_sync_stops_on_pacing_and_reports_reason(db, payload, monkeypatch, caplog):
+    import logging
+    from app.models import PPTCheckpoint
+    job, _ = _scheduler(db, monkeypatch)
+    client = Mock()
+    client.request.side_effect = PPTBlocked("paced")
+    monkeypatch.setattr(job, "PPTClient", lambda: client)
+    map_product(db, payload, "english", "cards")
+    db.add(PPTCheckpoint(key=job.pool_key(datetime.now(UTC)), payload={"cards": ["legacy-card"]}))
+    db.commit()
+    with caplog.at_level(logging.INFO, logger=job.__name__):
+        result = job.sync_ppt()
+    assert result == {"status": "complete", "requests_completed": 0, "blocked": "paced"}
+    assert client.request.call_count == 1
+    assert "PPT batch yielded reason=paced" in caplog.text
+
+
 def test_app_price_consumers_prefer_provider_without_merging_baselines(db, payload, now):
     from app.services.catalog_service import query_pokemon_cards
     from app.services.portfolio_service import calculate_portfolio_valuation
@@ -500,7 +569,7 @@ def test_disposable_migration_preserves_existing_tables(tmp_path, monkeypatch):
     assert str(before) == str(after)
     with engine.connect() as conn:
         assert conn.execute(text("SELECT id FROM cards")).scalar() == "keep"
-        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0012_market_history_transitions"
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0013_catalog_price_selected"
     engine.dispose()
 
 

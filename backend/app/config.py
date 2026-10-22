@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     ppt_primary_enabled: bool = False
     tcgapi_ingestion_enabled: bool = False  # Deprecated; cannot enable retired jobs
     ppt_daily_credit_limit: int = Field(default=20000, ge=1, le=20000)
+    # Spread credits evenly to 22:00 UTC; off restores first-come spending.
+    ppt_daily_pacing_enabled: bool = True
     ppt_minute_weight_limit: int = Field(default=55, ge=1, le=55)
     ppt_batch_size: int = Field(default=8, ge=1, le=15)
     ebay_client_id: str | None = None

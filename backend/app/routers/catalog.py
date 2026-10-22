@@ -58,7 +58,7 @@ def clear_catalog_caches() -> None:
 
 
 @router.get("/search", response_model=list[CardSummary])
-@cached_read("search_cards", fresh=60, maximum=300)
+@cached_read("search_cards", fresh=60, maximum=1800)
 def search_cards(
     response: Response,
     q: str = Query(default="", max_length=120),
@@ -79,38 +79,27 @@ def search_cards(
     db: Session = Depends(get_db),
 ) -> list[CardSummary]:
     clean_q = q.strip()
-    selected, price_rows, price_join = catalog_price_join(dialect=db.get_bind().dialect.name, broad=not clean_q and not set_id and (
-        sort_by in {"price_asc", "price_desc"} or min_price is not None or max_price is not None))
+    price_sorted = sort_by in {"price_asc", "price_desc"}
+    broad = not clean_q and not set_id and (price_sorted or min_price is not None or max_price is not None)
+    selected, price_rows, price_join = catalog_price_join(dialect=db.get_bind().dialect.name, broad=broad)
     latest_price = selected.price
     latest_currency = literal("USD").label("market_currency")
     latest_synced = selected.provider_updated_at
+    columns = (Card, Set, latest_price.label("market_price"), latest_currency, latest_synced.label("latest_synced"))
 
-    statement = (
-        select(
-            Card,
-            Set,
-            latest_price.label("market_price"),
-            latest_currency,
-            latest_synced.label("latest_synced"),
-        )
-        .join(Set, Card.set_id == Set.id)
-        .where(Card.name.not_ilike("%code card%"))
-    )
-    statement = statement.outerjoin(price_rows, price_join)
+    conditions = [Card.name.not_ilike("%code card%")]
 
     # Language/series filtering
     if game == "pokemon":
-        statement = statement.where(or_(Set.series.is_(None), Set.series != "Pokemon Japan"))
+        conditions.append(or_(Set.series.is_(None), Set.series != "Pokemon Japan"))
     elif game == "pokemon-japan":
-        statement = statement.where(Set.series == "Pokemon Japan")
+        conditions.append(Set.series == "Pokemon Japan")
 
     if clean_q:
         pattern = f"%{_escape_like(clean_q)}%"
-        statement = statement.where(
-            or_(Card.name.ilike(pattern, escape="\\"), Set.name.ilike(pattern, escape="\\"))
-        )
+        conditions.append(or_(Card.name.ilike(pattern, escape="\\"), Set.name.ilike(pattern, escape="\\")))
     if set_id:
-        statement = statement.where(Card.set_id == set_id)
+        conditions.append(Card.set_id == set_id)
 
     is_none_or_sealed = or_(
         Card.rarity.is_(None),
@@ -119,15 +108,36 @@ def search_cards(
         Card.rarity.ilike("none"),
     )
     if sealed_only:
-        statement = statement.where(is_none_or_sealed)
+        conditions.append(is_none_or_sealed)
     elif hide_sealed:
-        statement = statement.where(not_(is_none_or_sealed))
+        conditions.append(not_(is_none_or_sealed))
 
     # Price range filtering
+    price_conditions = []
     if min_price is not None and min_price > 0:
-        statement = statement.where(latest_price >= min_price)
+        price_conditions.append(latest_price >= min_price)
     if max_price is not None:
-        statement = statement.where(latest_price <= max_price)
+        price_conditions.append(latest_price <= max_price)
+
+    def cards(*selected_columns):
+        return select(*selected_columns).select_from(Card).join(Set, Card.set_id == Set.id).where(*conditions)
+
+    if broad and price_sorted:
+        # Same order as price NULLS LAST, name, id, in two index-friendly steps:
+        # priced cards in price order, then unpriced cards by name.
+        price_order = latest_price.asc() if sort_by == "price_asc" else latest_price.desc()
+        priced = cards(*columns).join(price_rows, price_join).where(latest_price.is_not(None), *price_conditions)
+        rows = db.execute(priced.order_by(price_order, Card.name.asc(), Card.id.asc()).offset(offset).limit(limit)).all()
+        if len(rows) < limit and not price_conditions:
+            priced_total = offset + len(rows) if rows else db.scalar(
+                cards(func.count()).join(price_rows, price_join).where(latest_price.is_not(None)))
+            # NOT EXISTS plans as an anti-join; LEFT JOIN ... IS NULL is estimated at one row.
+            unpriced = cards(Card, Set, literal(None).label("market_price"), latest_currency,
+                             literal(None).label("latest_synced")).where(
+                ~select(1).select_from(price_rows).where(price_join, latest_price.is_not(None)).correlate(Card).exists())
+            rows += db.execute(unpriced.order_by(Card.name.asc(), Card.id.asc())
+                               .offset(max(0, offset - priced_total)).limit(limit - len(rows))).all()
+        return _search_results(db, rows)
 
     if sort_by == "price_asc":
         order = (latest_price.asc().nullslast(), Card.name.asc(), Card.id.asc())
@@ -145,8 +155,20 @@ def search_cards(
             latest_price.desc().nullslast(),
             Card.id.asc(),
         )
+    if sort_by in {"number_asc", "number_desc", "set"} and not price_conditions:
+        # The order ignores price: choose the page first, then price only its cards.
+        ids = list(db.scalars(cards(Card.id).order_by(*order).offset(offset).limit(limit)))
+        found = {row[0].id: row for row in db.execute(
+            cards(*columns).outerjoin(price_rows, price_join).where(Card.id.in_(ids)))} if ids else {}
+        rows = [found[card_id] for card_id in ids]
+    else:
+        statement = cards(*columns).outerjoin(price_rows, price_join).where(*price_conditions)
+        rows = db.execute(statement.order_by(*order).offset(offset).limit(limit)).all()
 
-    rows = db.execute(statement.order_by(*order).offset(offset).limit(limit)).all()
+    return _search_results(db, rows)
+
+
+def _search_results(db: Session, rows) -> list[CardSummary]:
     results = [
         _summary(card, card_set, market_price, market_currency, latest_synced)
         for card, card_set, market_price, market_currency, latest_synced in rows

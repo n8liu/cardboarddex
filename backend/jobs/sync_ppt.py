@@ -181,6 +181,7 @@ def sync_ppt():
         return {"status": "leased"}
     client = PPTClient()
     completed = 0
+    blocked = None
     started = time.monotonic()
     try:
         with SessionLocal() as db:
@@ -221,7 +222,8 @@ def sync_ppt():
                     completed += 1
                 except PPTBlocked as exc:
                     db.rollback()
-                    if str(exc) in {"minute", "cooldown", "in_flight", "daily", "missing_api_key"}:
+                    blocked = (str(exc), lane)
+                    if str(exc) in {"minute", "cooldown", "in_flight", "daily", "paced", "missing_api_key"}:
                         break
                 except Exception as exc:
                     db.rollback()
@@ -237,7 +239,9 @@ def sync_ppt():
             scheduling = db.get(PPTCheckpoint, "scheduler")
             scheduling.payload = {"turn": turn}
             db.commit()
-        return {"status": "complete", "requests_completed": completed}
+        if blocked:
+            logger.info("PPT batch yielded reason=%s lane=%s completed=%s", blocked[0], blocked[1], completed)
+        return {"status": "complete", "requests_completed": completed, "blocked": blocked[0] if blocked else None}
     finally:
         client.close()
         redis.eval(RELEASE, 1, lease, token)

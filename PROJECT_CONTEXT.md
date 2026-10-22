@@ -15,10 +15,9 @@ Later on October 19, ingestion was resumed and at 19:24 UTC `jobs.sync_ppt` repe
 
 Production evidence at 01:03 UTC on October 20: worker and Beat running, `sync_ppt` completing 8 requests per run (from fallback pool `priority:2026-10-12`), new PPT feed rows with `price_date` 2026-10-19, live stats `total_ppt_updates` 1,584, and Trending refreshed. Open checks:
 
-- Confirm `/opt/cardboarddex/ingestion.paused` was actually removed. The `rm` prompt may have declined it, and if it is still present the next release leaves worker/Beat stopped.
-- One live-stats refresh hit the 5s statement timeout as ingestion started. If it repeats under write load, optimize the count query rather than raising the deadline.
+- ~~Confirm the pause marker was removed~~ and ~~live-stats timeout~~: both happened on October 20; see "Production incidents — 2026-10-20".
 - Confirm `PPT priority pool built key=priority:2026-10-19` (or diagnose a build failure) and its duration on production-sized PostgreSQL.
-- Confirm eBay collection resumed producing rows (the last seen was 19:23 UTC on October 19), and that host memory stays above about 150 MB available.
+- eBay collection resumed producing rows (19:04 UTC on October 20). Keep host memory above about 150 MB available and iowait under 10%.
 - The installed host monitor still reports legacy TCGAPI coverage and needs its separately installed script updated.
 
 The source/rollback host remains retained; deletion is not authorized. Earlier chronological evidence is in [the archived context](docs/archive/pre-ppt/PROJECT_CONTEXT.md).
@@ -39,6 +38,44 @@ Open items:
 - Grading-profit shows bogus eBay asking prices (e.g. a $17.5M PSA 10); no outlier cap yet.
 - Five Trending tests fail when a local Redis is running (pre-existing; they pass in CI).
 - Locally, Trending needs a seeded snapshot (`python -m jobs.refresh_trending`) or the fallback flag, graded sales need `ppt_products`, and grading-profit needs `listing_assessments` (`python -m jobs.check_listing_images`, stored data only).
+
+## Catalog 503 fix — 2026-10-20 (local, not deployed)
+
+Production `/cards/search` returned 503 (`Results temporarily unavailable`) for the default catalog request. Uncached broad price sorts took 4.0–4.6s against the 5s rebuild `statement_timeout`, and `number_asc` exceeded it; each timeout also triggers the 30s failure cooldown. Fix, keeping the deadline unchanged:
+
+- Migration `0013_catalog_price_selected` adds `catalog_price_candidates.selected`, which marks each card's PPT-primary price (computed on write by `mark_selected`, backfilled by the migration), plus partial index `ix_catalog_price_selected(price)`. `Cards`/`Sets` are untouched.
+- Broad price sorts read priced cards in index order, then unpriced cards by name (`NOT EXISTS`). Number/set sorts pick the page before looking up prices. `search_cards` serves stale results for up to 30 minutes (was 5).
+- Synthetic 55k-card PostgreSQL 17 with production memory settings: default catalog 71→2ms, `number_asc` 215→38ms; results identical to the old code in all nine cases. The deepest price page is slower (106→174ms). Production still needs an `EXPLAIN (ANALYZE, BUFFERS)` check.
+- Deploy: stop worker/Beat **before** `alembic upgrade head` (the backfill assumes no concurrent candidate writes), then run `python -m jobs.catalog_prices verify` (or `repair`) in the worker-budget container before releasing. Confirm `CATALOG_CURRENT_PRICES_ENABLED=true` in production; the legacy path barely speeds up.
+
+## PPT daily pacing — 2026-10-21 (local, not deployed)
+
+Production Live Comps stopped receiving PPT rows after about 8,000 calls each day. Suspected cause (from code; production confirmation pending): each refresh costs 2–3 credits, so 20,000 credits is about 8,000 requests. The 15s Beat at 8 per batch (about 32 a minute, under the 55 weight limit) spends them by about 04:00 UTC, then every reservation is `PPTBlocked("daily")` until 00:00 UTC, which `sync_ppt` swallowed silently.
+
+- `PPTQuota.reserve` now also enforces `pacing_allowance` atomically in the Lua reservation: daytime cap × elapsed/22h + one hour of burst. Returns `paced`. Retry and ≥22:00 UTC are unpaced; the hard cap still reports `daily`. `PPT_DAILY_PACING_ENABLED=false` restores the old behavior.
+- `sync_ppt` logs `PPT batch yielded reason=… lane=…` and returns `blocked`; the health report adds `quota.pacing_allowance`.
+- Before deploying, confirm on the host: Redis `cardboarddex:ppt:v1:credits:<epoch//86400>` near 19,500–20,000 early in the UTC day, and PPT `price_observations` per hour dropping to zero after the first hours. After deploying, PPT rows should arrive in all 24 hours.
+
+**Actual production stop (confirmed October 22, 05:46 UTC):** the ingestion monitor paused ingestion again at 01:55:03 UTC on October 21 ("Memory/swap/I/O pressure persisted for five minutes"). Worker and Beat had been `Exited` for 28 hours, and Redis had no PPT counters for day 20748. Memory (178–287 MB available) and swap (<0.7 MiB/s) were fine and the API was healthy; iowait sat at 9.3–11.8% (limit 10%, `monitor_ingestion.py:35`) and peaked at 15.0%. The 10% iowait threshold trips on this host's normal load.
+
+Fix (local, not deployed):
+- `monitor_ingestion.py`: memory/swap keep the five-minute rule; iowait now pauses only above 25% for 15 minutes (`iowait_since` in `latest.json`). The monitor runs from `/opt/cardboarddex/operations/scripts/lightsail/` and must be reinstalled there; a release does not update it.
+- `live_stats.py`: retired-provider (tcgapi) totals are counted once a day (`cardboarddex:live_stats:legacy:v1` in the cache Redis, 24h TTL, 15s statement timeout). Each minute only PPT (exact provider match) and matched eBay rows are recounted, with the same totals.
+
+## Production incidents — 2026-10-20
+
+- **Worker left stopped after release `16edaa2`.** `/opt/cardboarddex/ingestion.paused` (from Oct 19) was never removed, so `release.sh` stopped worker/Beat and skipped restarting them. Restarting by hand needs `export BACKEND_IMAGE=$(cat $r/image.txt)` first; the stale `app.env` image fails with ECR "pull access denied" (see `scripts/lightsail/recover_services.sh`). eBay resumed at 19:04 UTC.
+- **PPT due products not syncing is by design.** All 92 due products had `failures > 0`; only the retry lane takes them, and it was full (500/500). Lanes may borrow up to the daily cap after 22:00 UTC, and they reset at 00:00 UTC. `PPTBlocked("lane")` is swallowed without logging in the `jobs/sync_ppt.py` loop.
+- **Live stats timed out.** `refresh_live_stats` hit the 5s statement timeout every minute from about 18:57 UTC, and `/cards/live-updates/stats` returned 503 from about 19:27. `EXPLAIN (ANALYZE, BUFFERS)`: 5.66s, almost all in the index-only scan of `ix_price_observations_provider_feed`, with 59,069 heap fetches and 15,319 blocks read from disk. `price_observations` (insert-only, about 400k rows) had not been vacuumed since Oct 16, so the visibility map was stale. PostgreSQL 16 triggers an insert-only vacuum only after about 20% growth. Fixed by `VACUUM (ANALYZE) price_observations` plus `cards` (0.99s; prod `psql` sessions need `SET statement_timeout = 0` first, because the server default is 12s). A manual refresh in the worker-budget container then published a fresh snapshot.
+- **Monitor re-paused ingestion at 19:16 UTC** for "Memory/swap/I/O pressure persisted for five minutes". Memory was fine (180–300 MB available) and swap-in was under 1 MiB/s; iowait stayed at 12–18% (limit 10%), consistent with the live-stats scan reading about 120 MB per minute. A pause recreates the marker, sets worker/Beat to `--restart no` and stops them. Resume with `rm` of the marker, `$C up -d --no-deps celery-worker celery-beat`, then `docker update --restart unless-stopped app-celery-worker-1 app-celery-beat-1`. Worker/Beat were restarted after the vacuum. Live-stats publishing and iowait under the restarted worker are not yet confirmed. The reason for a pause is logged once in the `cardboarddex-ingestion-monitor` journal and saved in `/var/lib/cardboarddex/ingestion-monitor/latest.json`.
+- The host `cardboarddex-live-stats.timer` was disabled (it only publishes while paused); the README requires reinstalling it from the release.
+
+Open items:
+
+- Not yet confirmed as applied: `ALTER TABLE price_observations SET (autovacuum_vacuum_insert_scale_factor = 0.02, autovacuum_vacuum_insert_threshold = 5000)` (storage setting only, not `Cards`/`Sets`). Without it the visibility map falls behind again.
+- Durable live-stats fix (needs a plan first): stop recounting all observations every minute. The tcgapi total is frozen at 347,454, so count it once and add only new PPT/eBay rows.
+- If iowait stays above 10% after the vacuum, find the next heavy reader (Trending refresh about 8.5s, PPT/eBay jobs) with `pg_stat_statements` or per-task timings.
+- The catalog 503 fix above is still local and not deployed.
 
 ## Implemented migration
 

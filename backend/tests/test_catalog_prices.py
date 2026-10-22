@@ -172,3 +172,69 @@ def test_startup_rejects_unverified_projection(db, monkeypatch):
     monkeypatch.setattr(database, "SessionLocal", lambda: nullcontext(Mock(get=Mock(return_value=None))))
     with pytest.raises(RuntimeError, match="completed, verified"):
         with TestClient(app): pass
+
+
+def search(db, **options):
+    kwargs = dict(q="", sort_by="price_desc", limit=60, offset=0, set_id=None, game="all", hide_sealed=False,
+                  sealed_only=False, min_price=None, max_price=None, db=db, response=Response()) | options
+    return [card.id for card in search_cards.__wrapped__(**kwargs)]
+
+
+@pytest.mark.parametrize("projection", [False, True])
+@pytest.mark.parametrize("primary", [False, True])
+def test_price_sort_pages_priced_then_unpriced(db, monkeypatch, projection, primary):
+    monkeypatch.setattr(get_settings(), "ppt_primary_enabled", primary)
+    monkeypatch.setattr(get_settings(), "catalog_current_prices_enabled", projection)
+    db.add_all([Card(id="a", name="Alpha", set_id="s", rarity="Rare", number="4"),
+                Card(id="z", name="Zeta", set_id="s", rarity="Rare", number="5")])
+    db.flush()
+    observation(db, "c", price=10)
+    observation(db, "z", price=10, card="z")
+    observation(db, "j", price=50, card="jp")
+    refresh_candidates(db, ["c", "z", "jp", "a", "empty"])
+    # Ties break by name; unpriced cards follow every priced card, by name.
+    assert search(db) == ["jp", "c", "z", "a", "empty"]
+    assert search(db, sort_by="price_asc") == ["c", "z", "jp", "a", "empty"]
+    for sort in ["price_asc", "price_desc", "number_asc", "number_desc", "set", "name"]:
+        full = search(db, sort_by=sort)
+        assert len(full) == 5
+        for limit in [1, 2, 3]:
+            pages = [search(db, sort_by=sort, limit=limit, offset=offset) for offset in range(0, 7, limit)]
+            assert sum(pages, []) == full
+    assert search(db, min_price=5, max_price=20) == ["c", "z"]
+    assert search(db, sort_by="number_asc", max_price=20) == ["c", "z"]
+
+
+def test_selected_candidate_prefers_newest_primary_ppt(db, monkeypatch):
+    monkeypatch.setattr(get_settings(), "ppt_primary_enabled", True)
+    observation(db, "legacy", price=10)
+    observation(db, "jp", price=5, card="jp")
+    observation(db, "ppt-old", provider="pokemonpricetracker", price=2, days=3)
+    observation(db, "ppt-new", provider="pokemonpricetracker", price=4)
+    refresh_candidates(db, ["c", "jp", "empty"])
+    assert set(db.execute(select(C.card_id, C.fingerprint).where(C.selected))) == {("c", "ppt-new"), ("jp", "jp")}
+    db.execute(C.__table__.update().where(C.fingerprint == "legacy").values(selected=True))
+    assert verify_projection(db)["mismatched_cards"] == ["c"]
+
+
+def test_selected_migration_backfills_existing_candidates(db, monkeypatch):
+    import importlib.util
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    spec = importlib.util.spec_from_file_location("selected_migration", "alembic/versions/0013_catalog_price_selected.py")
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    monkeypatch.setattr(get_settings(), "ppt_primary_enabled", True)
+    observation(db, "legacy", price=10)
+    observation(db, "undated", provider="pokemonpricetracker", price=3, dated=False)
+    observation(db, "ppt", provider="pokemonpricetracker", price=4, days=2)
+    observation(db, "jp", price=5, card="jp")
+    refresh_candidates(db, ["c", "jp"])
+    db.commit()
+    expected = set(db.execute(select(C.observation_id).where(C.selected)).scalars())
+    monkeypatch.setattr(migration, "op", Operations(MigrationContext.configure(db.connection())))
+    migration.downgrade()
+    migration.upgrade()
+    db.commit()
+    assert set(db.execute(select(C.observation_id).where(C.selected)).scalars()) == expected
+    assert verify_projection(db)["mismatched_cards"] == []

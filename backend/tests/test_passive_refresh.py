@@ -159,7 +159,7 @@ def test_verified_projection_ranking_does_not_scan_history(db, monkeypatch, prim
                                       ("0004", "tcgapi", 9999, 4)]:
         db.add(CatalogPriceCandidate(card_id=cid, provider=provider, observation_id=oid,
             fingerprint=str(oid), price=amount, currency="EUR" if cid == "0004" else "USD",
-            observed_at=datetime.now(UTC)))
+            observed_at=datetime.now(UTC), selected=oid != 1))  # 0002 prefers its PPT row
     db.commit()
     statements = []
     def capture(conn, cursor, statement, parameters, context, executemany):

@@ -23,6 +23,7 @@ redis.call('zremrangebyscore', KEYS[3], '-inf', ARGV[1] - 60)
 if redis.call('zcard', KEYS[3]) + tonumber(ARGV[3]) > tonumber(ARGV[5]) then return -3 end
 local spent = tonumber(redis.call('get', KEYS[1]) or '0')
 if spent + tonumber(ARGV[2]) > tonumber(ARGV[4]) then return -1 end
+if tonumber(ARGV[9]) > 0 and spent + tonumber(ARGV[2]) > tonumber(ARGV[9]) then return -7 end
 local lane = tonumber(redis.call('get', KEYS[2]) or '0')
 local bonus = tonumber(ARGV[8])
 if bonus > 0 and tonumber(redis.call('get', KEYS[6]) or '0') + bonus > 500 then return -6 end
@@ -54,6 +55,24 @@ class PPTBlocked(RuntimeError):
     """Normal scheduler yield: no provider request was attempted."""
 
 
+LATE = 22 * 3600
+
+
+def daytime_cap(limit):
+    """Total cap before 22:00 UTC for every lane except retry."""
+    return max(0, limit - min(500, limit // 40))
+
+
+def pacing_allowance(now, limit):
+    """Credits spendable so far today, spread linearly to 22:00 UTC plus about
+    one hour of burst. 0 means unpaced (the late borrowing window)."""
+    elapsed = now % 86400
+    if elapsed >= LATE:
+        return 0
+    cap = daytime_cap(limit)
+    return max(1, cap * int(elapsed) // LATE + cap // 22)
+
+
 @dataclass(frozen=True)
 class Reservation:
     day: int
@@ -79,16 +98,21 @@ class PPTQuota:
         token = uuid.uuid4().hex
         # Retry allowance stays reserved until the final two UTC hours. Then
         # overdue queues may borrow unused lane capacity without crossing the cap.
-        late = now % 86400 >= 22 * 3600
+        late = now % 86400 >= LATE
         cap = self.settings.ppt_daily_credit_limit
         if not late and lane != "retry":
-            cap = max(0, cap - min(500, cap // 40))
+            cap = daytime_cap(cap)
         lane_cap = self.settings.ppt_daily_credit_limit if late else LANES[lane]
+        # Spread the daily budget instead of spending it in the first hours of the day.
+        allowance = 0
+        if self.settings.ppt_daily_pacing_enabled and lane != "retry":
+            allowance = pacing_allowance(now, self.settings.ppt_daily_credit_limit)
         result = self.redis.eval(RESERVE, 6, f"{PREFIX}:credits:{day}",
             f"{PREFIX}:lane:{day}:{lane}", f"{PREFIX}:minute", f"{PREFIX}:cooldown", f"{PREFIX}:flight", f"{PREFIX}:lane:{day}:graded",
-            now, cost, weight, cap, self.settings.ppt_minute_weight_limit, lane_cap, token, bonus)
+            now, cost, weight, cap, self.settings.ppt_minute_weight_limit, lane_cap, token, bonus, allowance)
         if int(result) < 0:
-            reason = {-1: "daily", -2: "lane", -3: "minute", -4: "cooldown", -5: "in_flight", -6: "graded_lane"}[int(result)]
+            reason = {-1: "daily", -2: "lane", -3: "minute", -4: "cooldown", -5: "in_flight", -6: "graded_lane",
+                      -7: "paced"}[int(result)]
             raise PPTBlocked(reason)
         return Reservation(day, lane, cost, token, bonus)
 

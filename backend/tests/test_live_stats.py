@@ -133,7 +133,7 @@ def test_refresh_lock_and_failure_preserve_snapshot(db, monkeypatch):
 
 
 def test_refresh_publishes_atomically_and_rejects_lost_lease(db, monkeypatch):
-    redis = Mock(set=Mock(return_value=True), eval=Mock(return_value=1))
+    redis = Mock(set=Mock(return_value=True), eval=Mock(return_value=1), get=Mock(return_value=None))
     monkeypatch.setattr(live_stats, "get_redis", lambda: redis)
     from contextlib import nullcontext
     monkeypatch.setattr(live_stats, "SessionLocal", lambda: nullcontext(db))
@@ -144,6 +144,32 @@ def test_refresh_publishes_atomically_and_rejects_lost_lease(db, monkeypatch):
     assert '"total_items"' in publish[-2]
     redis.eval.return_value = 0
     assert live_stats.refresh_snapshot() is False
+
+
+@pytest.mark.parametrize("primary", [False, True])
+def test_cached_legacy_counts_match_full_recount(db, monkeypatch, primary):
+    monkeypatch.setattr(live_stats.get_settings(), "ppt_primary_enabled", primary)
+    legacy = live_stats.legacy_counts(db)
+    assert legacy == [2, 0, 2, 0, 0]
+    counts = lambda snapshot: snapshot.model_dump(exclude={"generated_at"})
+    assert counts(live_stats.calculate_snapshot(db, legacy)) == counts(live_stats.calculate_snapshot(db))
+
+
+def test_refresh_counts_legacy_once_then_reads_cache(db, monkeypatch):
+    import fakeredis
+    from contextlib import nullcontext
+    redis = fakeredis.FakeRedis(decode_responses=True)
+    monkeypatch.setattr(live_stats, "get_redis", lambda: redis)
+    monkeypatch.setattr(live_stats, "SessionLocal", lambda: nullcontext(db))
+    monkeypatch.setattr(live_stats, "_PUBLISH", "redis.call('set', KEYS[2], ARGV[2]) return 1")
+    counted = Mock(wraps=live_stats.legacy_counts)
+    monkeypatch.setattr(live_stats, "legacy_counts", counted)
+    assert live_stats.refresh_snapshot() and live_stats.refresh_snapshot()
+    assert counted.call_count == 1
+    assert 0 < redis.ttl(live_stats.LEGACY_KEY) <= live_stats.LEGACY_SECONDS
+    redis.set(live_stats.LEGACY_KEY, "[100, 0, 100, 0, 0]")
+    assert live_stats.refresh_snapshot()
+    assert live_stats.read_snapshot().total_tcg_updates == 100  # cached legacy, not a recount
 
 
 def test_public_routes_and_cold_stats_contract(monkeypatch):

@@ -12,6 +12,8 @@ class CatalogPriceCandidate(Base):
         Index("uq_catalog_price_tcgapi", "card_id", unique=True,
               postgresql_where=text("provider = 'tcgapi'"), sqlite_where=text("provider = 'tcgapi'")),
         Index("ix_catalog_price_lookup", "card_id", "provider", "provider_updated_at", "observed_at", "observation_id"),
+        # Broad catalog price sorts walk this index instead of sorting every card.
+        Index("ix_catalog_price_selected", "price", postgresql_where=text("selected"), sqlite_where=text("selected")),
     )
     card_id: Mapped[str] = mapped_column(String(64), ForeignKey("cards.id"), primary_key=True)
     provider: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -24,6 +26,8 @@ class CatalogPriceCandidate(Base):
     provider_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     ppt_price_date: Mapped[date | None] = mapped_column(Date)
+    # The card's PPT-primary price: newest primary PPT row, else its TCG row.
+    selected: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 
 
 class CatalogPriceProjectionState(Base):

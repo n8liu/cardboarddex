@@ -10,6 +10,8 @@ import time
 ROOT = Path('/var/lib/cardboarddex/ingestion-monitor')
 PAUSE = Path('/opt/cardboarddex/ingestion.paused')
 NAMES = ('backend', 'postgres', 'redis', 'redis-cache', 'cloudflared', 'celery-worker', 'celery-beat')
+IOWAIT_LIMIT_PCT = 25
+IOWAIT_SECONDS = 900
 
 
 def run(args):
@@ -32,11 +34,17 @@ def regression(previous, sample):
     failures = previous.get('api_failures', 0) + 1 if not sample['api_ready'] else 0
     sample['api_failures'] = failures
     if failures >= 3: reasons.append('API failed three consecutive probes')
-    pressure = sample['available_mib'] < 150 or sample['swap_in_mib_s'] > 1 or sample['iowait_pct'] > 10
+    pressure = sample['available_mib'] < 150 or sample['swap_in_mib_s'] > 1
     since = previous.get('pressure_since') or sample['at'] if pressure else None
     sample['pressure_since'] = since
     if since is not None and sample['at'] - since >= 300:
-        reasons.append('Memory/swap/I/O pressure persisted for five minutes')
+        reasons.append('Memory/swap pressure persisted for five minutes')
+    # I/O wait alone slows the host without endangering it; normal load here is 9-15%.
+    slow = sample['iowait_pct'] > IOWAIT_LIMIT_PCT
+    io_since = previous.get('iowait_since') or sample['at'] if slow else None
+    sample['iowait_since'] = io_since
+    if io_since is not None and sample['at'] - io_since >= IOWAIT_SECONDS:
+        reasons.append(f'I/O wait above {IOWAIT_LIMIT_PCT}% for fifteen minutes')
     if sample['backup_age_seconds'] is None or sample['backup_age_seconds'] > 23400:
         reasons.append('No completed backup within 6.5 hours')
     return reasons

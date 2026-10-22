@@ -34,3 +34,27 @@ def test_worker_restart_or_missing_backup_requires_pause():
     a=healthy();b=healthy(1060);b['containers']['worker']['restarts']=1;b['backup_age_seconds']=24000
     reasons=monitor.regression(a,b)
     assert len(reasons)==2
+
+
+def test_normal_iowait_never_pauses():
+    previous = {}
+    for minute in range(31):  # production's normal 9-15% band, sustained
+        current = healthy(1000 + minute * 60); current['iowait_pct'] = 15
+        assert monitor.regression(previous, current) == []
+        previous = current
+
+
+def test_sustained_high_iowait_pauses_and_dip_resets():
+    previous = {}
+    for minute in range(15):
+        current = healthy(1000 + minute * 60); current['iowait_pct'] = 30
+        assert monitor.regression(previous, current) == []
+        previous = current
+    dip = healthy(1000 + 15 * 60); dip['iowait_pct'] = 20
+    assert monitor.regression(previous, dip) == [] and dip['iowait_since'] is None
+    previous = dip
+    for minute in range(16, 32):
+        current = healthy(1000 + minute * 60); current['iowait_pct'] = 30
+        reasons = monitor.regression(previous, current)
+        previous = current
+    assert reasons == ['I/O wait above 25% for fifteen minutes']

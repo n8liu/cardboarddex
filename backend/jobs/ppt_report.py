@@ -8,7 +8,7 @@ from app.common.redis import get_durable_redis
 from app.config import get_settings
 from app.database import SessionLocal
 from app.models import PPTProduct, PPTHistory, PPTCurrentQuote, PriceObservation, Card, MarketHistoryTransition
-from app.providers.ppt import LANES, PREFIX, PROVIDER
+from app.providers.ppt import LANES, PREFIX, PROVIDER, pacing_allowance
 from jobs.sync_ppt import due_query
 
 logger = logging.getLogger(__name__)
@@ -39,6 +39,8 @@ def report(db, redis=None, now=None):
         try:
             bucket = int(now.timestamp() // 86400)
             result["quota"] = {"reserved_credits": int(redis.get(f"{PREFIX}:credits:{bucket}") or 0),
+                "pacing_allowance": (pacing_allowance(now.timestamp(), settings.ppt_daily_credit_limit)
+                                     if settings.ppt_daily_pacing_enabled else 0),
                 "lanes": {lane: int(redis.get(f"{PREFIX}:lane:{bucket}:{lane}") or 0) for lane in LANES},
                 "cooldown_seconds": max(0, redis.ttl(f"{PREFIX}:cooldown")),
                 "request_in_flight": bool(redis.exists(f"{PREFIX}:flight"))}

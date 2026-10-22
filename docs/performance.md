@@ -8,7 +8,8 @@ Public database reads use `backend/app/common/response_cache.py`, existing dispo
 
 | Endpoint/data | Fresh | Maximum age including stale time |
 | --- | --- | --- |
-| Catalog searches, Pokémon cards, set statistics | 60 seconds | 5 minutes |
+| Catalog searches | 60 seconds | 30 minutes |
+| Pokémon cards, set statistics | 60 seconds | 5 minutes |
 | Set directory | 1 hour | 2 hours |
 | Home overview, grading, sealed | 5 minutes | 30 minutes |
 | Market Movers combined language/period ranking | 15 minutes | 30 minutes |

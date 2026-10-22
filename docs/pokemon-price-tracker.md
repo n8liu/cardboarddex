@@ -76,6 +76,14 @@ for 24 hours. New requests pause in the last 30 seconds of a UTC day to avoid
 ambiguous rollover accounting. At 22:00 UTC, overdue queues may borrow unused lane
 capacity, including unused retry capacity, without exceeding the total cap.
 
+Before 22:00 UTC, total spend is also paced (`PPT_DAILY_PACING_ENABLED`, default
+on): it may not exceed the daytime cap times the share of the 22 hours already
+elapsed, plus one hour of burst (`pacing_allowance`). Without pacing, the 15-second
+Beat spends about 8,000 requests (2–3 credits each) by about 04:00 UTC and then
+blocks until midnight. A paced reservation yields `paced`; retry and the late
+window are unpaced. `sync_ppt` logs the reason a batch yielded and returns it as
+`blocked`; the health report shows `quota.pacing_allowance`.
+
 Use a dedicated API key, durable Redis persistence, and an accurate UTC system
 clock. Do not share this daily budget with outside callers. For an existing key,
 start at the next UTC reset or conservatively initialize its already-used credit

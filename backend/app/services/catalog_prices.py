@@ -2,7 +2,7 @@
 import hashlib
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import Date, and_, case, delete, func, insert, literal, or_, select, text, union_all, true
+from sqlalchemy import Date, and_, case, delete, func, insert, literal, or_, select, text, true
 from sqlalchemy.orm import aliased
 from app.models import Card, CatalogPriceCandidate as C, CatalogPriceProjectionState as State, PPTCurrentQuote, PriceObservation as O
 
@@ -24,13 +24,27 @@ def expected_candidates(db, card_ids):
     order = (O.provider_updated_at.desc().nullslast(), O.observed_at.desc(), O.id.desc())
     latest = select(*columns, func.row_number().over(partition_by=O.card_id, order_by=order).label("position")).where(
         O.card_id.in_(card_ids), O.provider == "tcgapi", O.grading_company.is_(None)).subquery()
-    tcg = select(*[latest.c[c.key] for c in C.__table__.columns if c.key != "ppt_price_date"],
+    tcg = select(*[latest.c[c.key] for c in C.__table__.columns if c.key not in {"ppt_price_date", "selected"}],
                  literal(None, type_=Date).label("ppt_price_date")).where(latest.c.position == 1)
     ppt = select(*columns, PPTCurrentQuote.price_date.label("ppt_price_date")).join(
         PPTCurrentQuote, PPTCurrentQuote.fingerprint == O.fingerprint).where(
         O.card_id.in_(card_ids), O.provider == "pokemonpricetracker", O.grading_company.is_(None),
         O.payload["primary"].as_boolean().is_(True))
-    return [dict(row) for row in db.execute(tcg).mappings()] + [dict(row) for row in db.execute(ppt).mappings()]
+    return mark_selected([dict(row) for row in db.execute(tcg).mappings()] + [dict(row) for row in db.execute(ppt).mappings()])
+
+
+def mark_selected(rows):
+    """Flag each card's PPT-primary price, in the same order as candidate_join."""
+    best = {}
+    for row in rows:
+        row["selected"] = False
+        rank = (row["provider"] == "pokemonpricetracker", row["provider_updated_at"] is not None,
+                row["provider_updated_at"], row["observed_at"], row["observation_id"])
+        if row["card_id"] not in best or rank > best[row["card_id"]][0]:
+            best[row["card_id"]] = (rank, row)
+    for _, row in best.values():
+        row["selected"] = True
+    return rows
 
 
 def refresh_candidates(db, card_ids):
@@ -67,17 +81,10 @@ def candidate_join(*, broad=False, as_of=None, dialect=None):
         row = aliased(C)
         return row, row, and_(row.card_id == Card.id, row.provider == "tcgapi")
     if broad:
-        # TCG candidates are already unique per card. Rank only the small PPT
-        # snapshot, then exclude TCG for those cards; never rank all legacy rows.
-        ppt_ranked = select(C.card_id, C.observation_id.label("id"), C.price, C.currency, C.provider_updated_at,
-            func.row_number().over(partition_by=C.card_id, order_by=order[1:]).label("position")
-        ).where(C.provider == "pokemonpricetracker").subquery()
-        ppt = select(ppt_ranked.c.card_id, ppt_ranked.c.id, ppt_ranked.c.price,
-                     ppt_ranked.c.currency, ppt_ranked.c.provider_updated_at).where(ppt_ranked.c.position == 1).cte()
-        legacy = select(C.card_id, C.observation_id.label("id"), C.price, C.currency, C.provider_updated_at).where(
-            C.provider == "tcgapi", C.card_id.not_in(select(ppt.c.card_id)))
-        rows = union_all(legacy, select(ppt)).subquery()
-        return rows.c, rows, rows.c.card_id == Card.id
+        # Selection is precomputed on write (mark_selected), so broad reads never
+        # rank candidates and price sorts can walk ix_catalog_price_selected.
+        row = aliased(C)
+        return row, row, and_(row.card_id == Card.id, row.selected)
     if dialect == "postgresql":
         rows = select(C.price, C.currency, C.provider_updated_at).where(
             C.card_id == Card.id, eligible).order_by(*order).limit(1).correlate(Card).lateral()
