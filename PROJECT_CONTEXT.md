@@ -72,7 +72,7 @@ Fix (local, not deployed):
 
 Open items:
 
-- Not yet confirmed as applied: `ALTER TABLE price_observations SET (autovacuum_vacuum_insert_scale_factor = 0.02, autovacuum_vacuum_insert_threshold = 5000)` (storage setting only, not `Cards`/`Sets`). Without it the visibility map falls behind again.
+- ~~Confirm `ALTER TABLE price_observations SET (autovacuum_vacuum_insert_*)`~~: confirmed applied on October 23. Autovacuum ran at 02:51 UTC with 4,035 inserts pending, so the visibility map was current. Live stats at 4.5–5.5s on 431k rows comes from growth and contention, not vacuum lag.
 - Durable live-stats fix (needs a plan first): stop recounting all observations every minute. The tcgapi total is frozen at 347,454, so count it once and add only new PPT/eBay rows.
 - If iowait stays above 10% after the vacuum, find the next heavy reader (Trending refresh about 8.5s, PPT/eBay jobs) with `pg_stat_statements` or per-task timings.
 - The catalog 503 fix above is still local and not deployed.
@@ -99,4 +99,5 @@ Never run an extra Python process inside the 160 MiB serving API container. The 
 
 - [Architecture](ARCHITECTURE.md), [PPT contract](docs/pokemon-price-tracker.md), [cutover runbook](docs/ppt-cutover.md)
 - [Projection](docs/catalog-price-projection.md), [performance](docs/performance.md), [eBay quality](docs/ebay-listing-quality.md)
+- [Fixes and pitfalls](docs/fixes-and-pitfalls.md): incident causes, recovery steps and errors to avoid
 - [Pre-migration context and operational evidence](docs/archive/pre-ppt/PROJECT_CONTEXT.md)
