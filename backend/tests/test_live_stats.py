@@ -82,7 +82,32 @@ def test_filters_and_legacy_compatibility(db, monkeypatch, provider, grade, q, e
     assert response.headers["Cache-Control"] == "no-store"
 
 
-@pytest.mark.parametrize("age,stale,available", [(0, False, True), (61, True, True), (1799, True, True), (1801, True, False)])
+def test_unfiltered_first_page_shares_one_query(db, monkeypatch):
+    from app.common.response_cache import response_cache
+    monkeypatch.setattr(live_stats.get_settings(), "ppt_primary_enabled", False)
+    monkeypatch.setattr(live_stats.get_settings(), "live_feed_shared_cache_enabled", True)
+    monkeypatch.setattr(response_cache, "redis_factory", lambda: None)
+    response_cache.clear()
+    statements = []
+    event.listen(db.get_bind(), "before_cursor_execute",
+                 lambda c, cu, sql, p, ctx, many: statements.append(sql) if "price_observations" in sql else None)
+    try:
+        first_response, second_response = Response(), Response()
+        first = get_live_feed(first_response, "all", "all", None, None, 1, 2, db)
+        second = get_live_feed(second_response, "all", "all", None, None, 1, 2, db)
+        assert [i.id for i in first.items] == [i.id for i in second.items]
+        assert len(statements) == 1
+        assert second_response.headers["X-Cache-Status"] == "hit"
+        assert first_response.headers["Cache-Control"] == second_response.headers["Cache-Control"] == "no-store"
+        # Searched and later pages stay live.
+        get_live_feed(Response(), "all", "all", None, "Pikachu", 1, 2, db)
+        get_live_feed(Response(), "all", "all", None, None, 2, 2, db)
+        assert len(statements) == 3
+    finally:
+        response_cache.clear()
+
+
+@pytest.mark.parametrize("age,stale,available",[(0, False, True), (61, True, True), (1799, True, True), (1801, True, False)])
 def test_snapshot_age(db, monkeypatch, age, stale, available):
     snapshot = live_stats.calculate_snapshot(db)
     snapshot.generated_at = datetime.now(UTC) - timedelta(seconds=age)

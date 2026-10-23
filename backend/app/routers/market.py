@@ -463,7 +463,29 @@ def get_live_feed(
     per_page: int = Query(default=30, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> LiveFeedResponse:
+    from app.config import get_settings
+    if get_settings().live_feed_shared_cache_enabled and page == 1 and not set_id and not (q and q.strip()):
+        result = _shared_live_feed(response=response, provider=provider, grade_filter=grade_filter,
+                                   per_page=per_page, db=db)
+        response.headers["Cache-Control"] = "no-store"
+        return result
     response.headers["Cache-Control"] = "no-store"
+    return _live_feed_page(db, provider, grade_filter, set_id, q, page, per_page)
+
+
+# Every open Live Comps tab polls page 1 every 15s; share one query instead of one per tab.
+@cached_read("get_live_feed_v1", fresh=10, maximum=60)
+def _shared_live_feed(
+    response: Response,
+    provider: str,
+    grade_filter: str,
+    per_page: int,
+    db: Session,
+) -> LiveFeedResponse:
+    return _live_feed_page(db, provider, grade_filter, None, None, 1, per_page)
+
+
+def _live_feed_page(db, provider, grade_filter, set_id, q, page, per_page):
     started = time.monotonic()
     if db.get_bind().dialect.name == "postgresql":
         db.execute(text("SET LOCAL statement_timeout = '5000ms'"))

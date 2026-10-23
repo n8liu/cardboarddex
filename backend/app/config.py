@@ -57,6 +57,8 @@ class Settings(BaseSettings):
     # Local development only: rebuild a missing/stale Trending snapshot on request instead of
     # returning 503. Production keeps this off; the worker is the only snapshot publisher.
     trending_on_demand_fallback: bool = False
+    # Unfiltered first-page Live Comps polls share one query per 10s across viewers.
+    live_feed_shared_cache_enabled: bool = True
     price_collection_card_limit: int = Field(default=8, ge=1, le=50)
     passive_refresh_enabled: bool = True
     passive_priority_card_count: int = Field(default=1500, ge=1, le=1500)
