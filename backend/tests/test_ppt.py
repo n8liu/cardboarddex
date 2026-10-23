@@ -532,6 +532,15 @@ def test_pool_builder_is_scheduled_with_ingestion(monkeypatch):
     importlib.reload(module)
     entries = {x['task']: x for x in module.celery_app.conf.beat_schedule.values()}
     assert entries['jobs.sync_ppt.build_priority_pool']['options']['time_limit'] == 240
+    # Heavy snapshot jobs are spread out and never share a minute with each other or eBay.
+    from jobs.ppt_report import HEALTH_SECONDS
+    minutes = {task: entries[task]['schedule'].minute for task in (
+        'jobs.refresh_trending.refresh_trending', 'jobs.ppt_report.publish_report',
+        'jobs.collect_ebay_prices.collect_ebay_prices')}
+    assert len(minutes['jobs.refresh_trending.refresh_trending']) == 12
+    assert len(minutes['jobs.ppt_report.publish_report']) == 4
+    assert sum(map(len, minutes.values())) == len(set().union(*minutes.values()))
+    assert HEALTH_SECONDS > 2 * 15 * 60 - 1  # outlives one missed 15-minute report
     monkeypatch.undo()
     importlib.reload(module)
 

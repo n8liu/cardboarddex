@@ -36,10 +36,12 @@ celery_app.conf.beat_schedule = {
         "schedule": 60.0,
         "options": {"expires": 55, "time_limit": 20},
     },
+    # The snapshot stays servable for 30 minutes; each build costs ~9s of database work.
+    # Minutes 1,6,11,... avoid eBay (:15/:45) and the PPT report.
     "refresh-trending": {
         "task": "jobs.refresh_trending.refresh_trending",
-        "schedule": 60.0,
-        "options": {"expires": 55, "time_limit": 110},
+        "schedule": crontab(minute="1-59/5"),
+        "options": {"expires": 240, "time_limit": 110},
     },
     # Minute :15 and :45 -> eBay market comps
     "collect-ebay-prices-alternating": {
@@ -71,7 +73,8 @@ if settings.ppt_ingestion_enabled:
     }
 
 if settings.ppt_ingestion_enabled:
+    # Diagnostics only; full-table counts are too costly to run every minute.
     celery_app.conf.beat_schedule["ppt-health-report"] = {
-        "task": "jobs.ppt_report.publish_report", "schedule": 60.0,
-        "options": {"expires": 55, "time_limit": 20},
+        "task": "jobs.ppt_report.publish_report", "schedule": crontab(minute="3,18,33,48"),
+        "options": {"expires": 600, "time_limit": 20},
     }

@@ -12,6 +12,9 @@ from app.providers.ppt import LANES, PREFIX, PROVIDER, pacing_allowance
 from jobs.sync_ppt import due_query
 
 logger = logging.getLogger(__name__)
+HEALTH_KEY = "cardboarddex:ppt:health:v1"
+# Published every 15 minutes; outlive one missed run.
+HEALTH_SECONDS = 1800
 
 
 def report(db, redis=None, now=None):
@@ -64,7 +67,7 @@ def publish_report():
     try:
         with SessionLocal() as db:
             payload = report(db, redis)
-        redis.setex("cardboarddex:ppt:health:v1", 300, json.dumps(payload, default=str))
+        redis.setex(HEALTH_KEY, HEALTH_SECONDS, json.dumps(payload, default=str))
         return {"status": "published"}
     except Exception as exc:
         logger.exception("PPT health publication failed error=%s: %s", type(exc).__name__, exc)
