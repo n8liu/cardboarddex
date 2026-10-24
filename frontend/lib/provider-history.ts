@@ -2,7 +2,7 @@ import type { ChartPoint } from "@/components/price-history-chart";
 import type { ProviderHistorySeries } from "@/types/card";
 
 export function providerSeriesName(series: ProviderHistorySeries): string {
-  const identity = series.grade ? series.grade.toUpperCase().replace(/(PSA|CGC|BGS)/, "$1 ").replace("_", ".") : `${series.printing || "Unknown printing"} · ${series.condition || "Unknown condition"}`;
+  const identity = series.grade ? series.grade.toUpperCase().replace(/(PSA|CGC|BGS|SGC|TAG)/, "$1 ").replace("_", ".") : `${series.printing || "Unknown printing"} · ${series.condition || "Unknown condition"}`;
   return `PPT ${identity} · ${series.metric === "daily_average" ? "daily sales average" : "market"}`;
 }
 
@@ -56,7 +56,32 @@ export function carryForward(rows: ChartPoint[], keys: string[]): ChartPoint[] {
   });
 }
 
-export const GRADING_COMPANIES = ["psa", "cgc", "tag"] as const;
+const ASKING_BAND = 3;
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/**
+ * eBay asking prices without wild listings: keeps values within `band`x of the lower median
+ * (always an actual listing), matching backend `asking_prices.robust_asking_price`.
+ */
+export function withoutAskingOutliers(values: number[], band = ASKING_BAND): number[] {
+  const positive = values.filter((v) => v > 0);
+  if (!positive.length) return [];
+  const centre = [...positive].sort((a, b) => a - b)[Math.floor((positive.length - 1) / 2)];
+  return positive.filter((v) => v >= centre / band && v <= centre * band);
+}
+
+/** Median of asking prices after dropping outliers; null when there are none. */
+export function robustMedian(values: number[]): number | null {
+  const kept = withoutAskingOutliers(values);
+  return kept.length ? median(kept) : null;
+}
+
+export const GRADING_COMPANIES = ["psa", "cgc", "bgs", "sgc", "tag"] as const;
 export type GradingCompany = (typeof GRADING_COMPANIES)[number];
 
 /** "psa10" → "psa", "cgc9_5" → "cgc"; null for raw series. */

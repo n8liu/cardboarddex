@@ -65,6 +65,9 @@ export function useLiveStats() {
   }, [refresh]);
 
   const age = snapshot ? now - Date.parse(snapshot.generated_at) : Infinity;
-  const stats = age >= 0 && age < 30 * 60_000 ? snapshot : null;
-  return { stats, loading, error, stale: !!stats && (stats.is_stale || age >= 60_000), retry: () => void refresh() };
+  // The API keeps serving a snapshot for 24h after the worker stops; past 30 minutes
+  // updates are paused, so the totals stay visible but are labelled as dated.
+  const stats = age >= 0 && age < 24 * 60 * 60_000 ? snapshot : null;
+  return { stats, loading, error, stale: !!stats && (stats.is_stale || age >= 60_000),
+    paused: !!stats && age >= 30 * 60_000, retry: () => void refresh() };
 }

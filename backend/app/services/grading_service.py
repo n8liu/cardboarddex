@@ -1,3 +1,4 @@
+from app.services import asking_prices
 from app.services.price_sources import grading_observation
 from app.services.listing_quality import eligible_observation
 from app.services.image_delivery import card_image_url, image_generation
@@ -7,7 +8,7 @@ import json
 import logging
 import math
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from redis.exceptions import RedisError
@@ -59,7 +60,7 @@ def calculate_grading_profit(
     )
     cache_hash = hashlib.md5(cache_key_raw.encode()).hexdigest()
     source_key = "ppt" if get_settings().ppt_primary_enabled else "legacy"
-    redis_key = f"cardboarddex:{source_key}:grading_profit:identity-v1:{cache_hash}"
+    redis_key = f"cardboarddex:{source_key}:grading_profit:identity-v2:{cache_hash}"
     redis_key = f"{image_generation()}:{redis_key}"
 
     # 1. Try Redis cache first
@@ -127,8 +128,9 @@ def calculate_grading_profit(
             updated_at=datetime.now(UTC),
         )
 
-    # Four latest rows per card suffice: raw, PSA 9, PSA 10, and any other
-    # graded comp (retained for the most-recent-observation timestamp).
+    # The latest row per category suffices for raw, PPT medians and "other" (kept for
+    # the most-recent-observation timestamp). eBay PSA rows are single asking listings,
+    # so up to MAX_LISTINGS recent ones are kept and reduced to a robust median below.
     category = case(
         (PriceObservation.grading_company.is_(None), "raw"),
         (and_(func.upper(PriceObservation.grading_company) == "PSA", PriceObservation.grade == 9), "psa9"),
@@ -142,14 +144,20 @@ def calculate_grading_profit(
                 partition_by=(PriceObservation.card_id, category),
                 order_by=(PriceObservation.observed_at.desc(), PriceObservation.id.desc()),
             ).label("position"),
+            category.label("category"),
+            PriceObservation.provider.ilike("%ebay%").label("is_ebay"),
+            PriceObservation.observed_at,
         )
         .where(PriceObservation.card_id.in_(filtered_card_ids), grading_observation())
         .subquery()
     )
+    asking_since = datetime.now(UTC) - timedelta(days=asking_prices.WINDOW_DAYS)
     all_obs = db.scalars(
         select(PriceObservation)
         .join(ranked, ranked.c.id == PriceObservation.id)
-        .where(ranked.c.position == 1)
+        .where(or_(ranked.c.position == 1, and_(
+            ranked.c.is_ebay, ranked.c.category.in_(("psa9", "psa10")),
+            ranked.c.position <= asking_prices.MAX_LISTINGS, ranked.c.observed_at >= asking_since)))
         .options(load_only(
             PriceObservation.card_id, PriceObservation.price,
             PriceObservation.grading_company, PriceObservation.grade,
@@ -169,46 +177,35 @@ def calculate_grading_profit(
             continue
 
         raw_price: float | None = None
-        psa10_price: float | None = None
-        psa9_price: float | None = None
-        latest_obs_time: datetime | None = None
+        latest_obs_time: datetime | None = c_obs[0].observed_at
+        graded: dict[float, list[PriceObservation]] = {10.0: [], 9.0: []}
 
         for o in c_obs:
-            if latest_obs_time is None:
-                latest_obs_time = o.observed_at
+            if o.grading_company is None:
+                if raw_price is None:
+                    try:
+                        raw_price = float(o.price)
+                    except (ValueError, TypeError) as exc:
+                        logger.debug("Failed parsing raw price for card %s: %s", card.id, exc)
+                continue
+            if o.grading_company.upper() == "PSA" and o.grade is not None and float(o.grade) in graded:
+                graded[float(o.grade)].append(o)
 
-            # Raw check
-            if o.grading_company is None and raw_price is None:
-                try:
-                    raw_price = float(o.price)
-                except (ValueError, TypeError) as exc:
-                    logger.debug("Failed parsing raw price for card %s: %s", card.id, exc)
+        def graded_price(rows: list[PriceObservation], grade: float) -> float | None:
+            if not rows:
+                return None
+            try:
+                # Rows are newest first. A PPT median stands on its own; eBay asks are pooled.
+                if "ebay" not in (rows[0].provider or "").lower():
+                    return float(rows[0].price)
+                asks = [float(o.price) for o in rows if "ebay" in (o.provider or "").lower()]
+                return asking_prices.robust_asking_price(asks, reference=raw_price)
+            except (ValueError, TypeError) as exc:
+                logger.debug("Failed parsing PSA %s price for card %s: %s", grade, card.id, exc)
+                return None
 
-            # PSA 10 check
-            if (
-                o.grading_company
-                and o.grading_company.upper() == "PSA"
-                and o.grade is not None
-                and float(o.grade) == 10.0
-                and psa10_price is None
-            ):
-                try:
-                    psa10_price = float(o.price)
-                except (ValueError, TypeError) as exc:
-                    logger.debug("Failed parsing PSA 10 price for card %s: %s", card.id, exc)
-
-            # PSA 9 check
-            if (
-                o.grading_company
-                and o.grading_company.upper() == "PSA"
-                and o.grade is not None
-                and float(o.grade) == 9.0
-                and psa9_price is None
-            ):
-                try:
-                    psa9_price = float(o.price)
-                except (ValueError, TypeError) as exc:
-                    logger.debug("Failed parsing PSA 9 price for card %s: %s", card.id, exc)
+        psa10_price = graded_price(graded[10.0], 10)
+        psa9_price = graded_price(graded[9.0], 9)
 
         if raw_price is None or raw_price <= 0:
             continue

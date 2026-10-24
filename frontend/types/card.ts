@@ -342,6 +342,8 @@ export type TrendingDashboardResponse = {
   total_volume_usd: number;
   total_sales_count: number;
   updated_at: string;
+  /** Worker snapshot older than 30 minutes, served while updates are paused. */
+  is_stale?: boolean;
 };
 
 export type TrackActionPayload = {

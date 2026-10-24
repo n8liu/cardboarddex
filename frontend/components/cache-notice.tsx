@@ -14,3 +14,10 @@ export function CacheNotice({ metadata }: { metadata: CacheMetadata | null }) {
     {" "}Price observation dates may be older.
   </p>;
 }
+
+/** Worker-published snapshot served past its fresh window (worker stopped or behind). */
+export function SnapshotNotice({ generatedAt }: { generatedAt: string }) {
+  return <p role="status" className="my-2 text-xs text-amber-800">
+    Prices as of {new Date(generatedAt).toLocaleString()}; updates are paused and will resume automatically.
+  </p>;
+}

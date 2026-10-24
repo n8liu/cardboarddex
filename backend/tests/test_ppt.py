@@ -73,6 +73,16 @@ def test_missing_or_old_psa_never_uses_lifetime_median(payload, now):
     assert not any(q["grade"] for q in normalize(payload, "japanese", "cards", now.date())[0])
 
 
+def test_tag_grades_become_quotes_and_unsupported_tiers_stay_out(payload, now):
+    recent = {"marketPriceMedian7Day": 180, "count": 4, "lastSaleDate": (now - timedelta(days=1)).date().isoformat(),
+              "lastMarketUpdate": now.date().isoformat()}
+    payload["ebay"]["salesByGrade"].update({"tag10": dict(recent), "psa10_black": dict(recent)})
+    payload["ebay"]["priceHistory"]["tag10"] = {(now - timedelta(days=1)).date().isoformat(): {"average": 175, "count": 1}}
+    quotes, series = normalize(payload, "english", "cards", now.date())
+    assert {q["grade"] for q in quotes if q["grade"]} == {"psa10", "tag10"}
+    assert any(s["dimensions"]["grade"] == "tag10" for s in series)
+
+
 @pytest.mark.parametrize("language,label,expected", [
     ("english", "Near Mint Holofoil", "Near Mint"),
     ("japanese", "Near Mint Holofoil - Japanese", "Near Mint"),

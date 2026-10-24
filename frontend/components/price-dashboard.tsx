@@ -6,8 +6,9 @@ import { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { ShopOnEbayButton, type EbaySearchCardTarget } from "@/components/shop-ebay-button";
 import type { CardPricing, PriceObservation } from "@/types/card";
-import { GRADING_COMPANIES, gradeCompany, mergeProviderHistory, providerSeriesName, selectHistorySeries, seriesPrinting, type GradingCompany } from "@/lib/provider-history";
+import { GRADING_COMPANIES, gradeCompany, mergeProviderHistory, providerSeriesName, robustMedian, selectHistorySeries, seriesPrinting, withoutAskingOutliers, type GradingCompany } from "@/lib/provider-history";
 import type { ChartPoint } from "@/components/price-history-chart";
+import { isStalePriceDate, PriceSourceBadge } from "@/components/ui/price-source-badge";
 
 const PriceHistoryChart = dynamic(
   () => import("@/components/price-history-chart").then((mod) => mod.PriceHistoryChart),
@@ -55,20 +56,19 @@ function isEbayObservation(item: PriceObservation): boolean {
   return item.provider.toLowerCase().includes("ebay");
 }
 
+const SERIES_ASKING_BAND = 10;
+
 function buildMultiSeriesHistory(observations: PriceObservation[]): {
   history: ChartPoint[];
   obsCounts: { raw: number; tcg: number; psa10: number; psa9: number };
 } {
   const dates = new Set<string>();
-  const rawByDate = new Map<string, { total: number; count: number }>();
-  const tcgByDate = new Map<string, { total: number; count: number }>();
-  const psa10ByDate = new Map<string, { total: number; count: number }>();
-  const psa9ByDate = new Map<string, { total: number; count: number }>();
-
-  let rawObsCount = 0;
-  let tcgObsCount = 0;
-  let psa10ObsCount = 0;
-  let psa9ObsCount = 0;
+  const byDate = { raw: new Map<string, number[]>(), tcg: new Map<string, number[]>(),
+    psa10: new Map<string, number[]>(), psa9: new Map<string, number[]>() };
+  const add = (series: keyof typeof byDate, date: string, price: number) => {
+    dates.add(date);
+    byDate[series].set(date, [...(byDate[series].get(date) ?? []), price]);
+  };
 
   for (const obs of observations) {
     if (!obs.price || obs.price <= 0) continue;
@@ -76,39 +76,23 @@ function buildMultiSeriesHistory(observations: PriceObservation[]): {
     if (!date) continue;
 
     if (isEbayObservation(obs)) {
-      dates.add(date);
-      if (!obs.grading_company) {
-        rawObsCount++;
-        const cur = rawByDate.get(date) ?? { total: 0, count: 0 };
-        rawByDate.set(date, { total: cur.total + obs.price, count: cur.count + 1 });
-      } else if (obs.grading_company.toUpperCase() === "PSA") {
-        if (obs.grade === 10) {
-          psa10ObsCount++;
-          const cur = psa10ByDate.get(date) ?? { total: 0, count: 0 };
-          psa10ByDate.set(date, { total: cur.total + obs.price, count: cur.count + 1 });
-        } else if (obs.grade === 9) {
-          psa9ObsCount++;
-          const cur = psa9ByDate.get(date) ?? { total: 0, count: 0 };
-          psa9ByDate.set(date, { total: cur.total + obs.price, count: cur.count + 1 });
-        }
+      if (!obs.grading_company) add("raw", date, obs.price);
+      else if (obs.grading_company.toUpperCase() === "PSA") {
+        if (obs.grade === 10) add("psa10", date, obs.price);
+        else if (obs.grade === 9) add("psa9", date, obs.price);
       }
     } else if (obs.provider === "tcgapi" || obs.provider.toLowerCase().includes("tcg")) {
-      dates.add(date);
-      tcgObsCount++;
-      const cur = tcgByDate.get(date) ?? { total: 0, count: 0 };
-      tcgByDate.set(date, { total: cur.total + obs.price, count: cur.count + 1 });
+      add("tcg", date, obs.price);
     }
   }
 
   // If no specific series dates found, fallback to all observations
-  if (dates.size === 0) {
+  const fallback = dates.size === 0;
+  if (fallback) {
     for (const obs of observations) {
       const date = (obs.provider_updated_at ?? obs.observed_at ?? "").slice(0, 10);
       if (!date || !obs.price) continue;
-      dates.add(date);
-      rawObsCount++;
-      const cur = rawByDate.get(date) ?? { total: 0, count: 0 };
-      rawByDate.set(date, { total: cur.total + obs.price, count: cur.count + 1 });
+      add("raw", date, obs.price);
     }
   }
 
@@ -119,22 +103,31 @@ function buildMultiSeriesHistory(observations: PriceObservation[]): {
     };
   }
 
-  const sortedDates = [...dates].sort((a, b) => a.localeCompare(b));
+  // eBay rows are asking listings: drop absurd asks across the whole series (a loose band,
+  // so real moves over a year survive), then take each day's robust median.
+  for (const series of fallback ? [] : ["raw", "psa10", "psa9"] as const) {
+    const kept = new Set(withoutAskingOutliers([...byDate[series].values()].flat(), SERIES_ASKING_BAND));
+    for (const [date, prices] of byDate[series]) {
+      const remaining = prices.filter((price) => kept.has(price));
+      if (remaining.length) byDate[series].set(date, remaining);
+      else byDate[series].delete(date);
+    }
+  }
 
-  const points: ChartPoint[] = sortedDates.map((date) => {
-    const average = (entry: { total: number; count: number } | undefined) => entry ? Math.round(entry.total / entry.count * 100) / 100 : null;
-    return { date, rawPrice: average(rawByDate.get(date)), tcgPrice: average(tcgByDate.get(date)),
-      psa10Price: average(psa10ByDate.get(date)), psa9Price: average(psa9ByDate.get(date)) };
-  });
+  const sortedDates = [...dates].sort((a, b) => a.localeCompare(b));
+  const round = (value: number | null) => value === null ? null : Math.round(value * 100) / 100;
+  const average = (prices: number[] | undefined) => prices ? round(prices.reduce((a, b) => a + b, 0) / prices.length) : null;
+  const daily = (prices: number[] | undefined) => !prices ? null : fallback ? average(prices) : round(robustMedian(prices));
+
+  const points: ChartPoint[] = sortedDates.map((date) => ({
+    date, rawPrice: daily(byDate.raw.get(date)), tcgPrice: average(byDate.tcg.get(date)),
+    psa10Price: daily(byDate.psa10.get(date)), psa9Price: daily(byDate.psa9.get(date)),
+  }));
+  const count = (series: keyof typeof byDate) => [...byDate[series].values()].reduce((n, prices) => n + prices.length, 0);
 
   return {
     history: points,
-    obsCounts: {
-      raw: rawObsCount,
-      tcg: tcgObsCount,
-      psa10: psa10ObsCount,
-      psa9: psa9ObsCount,
-    },
+    obsCounts: { raw: count("raw"), tcg: count("tcg"), psa10: count("psa10"), psa9: count("psa9") },
   };
 }
 
@@ -412,12 +405,19 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
           <p className="mt-2 text-2xl font-black tracking-tight text-slate-950">
             {tcgPrimary?.price != null ? <AnimatedNumber value={tcgPrimary.price} format={(value) => money(value, tcgPrimary.currency)} /> : "—"}
           </p>
-          {pptPrimary && <p className="mt-1 text-xs text-emerald-800">Pokémon Price Tracker · {pptPrimary.stale ? "Stale recorded price · " : ""}{pptPrimary.condition} · {formatUpdatedDate(pptPrimary.price_date)}</p>}
-          {tcgPrimary && !pptPrimary && (
-            <p className="mt-1 text-xs text-emerald-800">
-              Legacy recorded price · {formatUpdatedDate(tcgPrimary.provider_updated_at ?? tcgPrimary.observed_at)}
-            </p>
-          )}
+          {pptPrimary && <p className="mt-1.5">
+            <PriceSourceBadge stale={pptPrimary.stale}
+              label={`${pptPrimary.stale ? "Last known" : "PPT market"} · ${pptPrimary.condition} · ${formatUpdatedDate(pptPrimary.price_date)}`}
+              title={pptPrimary.stale ? "Pokémon Price Tracker has not reported a current price; this is the last recorded one." : "Pokémon Price Tracker market price"} />
+          </p>}
+          {tcgPrimary && !pptPrimary && (() => {
+            const date = tcgPrimary.provider_updated_at ?? tcgPrimary.observed_at;
+            const stale = isStalePriceDate(date);
+            return <p className="mt-1.5">
+              <PriceSourceBadge stale={stale} title="Recorded from the retired legacy market source"
+                label={`${stale ? "Last known" : "Legacy market"} · ${formatUpdatedDate(date)}`} />
+            </p>;
+          })()}
           {/* 24h / 7d / 30d Momentum Pills */}
           <div className="mt-3 flex flex-wrap gap-1.5">
             {p24h !== null && p24h !== undefined && (
@@ -568,14 +568,15 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
                   })}
                 </div>}
                 <div role="group" aria-label="Graded" className="flex flex-wrap items-center gap-1.5">
-                  {GRADING_COMPANIES.map((company) => {
+                  {/* Only companies with history for this card get a toggle. */}
+                  {GRADING_COMPANIES.filter((company) => companySeriesCount(company) > 0).map((company) => {
                     const on = shownCompanies.includes(company);
                     const count = companySeriesCount(company);
-                    return <button key={company} type="button" aria-pressed={on} disabled={count === 0}
-                      title={count === 0 ? `No ${company.toUpperCase()} history for this card` : `Show all ${company.toUpperCase()} grades`}
+                    return <button key={company} type="button" aria-pressed={on}
+                      title={`Show all ${company.toUpperCase()} grades`}
                       onClick={() => setShownCompanies((shown) => on ? shown.filter((item) => item !== company) : [...shown, company])}
-                      className={`rounded-lg border px-2.5 py-1 font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${on ? "border-amber-600 bg-amber-500 text-white" : "border-stone-200 bg-white text-slate-600 hover:border-slate-300"}`}>
-                      {company.toUpperCase()}{count > 0 ? <span className="ml-1 font-normal opacity-70">{count}</span> : null}
+                      className={`rounded-lg border px-2.5 py-1 font-semibold transition ${on ? "border-amber-600 bg-amber-500 text-white" : "border-stone-200 bg-white text-slate-600 hover:border-slate-300"}`}>
+                      {company.toUpperCase()}<span className="ml-1 font-normal opacity-70">{count}</span>
                     </button>;
                   })}
                 </div>
