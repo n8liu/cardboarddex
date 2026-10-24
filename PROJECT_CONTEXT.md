@@ -1,5 +1,17 @@
 # CardboardDex project context
 
+## Interface polish — 2026-10-24 (branch `phase3-ui-polish`, stacked on Phase 2, not deployed)
+
+Frontend only.
+
+- **Command palette.** Sets are searchable (loaded once on first open). Binder actions: add the current card, or open the binder. The results are an ARIA combobox/listbox. The nav shows "Ctrl K" off Apple platforms (`lib/shortcut.ts`).
+- **URL filters.** `lib/url-state.writeUrlFilters` pushes a history entry for discrete filter changes and replaces it while typing, so Back restores the previous filters in catalog, movers (now including `layout`), sealed and grading profit. Pagination is load-more, so `page` stays out of the URL.
+- **Mobile card page.** Chart toggles scroll in one row on phones. Range buttons show 1M/3M/6M/1Y below `sm` but keep their full accessible names. `StickyCardActions` adds a bottom bar (price, eBay, binder) once the hero actions scroll away.
+- **Compare view.** `/compare?ids=a,b` (up to 4) has a card picker, one primary-market line per card (`primaryMarketSeries`), and % change (`indexToFirstValue`) or price. `PriceHistoryChart` takes an optional `formatValue`. Linked from card pages, the palette and the sitemap.
+- **Empty states.** `EmptyState` gains `variant` (empty/unavailable/collecting), `compact`, `onRetry` and `role`. It is used in movers, sealed, Trending (including its error state), graded sales and the catalog grid.
+
+Validation: frontend 181 passed; typecheck and build passed. `next start` served `/compare` and the card page's Compare link and sticky bar. Not checked in a real browser or on a device.
+
 ## Speed and SEO changes — 2026-10-24 (branch `phase2-speed-seo`, stacked on Phase 1, not deployed)
 
 - **Edge-cacheable API reads.** `response_cache.cdn_cache_control` sends `public, max-age=0, s-maxage=<seconds left fresh>, stale-while-revalidate=<until discard>`. Stale entries get `s-maxage=10`, and response-cache 503s are `no-store`. `/cards/{id}/prices` uses `s-maxage=120, swr=600`, and `/cards/live-updates/stats` uses `s-maxage=30` (10 when stale). The frontend no longer forces `no-store` for `getCard`/`getCardPricing`. **Takes effect only after the Cloudflare Cache Rule in the README "Edge caching" section is created by hand.**

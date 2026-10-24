@@ -1,14 +1,15 @@
 "use client";
 
 import Image from "@/components/card-image";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { useBinder } from "@/context/binder-context";
 import { SUPPORTED_CURRENCIES, SupportedCurrency, useCurrency } from "@/context/currency-context";
-import { cardImageUrl, searchCards } from "@/lib/api";
+import { cardImageUrl, getCardSets, searchCards } from "@/lib/api";
 import { POKEDEX_DATA } from "@/lib/pokedex-data";
 import { shimmerBlurDataUrl } from "@/lib/shimmer";
-import type { CardSummary } from "@/types/card";
+import type { CardSetOption, CardSummary } from "@/types/card";
 
 export function openCommandPalette() {
   if (typeof window !== "undefined") {
@@ -18,7 +19,7 @@ export function openCommandPalette() {
 
 interface PaletteActionItem {
   id: string;
-  category: "Navigation" | "Pokémon" | "Cards" | "Currency";
+  category: "Navigation" | "Binder" | "Sets" | "Pokémon" | "Cards" | "Currency";
   title: string;
   subtitle?: string;
   badge?: string;
@@ -28,7 +29,10 @@ interface PaletteActionItem {
 
 export function CommandPalette() {
   const router = useRouter();
+  const pathname = usePathname();
   const { currency, setCurrency, formatPrice } = useCurrency();
+  const { quickAddCard, isCardInBinder, isHydrated: binderReady } = useBinder();
+  const [sets, setSets] = useState<CardSetOption[] | null>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [cardResults, setCardResults] = useState<CardSummary[]>([]);
@@ -74,6 +78,17 @@ export function CommandPalette() {
       document.body.style.overflow = "";
     };
   }, [isOpen]);
+
+  // Sets load once, the first time the palette opens (24h cached by getCardSets).
+  useEffect(() => {
+    if (!isOpen || sets !== null) return;
+    let cancelled = false;
+    getCardSets("all").then((result) => { if (!cancelled) setSets(result); }).catch((err) => {
+      console.error("[CommandPalette] Failed loading sets:", err);
+      if (!cancelled) setSets([]);
+    });
+    return () => { cancelled = true; };
+  }, [isOpen, sets]);
 
   // Debounce search cards via API
   useEffect(() => {
@@ -128,6 +143,7 @@ export function CommandPalette() {
       { name: "Grading Profit", path: "/grading-profit", desc: "PSA 10 vs Raw grading arbitrage" },
       { name: "Trending Top 50", path: "/top-volume", desc: "Highest volume cards and search radar" },
       { name: "Live Comps", path: "/live-updates", desc: "Real-time stream of verified sold comps" },
+      { name: "Compare Cards", path: "/compare", desc: "Up to four cards' price history on one chart" },
       { name: "Release Calendar", path: "/faq#calendar", desc: "Set release dates, retailer drops, and print status" },
       { name: "FAQ & Guides", path: "/faq", desc: "Collecting help, website questions, and Pokémon TCG history" },
     ];
@@ -145,7 +161,30 @@ export function CommandPalette() {
       }
     });
 
-    // 2. Currencies
+    // 2. Binder actions
+    const currentCardId = pathname?.startsWith("/cards/") ? decodeURIComponent(pathname.slice("/cards/".length).split("/")[0]) : null;
+    const binderActions: PaletteActionItem[] = [{
+      id: "binder-open", category: "Binder", title: "Open my binder", subtitle: "Your collection and its value", badge: "Page",
+      onSelect: () => closeAndNavigate("/binder"),
+    }];
+    if (currentCardId && binderReady) {
+      const owned = isCardInBinder(currentCardId);
+      binderActions.unshift({
+        id: "binder-add-current", category: "Binder",
+        title: owned ? "This card is in your binder" : "Add this card to my binder",
+        subtitle: owned ? "Open the binder to see it" : "Places it in the first empty slot",
+        badge: owned ? "Owned" : "Add",
+        onSelect: () => {
+          if (owned) closeAndNavigate("/binder");
+          else { quickAddCard(currentCardId); setIsOpen(false); }
+        },
+      });
+    }
+    binderActions.forEach((action) => {
+      if (!q || `${action.title} binder collection`.toLowerCase().includes(q)) result.push(action);
+    });
+
+    // 3. Currencies
     SUPPORTED_CURRENCIES.forEach((curr) => {
       if (
         !q ||
@@ -168,7 +207,25 @@ export function CommandPalette() {
       }
     });
 
-    // 3. Pokémon Species
+    // 4. Sets
+    if (q && sets) {
+      sets.filter((set) => set.name.toLowerCase().includes(q) || (set.series ?? "").toLowerCase().includes(q) || set.id.toLowerCase() === q)
+        .slice(0, 5)
+        .forEach((set) => {
+          const japanese = set.series === "Pokemon Japan";
+          result.push({
+            id: `set-${set.id}`,
+            category: "Sets",
+            title: set.name,
+            subtitle: [set.series, set.release_date?.slice(0, 4)].filter(Boolean).join(" · "),
+            badge: japanese ? "Japan" : "Set",
+            image: set.image_url || null,
+            onSelect: () => closeAndNavigate(`/catalog?set=${encodeURIComponent(set.id)}${japanese ? "&game=pokemon-japan" : ""}`),
+          });
+        });
+    }
+
+    // 5. Pokémon Species
     if (q) {
       const matchedPokemon = POKEDEX_DATA.filter(
         (p) =>
@@ -190,7 +247,7 @@ export function CommandPalette() {
       });
     }
 
-    // 4. Cards from Live Search
+    // 6. Cards from Live Search
     cardResults.forEach((card) => {
       result.push({
         id: `card-${card.id}`,
@@ -204,7 +261,7 @@ export function CommandPalette() {
     });
 
     return result;
-  }, [search, cardResults, currency, setCurrency, formatPrice, closeAndNavigate]);
+  }, [search, cardResults, currency, setCurrency, formatPrice, closeAndNavigate, pathname, binderReady, isCardInBinder, quickAddCard, sets]);
 
   // Adjust selected index if it exceeds list length
   useEffect(() => {
@@ -262,7 +319,12 @@ export function CommandPalette() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Search cards, Pokémon, pages, currencies (e.g. Charizard, Movers)..."
+            role="combobox"
+            aria-expanded="true"
+            aria-controls="command-palette-results"
+            aria-activedescendant={items[selectedIndex] ? `palette-option-${selectedIndex}` : undefined}
+            aria-label="Search cards, sets, Pokémon and pages"
+            placeholder="Search cards, sets, Pokémon, pages (e.g. Charizard, Surging Sparks)..."
             className="w-full bg-transparent text-sm font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none"
           />
           {isSearchingCards && (
@@ -274,10 +336,10 @@ export function CommandPalette() {
         </div>
 
         {/* Scrollable Results List */}
-        <div ref={listRef} className="max-h-[58vh] overflow-y-auto p-2 space-y-1">
+        <div ref={listRef} id="command-palette-results" role="listbox" aria-label="Results" className="max-h-[58vh] overflow-y-auto p-2 space-y-1">
           {items.length === 0 ? (
             <div className="py-12 text-center text-xs text-slate-400">
-              No matching pages, Pokémon, or cards found.
+              No matching pages, sets, Pokémon, or cards found.
             </div>
           ) : (
             items.map((item, idx) => {
@@ -285,6 +347,9 @@ export function CommandPalette() {
               return (
                 <div
                   key={item.id}
+                  id={`palette-option-${idx}`}
+                  role="option"
+                  aria-selected={isSelected}
                   data-index={idx}
                   onMouseEnter={() => setSelectedIndex(idx)}
                   onClick={item.onSelect}
@@ -318,6 +383,10 @@ export function CommandPalette() {
                       >
                         {item.category === "Navigation"
                           ? "↗"
+                          : item.category === "Binder"
+                          ? "▣"
+                          : item.category === "Sets"
+                          ? "◫"
                           : item.category === "Currency"
                           ? "¤"
                           : "★"}

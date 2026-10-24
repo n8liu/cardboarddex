@@ -13,6 +13,8 @@ import { useCurrency } from "@/context/currency-context";
 import { cardImageUrl, getSealedSignals } from "@/lib/api";
 import type { GameLanguage, SealedProductType, SealedSignalItem, SealedSignalsResponse, SealedSignalType, SealedSortOption } from "@/types/card";
 import { IMAGE_HOVER, TILE_HOVER } from "@/lib/card-hover";
+import { writeUrlFilters } from "@/lib/url-state";
+import { EmptyState } from "@/components/ui/empty-state";
 
 type Layout = "cards" | "table";
 type View = "split" | "newer" | "older";
@@ -186,7 +188,7 @@ function RankingColumn({ era, filters, ranking, layout, view }: { era: Era; filt
       {loading && <div role="status" className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2"><span className="col-span-full text-xs text-slate-500">Loading {newer ? "newer" : "older"} products…</span>{!items.length && [0, 1, 2, 3].map((n) => <div key={n} className="h-96 animate-pulse rounded-2xl bg-slate-100 motion-reduce:animate-none" />)}</div>}
       <CacheNotice metadata={cacheMetadata} />
       {error && <div role="alert" className="m-4 rounded-xl bg-rose-50 p-4 text-sm text-rose-700">{error}<button type="button" className="ml-2 font-semibold underline" onClick={() => data ? loadMore(true) : retry()}>Retry</button></div>}
-      {!loading && !error && !items.length && <div className="px-6 py-16 text-center"><p className="text-sm font-semibold text-slate-700">No matching {newer ? "newer" : "older"} products</p><p className="mt-2 text-xs text-slate-500">Try another language or product type, or clear your filters.</p></div>}
+      {!loading && !error && !items.length && <EmptyState compact className="m-4" title={`No matching ${newer ? "newer" : "older"} products`} description="Try another language or product type, or clear your filters." />}
       {!error && data && data.page < data.total_pages && <div className="border-t border-slate-100 p-4"><button type="button" disabled={loading} onClick={() => void loadMore()} className="min-h-10 w-full rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-700 transition hover:bg-slate-100 focus-visible:outline-slate-900 disabled:opacity-50">{loading ? "Loading…" : `Load more ${newer ? "newer" : "older"} products`}</button></div>}
     </section>
   );
@@ -239,11 +241,11 @@ export function SealedSignalsDashboard({ initialData }: { initialData: Record<Er
     return () => window.removeEventListener("popstate", restore);
   }, []);
   useEffect(() => {
-    const url = new URL(window.location.href);
+    const values: Record<string, string | null> = {};
     for (const [name, value, fallback] of [["game", game, "all"], ["period", String(period), "30"], ["q", debounced, ""], ["type", productType, "all"], ["signal", signal, "all"], ["sort", sortBy, "momentum_desc"], ["view", view, "split"], ["layout", layout, "cards"]]) {
-      if (value === fallback) url.searchParams.delete(name); else url.searchParams.set(name, value);
+      values[name] = value === fallback ? null : value;
     }
-    window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+    writeUrlFilters(values, ["q"]);
   }, [debounced, productType, signal, sortBy, period, game, view, layout]);
   const filters = useMemo(() => ({ query: debounced, productType, signal, sortBy, period, game }), [debounced, productType, signal, sortBy, period, game]);
   const defaults = game === "all" && period === 30 && !debounced && productType === "all" && signal === "all" && sortBy === "momentum_desc";

@@ -19,6 +19,7 @@ import type {
 import { IMAGE_HOVER, TILE_HOVER } from "@/lib/card-hover";
 import { PriceSourceBadge } from "@/components/ui/price-source-badge";
 import { CardLink } from "@/components/card-link";
+import { writeUrlFilters } from "@/lib/url-state";
 
 type PresetFilter = "all" | "safe" | "high_profit" | "high_roi" | "budget" | "high_spread";
 
@@ -94,13 +95,11 @@ export function GradingProfitDashboard({ initialData }: GradingProfitDashboardPr
     if (isFirstMount.current) return;
 
     const timer = window.setTimeout(() => {
-      const url = new URL(window.location.href);
-      presetFilter !== "all" ? url.searchParams.set("preset", presetFilter) : url.searchParams.delete("preset");
-      sortBy !== "psa10_profit_desc" ? url.searchParams.set("sort", sortBy) : url.searchParams.delete("sort");
-      targetGrade !== "all" ? url.searchParams.set("grade", targetGrade) : url.searchParams.delete("grade");
-      gradingFee !== 24.99 ? url.searchParams.set("fee", String(gradingFee)) : url.searchParams.delete("fee");
-      debouncedQuery.trim() ? url.searchParams.set("q", debouncedQuery.trim()) : url.searchParams.delete("q");
-      window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+      writeUrlFilters({
+        preset: presetFilter !== "all" ? presetFilter : null, sort: sortBy !== "psa10_profit_desc" ? sortBy : null,
+        grade: targetGrade !== "all" ? targetGrade : null, fee: gradingFee !== 24.99 ? String(gradingFee) : null,
+        q: debouncedQuery.trim(),
+      }, ["q", "fee"]);
     }, 150);
 
     return () => window.clearTimeout(timer);

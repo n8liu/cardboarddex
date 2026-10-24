@@ -14,6 +14,7 @@ import { PriceRangeSlider, type PriceRangeValue } from "@/components/ui/price-ra
 import { useCurrency } from "@/context/currency-context";
 import { CARD_PAGE_SIZE, getCardSets, getSetStats, searchCards } from "@/lib/api";
 import type { CardSetOption, CardSort, CardSummary, GameLanguage, SetStats } from "@/types/card";
+import { writeUrlFilters } from "@/lib/url-state";
 
 type CatalogQuickFilter = "all" | "under10" | "10to50" | "grails" | "specials";
 
@@ -252,15 +253,13 @@ export function CatalogBrowser({
         setCards(nextCards);
         setHasMore(nextCards.length === CARD_PAGE_SIZE);
 
-        const url = new URL(window.location.href);
-        query.trim() ? url.searchParams.set("q", query.trim()) : url.searchParams.delete("q");
-        setId ? url.searchParams.set("set", setId) : url.searchParams.delete("set");
-        sortBy !== "price_desc" ? url.searchParams.set("sort", sortBy) : url.searchParams.delete("sort");
-        !hideSealed ? url.searchParams.set("hide_sealed", "false") : url.searchParams.delete("hide_sealed");
-        game !== "all" ? url.searchParams.set("game", game) : url.searchParams.delete("game");
-        minPrice != null && minPrice > 0 ? url.searchParams.set("min_price", String(minPrice)) : url.searchParams.delete("min_price");
-        maxPrice != null ? url.searchParams.set("max_price", String(maxPrice)) : url.searchParams.delete("max_price");
-        window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+        // Back restores earlier filters: useSearchParams follows the URL and re-applies them.
+        writeUrlFilters({
+          q: query.trim(), set: setId, sort: sortBy !== "price_desc" ? sortBy : null,
+          hide_sealed: hideSealed ? null : "false", sealed: null, game: game !== "all" ? game : null,
+          min_price: minPrice != null && minPrice > 0 ? String(minPrice) : null,
+          max_price: maxPrice != null ? String(maxPrice) : null,
+        }, ["q", "sealed"]);
       } catch (requestError) {
         if (requestVersion.current !== version) return;
         console.error("Failed loading catalog cards:", requestError);
