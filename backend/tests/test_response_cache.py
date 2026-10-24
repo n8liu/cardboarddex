@@ -194,7 +194,7 @@ def test_metadata_exposes_original_generation(cache):
     response = Response()
     cache_headers(response, entry, 'stale', time.monotonic())
     assert response.headers['X-Cache-Status'] == 'stale'
-    assert 'no-cache' in response.headers['Cache-Control']
+    assert 'max-age=0' in response.headers['Cache-Control']  # browsers always revalidate
     assert 'cache;desc="stale"' in response.headers['Server-Timing']
 
 
@@ -257,3 +257,22 @@ def test_background_work_does_not_queue_more_keys(cache):
     finally:
         release.set()
         cache.shutdown()
+
+
+def test_cdn_cache_control_tracks_backend_freshness():
+    from app.common.response_cache import cdn_cache_control
+    entry = dict(generated_at=1000, fresh_until=1300, discard_at=2800)
+    assert cdn_cache_control(entry, 'hit', now=1100) == 'public, max-age=0, s-maxage=200, stale-while-revalidate=1500'
+    assert cdn_cache_control(entry, 'miss', now=1000) == 'public, max-age=0, s-maxage=300, stale-while-revalidate=1500'
+    # Past fresh the edge must come back soon rather than pin old data.
+    assert cdn_cache_control(entry, 'stale', now=1400) == 'public, max-age=0, s-maxage=10'
+    assert cdn_cache_control(entry, 'stale-error', now=1400) == 'public, max-age=0, s-maxage=10'
+
+
+def test_unavailable_responses_are_never_cached(cache):
+    def boom():
+        raise RuntimeError('database down')
+    with pytest.raises(HTTPException) as error:
+        cache.get('cold', boom, fresh=60, maximum=600)
+    assert error.value.status_code == 503
+    assert error.value.headers['Cache-Control'] == 'no-store'

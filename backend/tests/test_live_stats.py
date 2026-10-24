@@ -222,3 +222,15 @@ def test_public_routes_and_cold_stats_contract(monkeypatch):
         assert "total_items" not in feed_response.json()
         assert client.get("/cards/live-updates/feed?provider=invalid").status_code == 422
         assert client.get("/cards/live-updates/feed?per_page=101").status_code == 422
+
+
+@pytest.mark.parametrize("age,header", [(0, "public, max-age=0, s-maxage=30"), (120, "public, max-age=0, s-maxage=10")])
+def test_stats_route_is_edge_cacheable_and_shorter_when_stale(db, monkeypatch, age, header):
+    from fastapi import Response
+    from app.routers.market import get_live_stats
+    snapshot = live_stats.calculate_snapshot(db)
+    snapshot.generated_at = datetime.now(UTC) - timedelta(seconds=age)
+    monkeypatch.setattr(live_stats, "get_redis", lambda: Mock(get=Mock(return_value=snapshot.model_dump_json())))
+    response = Response()
+    get_live_stats(response)
+    assert response.headers["Cache-Control"] == header

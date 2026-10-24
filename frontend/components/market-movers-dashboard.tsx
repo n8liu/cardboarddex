@@ -4,7 +4,6 @@ import { CacheNotice, useCacheNotice } from "@/components/cache-notice";
 
 import { SectionLoadingBar } from "@/components/section-loading-bar";
 import Image from "@/components/card-image";
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -17,6 +16,7 @@ import { InfiniteScrollSentinel } from "@/components/ui/infinite-scroll-sentinel
 import { SearchInput } from "@/components/ui/search-input";
 import type { MarketMoverItem, MarketMoversResponse, MoverDirection, MoverPeriod } from "@/types/card";
 import { IMAGE_HOVER, TILE_HOVER } from "@/lib/card-hover";
+import { CardLink } from "@/components/card-link";
 
 type MoverQuickFilter = "all" | "surge25" | "dip15" | "high50" | "budget15";
 
@@ -62,9 +62,8 @@ function MoverCard({ item }: { item: MarketMoverItem }) {
   const isUp = item.direction === "up" || item.price_change_percentage >= 0;
 
   return (
-    <Link
+    <CardLink
       href={`/cards/${encodeURIComponent(item.card_id)}`}
-      prefetch={false}
       className={`card-cv animate-card-cascade group relative flex flex-col justify-between rounded-2xl border border-slate-200/90 bg-white p-4 shadow-2xs ${TILE_HOVER} focus:outline-none focus:ring-2 focus:ring-slate-900`}
     >
       <div className="flex gap-3.5">
@@ -142,7 +141,7 @@ function MoverCard({ item }: { item: MarketMoverItem }) {
       <div className="mt-2 text-[10px] text-slate-400">
         {item.market_source === "pokemonpricetracker" ? "PPT" : "Legacy market history"} · Updated {formatRelativeTime(item.last_updated_at)}
       </div>
-    </Link>
+    </CardLink>
   );
 }
 
@@ -162,9 +161,8 @@ function MoverTableRow({ item, rank }: { item: MarketMoverItem; rank?: number })
         </td>
       )}
       <td className="py-2.5 px-3">
-        <Link
+        <CardLink
           href={`/cards/${encodeURIComponent(item.card_id)}`}
-          prefetch={false}
           className="flex items-center gap-2.5 focus:outline-none"
         >
           <div className="relative h-20 w-14 shrink-0 sm:h-24 sm:w-16 overflow-hidden rounded border border-slate-100 bg-slate-50">
@@ -193,7 +191,7 @@ function MoverTableRow({ item, rank }: { item: MarketMoverItem; rank?: number })
               {item.set_name} {item.number ? `· #${item.number}` : ""}
             </p>
           </div>
-        </Link>
+        </CardLink>
       </td>
       <td className="py-2.5 px-3 text-right">
         <span
@@ -223,14 +221,13 @@ function MoverTableRow({ item, rank }: { item: MarketMoverItem; rank?: number })
         {formatRelativeTime(item.last_updated_at)}
       </td>
       <td className="py-2.5 pr-4 pl-2 text-right w-10">
-        <Link
+        <CardLink
           href={`/cards/${encodeURIComponent(item.card_id)}`}
-          prefetch={false}
           className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 text-xs font-bold text-slate-400 transition group-hover:border-emerald-600 group-hover:bg-emerald-600 group-hover:text-white"
           aria-label={`View comps for ${item.name}`}
         >
           →
-        </Link>
+        </CardLink>
       </td>
     </tr>
   );

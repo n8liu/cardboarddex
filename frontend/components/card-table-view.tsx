@@ -1,13 +1,13 @@
 "use client";
 
 import Image from "@/components/card-image";
-import Link from "next/link";
 import { useState } from "react";
 
 import { useCurrency } from "@/context/currency-context";
 import { cardImageUrl } from "@/lib/api";
 import { shimmerBlurDataUrl } from "@/lib/shimmer";
 import type { CardSummary } from "@/types/card";
+import { CardLink } from "@/components/card-link";
 
 type CardTableViewProps = {
   cards: CardSummary[];
@@ -97,9 +97,8 @@ export function CardTableView({ cards, query }: CardTableViewProps) {
                 {card.number ? `#${card.number}` : idx + 1}
               </td>
               <td className="py-2.5 px-3">
-                <Link
+                <CardLink
                   href={`/cards/${encodeURIComponent(card.id)}`}
-                  prefetch={false}
                   className="flex items-center gap-2.5 focus:outline-none"
                 >
                   <TableRowThumbnail card={card} />
@@ -111,7 +110,7 @@ export function CardTableView({ cards, query }: CardTableViewProps) {
                       {card.set_name} {card.rarity ? `· ${card.rarity}` : ""}
                     </p>
                   </div>
-                </Link>
+                </CardLink>
               </td>
               <td className="hidden sm:table-cell py-2.5 px-3 text-slate-600 truncate max-w-[180px]">
                 {card.set_name}
@@ -128,14 +127,13 @@ export function CardTableView({ cards, query }: CardTableViewProps) {
                 {formatRelativeTime(card.last_updated_at)}
               </td>
               <td className="py-2.5 pr-4 pl-2 text-right">
-                <Link
+                <CardLink
                   href={`/cards/${encodeURIComponent(card.id)}`}
-                  prefetch={false}
                   className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 text-xs font-bold text-slate-400 transition group-hover:border-emerald-600 group-hover:bg-emerald-600 group-hover:text-white"
                   aria-label={`View comps for ${card.name}`}
                 >
                   →
-                </Link>
+                </CardLink>
               </td>
             </tr>
           ))}

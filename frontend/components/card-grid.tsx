@@ -1,7 +1,6 @@
 "use client";
 
 import Image from "@/components/card-image";
-import Link from "next/link";
 import { useState } from "react";
 
 import { HoloCard } from "@/components/ui/holo-card";
@@ -10,6 +9,7 @@ import { cardImageUrl } from "@/lib/api";
 import { shimmerBlurDataUrl } from "@/lib/shimmer";
 import type { CardSummary } from "@/types/card";
 import { isStalePriceDate } from "@/components/ui/price-source-badge";
+import { CardLink } from "@/components/card-link";
 
 type CardGridProps = {
   cards: CardSummary[];
@@ -100,12 +100,11 @@ export function CardGrid({ cards, query }: CardGridProps) {
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
       {cards.map((card, idx) => (
-        <Link
+        <CardLink
           className="card-cv animate-card-cascade group flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-3 transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_16px_40px_rgba(15,23,42,0.08)] focus:outline-none focus:ring-2 focus:ring-emerald-500"
           style={{ animationDelay: `${Math.min(idx * 25, 350)}ms` }}
           href={`/cards/${encodeURIComponent(card.id)}`}
           key={card.id}
-          prefetch={false}
         >
           <HoloCard maxTilt={8} rarity={card.rarity} className="w-full">
             <CardThumbnail card={card} />
@@ -128,7 +127,7 @@ export function CardGrid({ cards, query }: CardGridProps) {
               </span>
             </div>
           </div>
-        </Link>
+        </CardLink>
       ))}
     </div>
   );

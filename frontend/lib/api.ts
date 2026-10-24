@@ -357,9 +357,9 @@ export async function getCard(
 ): Promise<CardDetail | null> {
   const qs = options?.ref ? `?ref=${encodeURIComponent(options.ref)}` : "";
   try {
-    return await request<CardDetail>(`/cards/${encodeURIComponent(cardId)}${qs}`, {
-      cache: "no-store",
-    });
+    // No "no-store": the API's s-maxage lets Cloudflare serve repeat card views (browsers
+    // still revalidate via max-age=0), and Next keeps no data cache of its own here.
+    return await request<CardDetail>(`/cards/${encodeURIComponent(cardId)}${qs}`);
   } catch (err: unknown) {
     if (err instanceof Error && err.message.includes("404")) {
       return null;
@@ -370,9 +370,7 @@ export async function getCard(
 
 export async function getCardPricing(cardId: string): Promise<CardPricing | null> {
   try {
-    return await request<CardPricing>(`/cards/${encodeURIComponent(cardId)}/prices?days=365`, {
-      cache: "no-store",
-    });
+    return await request<CardPricing>(`/cards/${encodeURIComponent(cardId)}/prices?days=365`);
   } catch (err: unknown) {
     if (err instanceof Error && err.message.includes("404")) {
       return null;

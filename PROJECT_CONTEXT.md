@@ -1,5 +1,14 @@
 # CardboardDex project context
 
+## Speed and SEO changes — 2026-10-24 (branch `phase2-speed-seo`, stacked on Phase 1, not deployed)
+
+- **Edge-cacheable API reads.** `response_cache.cdn_cache_control` sends `public, max-age=0, s-maxage=<seconds left fresh>, stale-while-revalidate=<until discard>`. Stale entries get `s-maxage=10`, and response-cache 503s are `no-store`. `/cards/{id}/prices` uses `s-maxage=120, swr=600`, and `/cards/live-updates/stats` uses `s-maxage=30` (10 when stale). The frontend no longer forces `no-store` for `getCard`/`getCardPricing`. **Takes effect only after the Cloudflare Cache Rule in the README "Edge caching" section is created by hand.**
+- **Card-page metadata.** `generateMetadata` (title, description, canonical, OG/Twitter with the card image) shares one `getCard` read with the page via React `cache()`. The root layout sets `metadataBase` (`https://cardboarddex.app`). New `robots.ts` and a request-time `sitemap.ts` (pages, guides, Pokédex, and sets from `/cards/sets`; about 1,500 URLs; no individual cards).
+- **Hover prefetch.** `components/card-link.tsx` prefetches card pages only on hover, focus or touch (the documented Next pattern) and replaces the `prefetch={false}` card links in grids, tables and dashboards.
+- The planned loading skeletons were dropped: every `loading.tsx` already has a skeleton.
+
+Validation: backend 414 passed (30 skipped); frontend 167 passed; typecheck and build passed. `next start` against the production API rendered the card OG/Twitter tags, `robots.txt` and the sitemap (474 set URLs).
+
 ## Data trust changes — 2026-10-24 (branch `phase1-data-trust`, not deployed)
 
 Phase 1 of the UI/efficiency plan. No migrations; `Cards`/`Sets` untouched.

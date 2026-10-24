@@ -12,8 +12,11 @@ import "./globals.css";
 
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://cardboarddex.app"),
   title: "CardboardDex - Pokémon Card Price Tracker & Market Analytics",
   description: "Pokémon card catalog and market analytics powered by Pokémon Price Tracker and matched eBay listings.",
+  openGraph: { siteName: "CardboardDex", type: "website" },
+  twitter: { card: "summary_large_image" },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

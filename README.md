@@ -22,6 +22,19 @@ The retired provider cannot make requests, including through old queued task nam
 
 Trending uses **PPT graded sales activity**, ranked by reported `salesByGrade` counts. These counts have provider-defined coverage; they are not 7/30/90-day sales totals. Raw sales volume, price updates and direct eBay asking listings are separate measures.
 
+## Edge caching (Cloudflare)
+
+Public API reads send `Cache-Control: public, max-age=0, s-maxage=…, stale-while-revalidate=…`. Browsers always revalidate, and a shared cache can hold a response until the backend would rebuild it. `s-maxage` follows the response cache's fresh window: catalog 60s, grading/sealed/home 300s. Card prices use 120s, live totals 30s, and stale responses 10s. A 503 is always `no-store`.
+
+Cloudflare only caches these if a Cache Rule allows it. This is a one-time dashboard step that a release does not apply:
+
+1. Cloudflare dashboard → `cardboarddex.app` zone → **Caching → Cache Rules → Create rule**.
+2. When: hostname equals `api.cardboarddex.app`, method is `GET`, and URI path starts with `/cards/`, `/home/` or `/market/`. Exclude paths starting with `/admin/` or `/telemetry/`.
+3. Then: **Eligible for cache**. Edge TTL: **Use cache-control header if present**. Browser TTL: **Respect origin**.
+4. Check: `curl -sI 'https://api.cardboarddex.app/cards/search?limit=24' | grep -i cf-cache-status` shows `MISS`, then `HIT` on a repeat.
+
+The per-IP rate limiter only counts requests that reach the origin.
+
 ## Operations and validation
 
 - [Current project context](PROJECT_CONTEXT.md)

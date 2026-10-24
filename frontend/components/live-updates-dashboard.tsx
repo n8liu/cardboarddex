@@ -6,7 +6,6 @@ import { AnimatedNumber } from "@/components/ui/animated-number";
 
 import { SectionLoadingBar } from "@/components/section-loading-bar";
 import Image from "@/components/card-image";
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -22,6 +21,7 @@ import type {
   LiveFeedResponse,
 } from "@/types/card";
 import { IMAGE_HOVER, TILE_HOVER } from "@/lib/card-hover";
+import { CardLink } from "@/components/card-link";
 
 type LiveUpdatesDashboardProps = {
   initialData: LiveFeedResponse;
@@ -119,13 +119,12 @@ function LiveUpdateRow({ item, grid = false }: { item: LiveUpdateItem; grid?: bo
 
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <Link
+            <CardLink
               href={`/cards/${encodeURIComponent(item.card_id)}`}
-              prefetch={false}
               className="line-clamp-2 text-xs font-bold text-slate-950 transition hover:text-emerald-700 hover:underline sm:text-sm"
             >
               {item.card_name}
-            </Link>
+            </CardLink>
             {item.number && (
               <span className="rounded bg-slate-100 px-1.5 py-0.2 text-[10px] font-semibold text-slate-500">
                 #{item.number}
@@ -180,14 +179,13 @@ function LiveUpdateRow({ item, grid = false }: { item: LiveUpdateItem; grid?: bo
               <span className="text-[10px]">↗</span>
             </a>
           )}
-          <Link
+          <CardLink
             href={`/cards/${encodeURIComponent(item.card_id)}`}
-            prefetch={false}
             className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-900 transition hover:bg-emerald-600 hover:text-white"
           >
             <span>View Card</span>
             <span>→</span>
-          </Link>
+          </CardLink>
         </div>
       </div>
     </div>
