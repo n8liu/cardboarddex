@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useCurrency } from "@/context/currency-context";
 import { cardImageUrl, getTrendingDashboard } from "@/lib/api";
+import { SnapshotNotice } from "@/components/cache-notice";
 import { shimmerBlurDataUrl } from "@/lib/shimmer";
 import { GradedSalesActivityPanel, TILE_GRID_CLASS } from "@/components/graded-sales-activity-panel";
 import { SearchInput } from "@/components/ui/search-input";
@@ -495,6 +496,7 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
         </div>
       </div>
 
+      {data.is_stale && !isLoading && <SnapshotNotice generatedAt={data.updated_at} />}
       {error && <div role="alert" className="my-4 text-sm text-rose-700">{error} <button type="button" className="underline" onClick={() => void handleTimeframeChange(timeframe)}>Retry</button></div>}
       {isLoading && <SectionLoadingBar label="Loading trending cards…" />}
       {/* Main Content Area */}

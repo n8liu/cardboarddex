@@ -48,3 +48,16 @@ it("shows a PPT row ingested by the worker on the next poll without a reload", a
   expect(names[0]).toBe("Charizard");  // newest ingestion is prepended
   expect(names.filter((name) => name === "Pikachu")).toHaveLength(1);  // no duplicates
 });
+
+it("keeps showing totals from a paused worker, labelled as dated", async () => {
+  vi.mocked(getLiveFeed).mockResolvedValue(empty);
+  vi.mocked(getLiveStats).mockReset().mockResolvedValue({
+    total_items: 1234, total_ebay_updates: 0, total_tcg_updates: 0, total_legacy_updates: 0,
+    total_ppt_updates: 1234, graded_updates_count: 56, is_stale: true,
+    generated_at: new Date(Date.now() - 2 * 60 * 60_000).toISOString(),
+  });
+  render(<LiveUpdatesDashboard initialData={empty} />);
+  await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+  expect(screen.getByText(/updates paused/)).toBeVisible();
+  expect(screen.queryByText("Unavailable")).toBeNull();
+});

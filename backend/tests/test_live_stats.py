@@ -107,7 +107,7 @@ def test_unfiltered_first_page_shares_one_query(db, monkeypatch):
         response_cache.clear()
 
 
-@pytest.mark.parametrize("age,stale,available",[(0, False, True), (61, True, True), (1799, True, True), (1801, True, False)])
+@pytest.mark.parametrize("age,stale,available",[(0, False, True), (61, True, True), (1801, True, True), (86399, True, True), (86401, True, False)])
 def test_snapshot_age(db, monkeypatch, age, stale, available):
     snapshot = live_stats.calculate_snapshot(db)
     snapshot.generated_at = datetime.now(UTC) - timedelta(seconds=age)
@@ -165,7 +165,7 @@ def test_refresh_publishes_atomically_and_rejects_lost_lease(db, monkeypatch):
     assert live_stats.refresh_snapshot() is True
     publish = redis.eval.call_args_list[0].args
     assert publish[0] == live_stats._PUBLISH
-    assert publish[1] == 2 and publish[-1] == 1800
+    assert publish[1] == 2 and publish[-1] == live_stats.RETAIN_SECONDS
     assert '"total_items"' in publish[-2]
     redis.eval.return_value = 0
     assert live_stats.refresh_snapshot() is False

@@ -18,6 +18,7 @@ import type {
   GradingSortOption,
 } from "@/types/card";
 import { IMAGE_HOVER, TILE_HOVER } from "@/lib/card-hover";
+import { PriceSourceBadge } from "@/components/ui/price-source-badge";
 
 type PresetFilter = "all" | "safe" | "high_profit" | "high_roi" | "budget" | "high_spread";
 
@@ -584,6 +585,8 @@ export function GradingProfitDashboard({ initialData }: GradingProfitDashboardPr
                       <div className="mt-2 text-[10px] text-slate-500 font-mono">
                         <span>Raw: ${item.raw_price.toFixed(2)}</span>
                         {item.graded_source === "pokemonpricetracker" && <p>PPT · PSA 7-day median · eBay / Fanatics sales</p>}
+                        {item.graded_metric === "asking_listing" && <p className="my-0.5"><PriceSourceBadge label="eBay asking · not sold"
+                          title="Median of recent matched eBay asking listings, outliers removed. Asking prices are not sales." /></p>}
                         <span className="text-slate-300"> · </span>
                         <span>Total: ${totalBuyIn.toFixed(2)}</span>
                       </div>

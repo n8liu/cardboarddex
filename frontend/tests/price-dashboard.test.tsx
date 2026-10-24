@@ -11,7 +11,7 @@ it("retains the dated legacy snapshot without presenting retired momentum as cur
   const tcg = screen.getByText("Market Price").closest('.rounded-2xl') as HTMLElement;
   expect(within(tcg).getByText("$110.00", { selector: ".sr-only" })).toBeInTheDocument();
   expect(tcg).not.toHaveTextContent("24h:");
-  expect(tcg).toHaveTextContent("Legacy recorded price");
+  expect(tcg).toHaveTextContent(/Legacy market|Last known/);
   expect(tcg).not.toHaveTextContent("7d:");
   expect(tcg).not.toHaveTextContent("30d:");
   const average = screen.getByText("Avg Listing (Raw, 7d)").parentElement!;
@@ -36,7 +36,7 @@ it.each([undefined, []])("falls back to the newest raw TCG graph quote when snap
   ] }} />);
   const tcg = screen.getByText("Market Price").closest('.rounded-2xl') as HTMLElement;
   expect(within(tcg).getByText("$120.00", { selector: ".sr-only" })).toBeInTheDocument();
-  expect(tcg).toHaveTextContent("Legacy recorded price");
+  expect(tcg).toHaveTextContent(/Legacy market|Last known/);
   expect(tcg).not.toHaveTextContent("7d:");
   expect(tcg).not.toHaveTextContent("30d:");
 });
@@ -91,6 +91,7 @@ it("defaults the price history to every printing on, grading companies off and 3
     { ...base, id: "rev", printing: "Reverse Holofoil", condition: "Near Mint", grade: null },
     ...["psa10", "psa9", "psa8"].map((grade) => ({ ...base, id: grade, printing: null, condition: null, grade, metric: "daily_average" })),
     { ...base, id: "cgc10", printing: null, condition: null, grade: "cgc10", metric: "daily_average" },
+    { ...base, id: "bgs9_5", printing: null, condition: null, grade: "bgs9_5", metric: "daily_average" },
   ] }} />);
   const printings = screen.getByRole("group", { name: "Printings" });
   expect(within(printings).getByRole("button", { name: "Holofoil" })).toHaveAttribute("aria-pressed", "true");
@@ -100,7 +101,9 @@ it("defaults the price history to every printing on, grading companies off and 3
   expect(psa).toHaveAttribute("aria-pressed", "false");
   expect(psa).toHaveTextContent("3");
   expect(within(graded).getByRole("button", { name: /CGC/ })).toHaveAttribute("aria-pressed", "false");
-  expect(within(graded).getByRole("button", { name: "TAG" })).toBeDisabled();
+  expect(within(graded).getByRole("button", { name: /BGS/ })).toHaveTextContent("1");
+  // Companies without history get no toggle at all.
+  expect(within(graded).queryByRole("button", { name: /TAG|SGC/ })).toBeNull();
   expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
   fireEvent.click(psa);
   expect(psa).toHaveAttribute("aria-pressed", "true");

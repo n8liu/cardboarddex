@@ -9,6 +9,7 @@ import { useCurrency } from "@/context/currency-context";
 import { cardImageUrl } from "@/lib/api";
 import { shimmerBlurDataUrl } from "@/lib/shimmer";
 import type { CardSummary } from "@/types/card";
+import { isStalePriceDate } from "@/components/ui/price-source-badge";
 
 type CardGridProps = {
   cards: CardSummary[];
@@ -41,15 +42,17 @@ function formatRelativeTime(dateStr: string | null | undefined): string | null {
 function CardThumbnail({ card }: { card: CardSummary }) {
   const [failed, setFailed] = useState(false);
   const updatedLabel = formatRelativeTime(card.last_updated_at);
+  const stale = isStalePriceDate(card.last_updated_at);
 
   return (
     <div className="relative aspect-[5/7] w-full overflow-hidden rounded-xl bg-slate-50">
       {updatedLabel && (
         <span
-          className="absolute right-2 top-2 z-10 rounded-md border border-slate-200/80 bg-white/90 px-1.5 py-0.5 text-[9px] font-semibold text-slate-500 shadow-sm backdrop-blur-sm"
-          title={`${card.market_source === "pokemonpricetracker" ? "Pokémon Price Tracker" : "Legacy market history"} · Price date: ${card.last_updated_at}`}
+          className={`absolute right-2 top-2 z-10 rounded-md border px-1.5 py-0.5 text-[9px] font-semibold shadow-sm backdrop-blur-sm ${stale
+            ? "border-amber-300 bg-amber-50/95 text-amber-800" : "border-slate-200/80 bg-white/90 text-slate-500"}`}
+          title={`${card.market_source === "pokemonpricetracker" ? "Pokémon Price Tracker" : "Legacy market history"} · ${stale ? "Last known price" : "Price date"}: ${card.last_updated_at}`}
         >
-          {updatedLabel}
+          {stale ? `Last known · ${updatedLabel}` : updatedLabel}
         </span>
       )}
       {failed ? (

@@ -196,7 +196,7 @@ function LiveUpdateRow({ item, grid = false }: { item: LiveUpdateItem; grid?: bo
 
 export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps) {
   const searchParams = useSearchParams();
-  const { stats, loading: statsLoading, error: statsError, stale: statsStale, retry: retryStats } = useLiveStats();
+  const { stats, loading: statsLoading, error: statsError, stale: statsStale, paused: statsPaused, retry: retryStats } = useLiveStats();
 
   const getUrlParams = useCallback(() => {
     const params = typeof window !== "undefined"
@@ -463,7 +463,9 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
 
       <div className="mt-2 text-xs text-slate-500" aria-live="polite">
         Global totals cover all sources and filters.
-        {stats && <span> Updated {new Date(stats.generated_at).toLocaleTimeString()}{statsStale ? " · Stale" : ""}.</span>}
+        {stats && (statsPaused
+          ? <span className="text-amber-800"> Totals as of {new Date(stats.generated_at).toLocaleString()}; updates paused.</span>
+          : <span> Updated {new Date(stats.generated_at).toLocaleTimeString()}{statsStale ? " · Stale" : ""}.</span>)}
         {statsError && <span> Totals temporarily unavailable. <button type="button" onClick={retryStats} className="underline">Retry totals</button></span>}
       </div>
 

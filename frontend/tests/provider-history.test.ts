@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { carryForward, mergeProviderHistory, providerSeriesName, selectHistorySeries } from "@/lib/provider-history";
+import { carryForward, mergeProviderHistory, providerSeriesName, robustMedian, selectHistorySeries, withoutAskingOutliers } from "@/lib/provider-history";
 import type { ProviderHistorySeries } from "@/types/card";
 const series: ProviderHistorySeries = { id: "ppt", provider: "pokemonpricetracker", language: "english", currency: "USD", printing: "Holofoil", condition: "Near Mint", grade: null, metric: "market", fetched_at: "2026-10-16", points: [
   { date: "2026-10-14", price: 20, sales_count: null }, { date: "2026-10-16", price: 30, sales_count: 0 },
@@ -66,4 +66,13 @@ it("shows one raw line per enabled printing and every grade of enabled companies
   expect(ids(["Normal"], ["cgc", "psa"])).toEqual(["normal-nm", "psa10", "psa9_5", "psa9", "cgc10"]);
   // Companies without a toggle never appear.
   expect(ids([], ["psa", "cgc", "tag"])).not.toContain("bgs10");
+});
+
+it("ignores wild eBay asks and matches the backend robust median", () => {
+  expect(robustMedian([180, 200, 210, 195, 17_500_000])).toBe(197.5);
+  expect(robustMedian([100, 17_500_000])).toBe(100);
+  expect(robustMedian([1, 300, 310, 320])).toBe(310);
+  expect(robustMedian([])).toBeNull();
+  // A wider band keeps real moves over a long series.
+  expect(withoutAskingOutliers([100, 150, 400, 17_500_000], 10)).toEqual([100, 150, 400]);
 });

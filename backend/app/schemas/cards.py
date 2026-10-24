@@ -364,6 +364,7 @@ class TrendingDashboardResponse(BaseModel):
     total_volume_usd: float = 0.0
     total_sales_count: int = 0
     updated_at: datetime
+    is_stale: bool = False
 
 
 class TrackActionRequest(BaseModel):

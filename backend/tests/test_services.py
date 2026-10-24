@@ -184,6 +184,40 @@ def test_calculate_grading_profit_with_comps(memory_db):
     assert item.spread_multiplier == 10.0
 
 
+def test_grading_pools_recent_ebay_asks_and_drops_outliers(memory_db, monkeypatch):
+    from app.models import ListingAssessment
+    from app.services import grading_service as service
+    from app.services.listing_quality import MATCHER_VERSION
+    monkeypatch.setattr(service, "get_redis", lambda: None)
+    service._GRADING_PROFIT_LOCAL_FALLBACK.clear()
+    now = datetime.now(UTC)
+    memory_db.add_all([Set(id="s", name="Set"), Card(id="c", name="Umbreon", set_id="s", number="1", rarity="Rare")])
+    memory_db.flush()
+    memory_db.add(PriceObservation(fingerprint="raw", card_id="c", provider="tcgapi", provider_card_id="c",
+        variant_id="default", price=Decimal("60"), observed_at=now))
+
+    def ask(key, price, age_days, grade=10):
+        obs = PriceObservation(fingerprint=f"ask-{key}", card_id="c", provider="ebay", provider_card_id=f"item-{key}",
+            variant_id=f"ebay:c:psa:{grade}", grading_company="PSA", grade=Decimal(grade), price=Decimal(str(price)),
+            observed_at=now - timedelta(days=age_days), payload={"assessment_fingerprint": f"ask-{key}"})
+        memory_db.add(ListingAssessment(fingerprint=obs.fingerprint, card_id="c", item_id=obs.provider_card_id,
+            version=MATCHER_VERSION, status="matched", text_status="matched", image_status="not_applicable",
+            reasons=[], evidence={}, source={}))
+        memory_db.add(obs)
+
+    ask("bogus", 17_500_000, 0)  # newest listing; used to set the price on its own
+    for i, price in enumerate([180, 200, 210, 195]):
+        ask(i, price, i + 1)
+    ask("old", 5, 45)  # outside the 30-day window
+    ask("nine", 17_500_000, 0, grade=9)  # alone, and over 100x the raw price
+    memory_db.commit()
+
+    item = service.calculate_grading_profit(memory_db, grading_fee=25.0).items[0]
+    assert item.psa10_price == 197.5
+    assert item.psa9_price is None
+    assert item.graded_metric == "asking_listing"
+
+
 def test_calculate_sealed_signals_scoring(memory_db):
     cset = Set(id="swsh7", name="Evolving Skies", release_date=date(2021, 8, 27))
     sealed_box = Card(id="swsh7-box", name="Evolving Skies Booster Box", set_id="swsh7", number="BB", rarity=None)

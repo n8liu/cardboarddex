@@ -156,6 +156,11 @@ sudo docker update --restart unless-stopped app-celery-worker-1 app-celery-beat-
 
 ### Code
 
+- **Don't set a snapshot's Redis TTL equal to its staleness cutoff.** Trending and live stats
+  expired at the same instant they went stale, so a stopped worker turned straight into 503s
+  with nothing left to show. Keep the last good value longer and label it dated.
+- **Never let one eBay asking listing set a price.** Asks are not sales; a single $17.5M PSA 10
+  listing became the grading-profit price. Pool recent asks through `asking_prices`.
 - **Don't swallow scheduler yields silently.** Log the reason (AGENTS.md rule 1).
 - **Don't recount all-time history every minute.** Cache totals for data that no longer grows,
   and recount only what does.

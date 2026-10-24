@@ -459,10 +459,31 @@ def test_default_dashboard_serves_snapshot_without_database(seeded_db: Session, 
     assert [c.card_id for c in slim.trending_cards] == [c.card_id for c in default.trending_cards]
 
 
-@pytest.mark.parametrize("raw", [None, "corrupt", "stale"])
-def test_missing_corrupt_or_stale_snapshot_returns_503_without_building(seeded_db: Session, monkeypatch, raw) -> None:
-    if raw == "stale":
-        raw = _published(seeded_db, age_seconds=trending_service.SNAPSHOT_MAX_SECONDS + 1)
+def test_stale_snapshot_is_served_flagged_until_retention_ends(seeded_db: Session, monkeypatch) -> None:
+    raw = _published(seeded_db, age_seconds=trending_service.SNAPSHOT_MAX_SECONDS + 1)
+    fresh = _published(seeded_db)
+    monkeypatch.setattr(trending_service, "get_redis", lambda: Mock(get=Mock(return_value=raw)))
+    monkeypatch.setattr(trending_service, "dashboard_observation_snapshot", Mock(side_effect=AssertionError("must not build")))
+    stale = trending_service.get_trending_dashboard(Mock(), timeframe="7d")
+    assert stale.is_stale and stale.trending_cards
+
+    monkeypatch.setattr(trending_service, "get_redis", lambda: Mock(get=Mock(return_value=fresh)))
+    assert trending_service.get_trending_dashboard(Mock(), timeframe="7d").is_stale is False
+
+
+def test_stale_snapshot_route_headers(client: TestClient, seeded_db: Session, monkeypatch) -> None:
+    raw = _published(seeded_db, age_seconds=trending_service.SNAPSHOT_MAX_SECONDS + 1)
+    monkeypatch.setattr(trending_service, "get_redis", lambda: Mock(get=Mock(return_value=raw)))
+    res = client.get("/cards/trending?timeframe=7d")
+    assert res.status_code == 200 and res.json()["is_stale"] is True
+    assert res.headers["X-Cache-Status"] == "stale"
+    assert "s-maxage=10" in res.headers["Cache-Control"]
+
+
+@pytest.mark.parametrize("raw", [None, "corrupt", "expired"])
+def test_missing_corrupt_or_expired_snapshot_returns_503_without_building(seeded_db: Session, monkeypatch, raw) -> None:
+    if raw == "expired":
+        raw = _published(seeded_db, age_seconds=trending_service.SNAPSHOT_RETAIN_SECONDS + 1)
     monkeypatch.setattr(trending_service, "get_redis", lambda: Mock(get=Mock(return_value=raw)))
     monkeypatch.setattr(trending_service, "dashboard_observation_snapshot", Mock(side_effect=AssertionError("must not build")))
     with pytest.raises(HTTPException) as error:
@@ -525,7 +546,7 @@ def test_refresh_requires_lease_and_publishes_atomically(seeded_db: Session, mon
     publish = redis.eval.call_args_list[0].args
     assert publish[0] == trending_service._PUBLISH
     assert publish[3] == trending_service.snapshot_key()
-    assert publish[-1] == trending_service.SNAPSHOT_MAX_SECONDS
+    assert publish[-1] == trending_service.SNAPSHOT_RETAIN_SECONDS
     assert '"trending_cards"' in publish[-2]
 
 

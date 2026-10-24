@@ -21,6 +21,8 @@ from app.services.price_sources import public_observation
 logger = logging.getLogger(__name__)
 FRESH_SECONDS = 60
 MAX_SECONDS = 1800
+# Kept past MAX_SECONDS so a stopped worker shows dated totals, not a 503.
+RETAIN_SECONDS = 86400
 LEASE_SECONDS = 30
 LEGACY_KEY = "cardboarddex:live_stats:legacy:v1"
 LEGACY_SECONDS = 86400
@@ -94,7 +96,7 @@ def refresh_snapshot():
                 db.execute(text("SET LOCAL statement_timeout = '5000ms'"))
             snapshot = calculate_snapshot(db, legacy)
         published = bool(redis.eval(_PUBLISH, 2, key + ":lock", key, token,
-                                    snapshot.model_dump_json(), MAX_SECONDS))
+                                    snapshot.model_dump_json(), RETAIN_SECONDS))
         logger.info("Live stats refresh published=%s duration_ms=%.1f", published,
                     (time.monotonic() - started) * 1000)
         return published
@@ -117,7 +119,9 @@ def read_snapshot():
         if raw:
             snapshot = LiveStatsResponse.model_validate_json(raw)
             age = (datetime.now(UTC) - snapshot.generated_at).total_seconds()
-            if 0 <= age < MAX_SECONDS:
+            if 0 <= age < RETAIN_SECONDS:
+                if age >= MAX_SECONDS:
+                    logger.warning("Live stats serving stale snapshot age_seconds=%.0f", age)
                 return snapshot.model_copy(update={"is_stale": age >= FRESH_SECONDS})
     except Exception as exc:
         logger.warning("Live stats snapshot read failed error=%s: %s", type(exc).__name__, exc)

@@ -49,6 +49,8 @@ _TRENDING_CACHE = TTLCache(max_entries=64, ttl=180)
 # Worker-published default dashboard. Public reads never rebuild it: a full
 # history aggregation cannot fit the API's 15-second budget on production data.
 SNAPSHOT_MAX_SECONDS = 1800
+# Kept past the fresh window so a stopped worker shows dated data, not a 503.
+SNAPSHOT_RETAIN_SECONDS = 86400
 SNAPSHOT_LEASE_SECONDS = 120
 SNAPSHOT_TIMEFRAME = "7d"
 # Worker-only bound; public SQL keeps its five-second deadline.
@@ -504,7 +506,7 @@ def refresh_snapshot() -> bool:
                 db.execute(text(f"SET LOCAL statement_timeout = '{SNAPSHOT_STATEMENT_TIMEOUT}'"))
             snapshot = build_snapshot(db, datetime.now(UTC))
         published = bool(redis.eval(_PUBLISH, 2, key + ":lock", key, token,
-                                    snapshot.model_dump_json(), SNAPSHOT_MAX_SECONDS))
+                                    snapshot.model_dump_json(), SNAPSHOT_RETAIN_SECONDS))
         logger.info("Trending refresh published=%s duration_ms=%.1f", published,
                     (time.monotonic() - started) * 1000)
         return published
@@ -532,8 +534,11 @@ def read_snapshot(redis) -> TrendingDashboardResponse | None:
         try:
             snapshot = TrendingDashboardResponse.model_validate_json(raw)
             age = (datetime.now(UTC) - snapshot.updated_at).total_seconds()
-            if 0 <= age < SNAPSHOT_MAX_SECONDS:
-                return snapshot.model_copy(update={"trending_cards": [
+            if 0 <= age < SNAPSHOT_RETAIN_SECONDS:
+                stale = age >= SNAPSHOT_MAX_SECONDS
+                if stale:
+                    logger.warning("Trending serving stale snapshot age_seconds=%.0f", age)
+                return snapshot.model_copy(update={"is_stale": stale, "trending_cards": [
                     card.model_copy(update={"image_url": card_image_url(card.card_id)})
                     for card in snapshot.trending_cards]})
         except ValueError as exc:
@@ -564,6 +569,10 @@ def get_trending_dashboard(
             logger.warning("Trending snapshot missing; publishing on request (TRENDING_ON_DEMAND_FALLBACK)")
             refresh_snapshot()
             published = read_snapshot(r)
+        if published is not None and published.is_stale and get_settings().trending_on_demand_fallback:
+            logger.warning("Trending snapshot stale; republishing on request (TRENDING_ON_DEMAND_FALLBACK)")
+            if refresh_snapshot():
+                published = read_snapshot(r)
         if published is not None:
             if not include_observation_volume:
                 return published.model_copy(update={"timeframe": timeframe, "volume_pokemon": [],

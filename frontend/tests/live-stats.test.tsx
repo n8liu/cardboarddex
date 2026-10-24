@@ -9,9 +9,9 @@ const snapshot = (): LiveStatsResponse => ({ total_items: 0, graded_updates_coun
   total_ebay_updates: 0, total_tcg_updates: 0, total_ppt_updates: 0,
   generated_at: new Date().toISOString(), is_stale: false });
 function Probe() {
-  const { stats, stale, loading, error, retry } = useLiveStats();
+  const { stats, stale, paused, loading, error, retry } = useLiveStats();
   return <><p>{stats ? `Count ${stats.total_items}` : loading ? "Loading" : "Unavailable"}</p>
-    <p>{stale ? "Stale" : "Fresh"}</p>{error && <p>Error</p>}<button onClick={retry}>Retry</button></>;
+    <p>{paused ? "Paused" : stale ? "Stale" : "Fresh"}</p>{error && <p>Error</p>}<button onClick={retry}>Retry</button></>;
 }
 beforeEach(() => {
   vi.useFakeTimers();
@@ -31,7 +31,7 @@ it("distinguishes real zero from unavailable and retries independently", async (
   expect(screen.getByText("Count 0")).toBeVisible();
 });
 
-it("preserves stale values on refresh failure, then expires them at thirty minutes", async () => {
+it("preserves stale values on refresh failure, marks them paused at thirty minutes and expires them after a day", async () => {
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.mocked(getLiveStats).mockResolvedValueOnce(snapshot()).mockRejectedValue(new Error("offline"));
   render(<Probe />);
@@ -40,6 +40,9 @@ it("preserves stale values on refresh failure, then expires them at thirty minut
   expect(screen.getByText("Count 0")).toBeVisible();
   expect(screen.getByText("Stale")).toBeVisible();
   await act(async () => { await vi.advanceTimersByTimeAsync(29 * 60_000); });
+  expect(screen.getByText("Count 0")).toBeVisible();
+  expect(screen.getByText("Paused")).toBeVisible();
+  await act(async () => { await vi.advanceTimersByTimeAsync(24 * 60 * 60_000); });
   expect(screen.getByText("Unavailable")).toBeVisible();
 });
 

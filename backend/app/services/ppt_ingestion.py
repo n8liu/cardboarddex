@@ -107,7 +107,7 @@ def normalize(payload, language, kind, today=None):
             add_quote(dimensions(primary or "Unknown", "Unknown", None, "market"), prices.get("market"), prices.get("lastUpdated"), True)
         ebay = payload.get("ebay") or {}
         for grade, data in (ebay.get("salesByGrade") or {}).items():
-            if not re.fullmatch(r"(?:psa|cgc|bgs|sgc)[0-9]+(?:_[0-9]+)?", grade):
+            if not re.fullmatch(r"(?:psa|cgc|bgs|sgc|tag)[0-9]+(?:_[0-9]+)?", grade):
                 continue  # Keep unsupported premium tiers in original metadata; never merge into a base grade.
             updated = data.get("lastMarketUpdate")
             sold = day(data.get("lastSaleDate"))

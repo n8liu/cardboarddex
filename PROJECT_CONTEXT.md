@@ -1,5 +1,16 @@
 # CardboardDex project context
 
+## Data trust changes — 2026-10-24 (branch `phase1-data-trust`, not deployed)
+
+Phase 1 of the UI/efficiency plan. No migrations; `Cards`/`Sets` untouched.
+
+- **Stale snapshots instead of 503.** Trending (`SNAPSHOT_RETAIN_SECONDS`) and live stats (`RETAIN_SECONDS`) are now published with a 24h Redis TTL. Fresh windows are unchanged (30 min / 60s). Older snapshots are served with `is_stale: true`; Trending also sends `X-Cache-Status: stale` and `s-maxage=10`. A missing snapshot still returns 503. The frontend shows "Prices as of …; updates are paused" (Trending) and "Totals as of …; updates paused" (Live Comps) and keeps totals for up to 24h.
+- **eBay asking outliers.** `app/services/asking_prices.robust_asking_price` uses the median of up to 30 matched asks from the last 30 days, within 3× of the lower median, and rejects anything over 100× the raw price. Grading profit uses it for eBay PSA 9/10 (PPT medians keep the newest row). Cache namespaces are bumped (`get_grading_profit_identity_v2`, `grading_profit:identity-v2`). The card chart's eBay lines use the same rule: a 10× series band, then daily robust medians.
+- **Grade toggles.** PPT `tag` median quotes are ingested. BGS and SGC have toggles, and toggles show only for companies with history.
+- **Source labels.** `PriceSourceBadge` labels the card-page headline ("PPT market" / "Last known") and grading-profit eBay rows ("eBay asking · not sold"). Tiles turn amber with "Last known" after 7 days.
+
+Validation: backend 410 passed (30 skipped); frontend 164 passed; typecheck and production build passed. Not yet checked on production data: grading-profit query time with the wider eBay window.
+
 ## Current handoff — 2026-10-19
 
 The implementation retires tcgapi.dev and migrates active catalog/pricing work to Pokémon Price Tracker (**PPT**). Direct eBay asking-listing comparisons remain. Distinguish local fixes from the deployed release.

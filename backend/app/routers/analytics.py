@@ -78,8 +78,15 @@ def get_trending(
     db: Session = Depends(get_db),
 ) -> TrendingDashboardResponse:
     """Returns the 3-column Trending Dashboard: Trending Cards, Popular Pokémon, and Volume Leaders."""
-    response.headers["Cache-Control"] = "public, max-age=30, s-maxage=60, stale-while-revalidate=120"
-    return get_trending_dashboard(db, timeframe=timeframe, q=q, include_observation_volume=include_observation_volume)
+    dashboard = get_trending_dashboard(db, timeframe=timeframe, q=q, include_observation_volume=include_observation_volume)
+    if dashboard.is_stale:
+        # Shared caches must pick up the next publish quickly.
+        response.headers["Cache-Control"] = "public, max-age=0, s-maxage=10"
+        response.headers["X-Cache-Status"] = "stale"
+        response.headers["Retry-After"] = "60"
+    else:
+        response.headers["Cache-Control"] = "public, max-age=30, s-maxage=60, stale-while-revalidate=120"
+    return dashboard
 
 
 @router.post("/trending/reset", dependencies=[Depends(verify_admin_token)])

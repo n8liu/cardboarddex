@@ -184,7 +184,7 @@ def get_market_movers(
 
 
 @router.get("/grading-profit", response_model=GradingProfitResponse)
-@cached_read("get_grading_profit_identity_v1", fresh=300, maximum=1800)
+@cached_read("get_grading_profit_identity_v2", fresh=300, maximum=1800)
 def get_grading_profit(
     response: Response,
     grading_fee: float | None = Query(default=None, ge=0.0, le=1000.0),
