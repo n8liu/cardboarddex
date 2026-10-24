@@ -502,5 +502,8 @@ def _live_feed_page(db, provider, grade_filter, set_id, q, page, per_page):
 @router.get("/live-updates/stats", response_model=LiveStatsResponse)
 def get_live_stats(response: Response) -> LiveStatsResponse:
     from app.services.live_stats import read_snapshot
-    response.headers["Cache-Control"] = "no-store"
-    return read_snapshot()
+    stats = read_snapshot()
+    # Published once a minute; every open tab polls, so the edge shares one copy.
+    response.headers["Cache-Control"] = ("public, max-age=0, s-maxage=10" if stats.is_stale
+                                         else "public, max-age=0, s-maxage=30")
+    return stats

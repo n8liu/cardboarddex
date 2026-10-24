@@ -19,6 +19,7 @@ import type {
   VolumeTimeframe,
 } from "@/types/card";
 import { IMAGE_HOVER, TILE_HOVER } from "@/lib/card-hover";
+import { CardLink } from "@/components/card-link";
 
 type TopVolumeDashboardProps = {
   initialData: TrendingDashboardResponse;
@@ -73,9 +74,8 @@ function PokemonActivity({ item }: { item: TrendingPokemonItem }) {
 function CardTile({ item }: { item: TrendingCardItem }) {
   const { formatPrice } = useCurrency();
   return (
-    <Link
+    <CardLink
       href={`/cards/${encodeURIComponent(item.card_id)}?ref=trending`}
-      prefetch={false}
       className={`card-cv group flex min-w-0 flex-col rounded-xl border border-slate-200/80 bg-white p-3 ${TILE_HOVER}`}
     >
       <span className={`self-start font-mono text-xs font-bold ${rankBadgeClass(item.rank)}`}>{formatRank(item.rank)}</span>
@@ -98,7 +98,7 @@ function CardTile({ item }: { item: TrendingCardItem }) {
         <span className="truncate text-sm font-bold text-slate-950">{formatPrice(item.market_price)}</span>
         <span className="truncate text-[10px] font-medium"><CardActivity item={item} /></span>
       </div>
-    </Link>
+    </CardLink>
   );
 }
 
@@ -149,9 +149,8 @@ function CardRow({ item }: { item: TrendingCardItem }) {
   const { formatPrice } = useCurrency();
 
   return (
-    <Link
+    <CardLink
       href={`/cards/${encodeURIComponent(item.card_id)}?ref=trending`}
-      prefetch={false}
       className="card-cv group flex h-[62px] items-center justify-between gap-3 rounded-xl border border-slate-200/80 bg-white px-3 transition duration-150 hover:border-slate-400 hover:bg-slate-50/70"
     >
       {/* Left: Rank, Thumbnail, Card Title & Set */}
@@ -203,7 +202,7 @@ function CardRow({ item }: { item: TrendingCardItem }) {
           <CardActivity item={item} />
         </div>
       </div>
-    </Link>
+    </CardLink>
   );
 }
 

@@ -159,7 +159,8 @@ def get_card_prices(
     days: int = Query(default=365, ge=1, le=730),
     db: Session = Depends(get_db),
 ) -> CardPricingResponse:
-    response.headers["Cache-Control"] = "no-store"
+    # PPT prices change at most once a day per product; let the edge absorb repeat views.
+    response.headers["Cache-Control"] = "public, max-age=0, s-maxage=120, stale-while-revalidate=600"
     if db.get(Card, card_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Card not found")
     cutoff = datetime.now(UTC) - timedelta(days=days)

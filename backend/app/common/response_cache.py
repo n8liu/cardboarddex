@@ -35,6 +35,9 @@ redis.call('set',KEYS[2],ARGV[2],'EX',ARGV[3]); redis.call('del',KEYS[1]); retur
 else return 0 end"""
 
 
+UNAVAILABLE_HEADERS = {'Retry-After': '2', 'Cache-Control': 'no-store'}
+
+
 class ResponseCache:
     def __init__(self, redis_factory=get_redis, max_entries=64, max_bytes=8 * 1024 * 1024):
         self.redis_factory = redis_factory
@@ -214,15 +217,15 @@ class ResponseCache:
             else:
                 status = 'stale-busy'
             if entry['discard_at'] <= time.time():
-                raise HTTPException(503, 'Results are being refreshed', headers={'Retry-After': '2'})
+                raise HTTPException(503, 'Results are being refreshed', headers=UNAVAILABLE_HEADERS)
             return entry, status
         if failed:
-            raise HTTPException(503, 'Results temporarily unavailable', headers={'Retry-After': '2'})
+            raise HTTPException(503, 'Results temporarily unavailable', headers=UNAVAILABLE_HEADERS)
         deadline = time.monotonic() + WAIT_SECONDS
         while True:
             with self._lock:
                 if self._failures.get(key, 0) > time.monotonic():
-                    raise HTTPException(503, 'Results temporarily unavailable', headers={'Retry-After': '2'})
+                    raise HTTPException(503, 'Results temporarily unavailable', headers=UNAVAILABLE_HEADERS)
             lease = self._acquire(key)
             if lease:
                 # A rebuild may have completed between our first read and lease acquisition.
@@ -236,9 +239,9 @@ class ResponseCache:
                     raise
                 except Exception as exc:
                     logger.warning('Cold cache unavailable key=%s error=%s: %s', key, type(exc).__name__, exc)
-                    raise HTTPException(503, 'Results temporarily unavailable', headers={'Retry-After': '2'}) from exc
+                    raise HTTPException(503, 'Results temporarily unavailable', headers=UNAVAILABLE_HEADERS) from exc
             if time.monotonic() >= deadline:
-                raise HTTPException(503, 'Results are being refreshed', headers={'Retry-After': '2'})
+                raise HTTPException(503, 'Results are being refreshed', headers=UNAVAILABLE_HEADERS)
             time.sleep(0.05)
             entry = self._read(key)
             if entry and entry['fresh_until'] > time.time():
@@ -248,8 +251,20 @@ class ResponseCache:
 response_cache = ResponseCache()
 
 
+def cdn_cache_control(entry, status, now=None):
+    """Browsers always revalidate; a shared cache (Cloudflare) may hold the entry until the
+    backend itself would rebuild it, then serve it while that rebuild happens."""
+    if status.startswith('stale'):
+        # Already past fresh: let the edge retry soon instead of pinning old data.
+        return 'public, max-age=0, s-maxage=10'
+    now = time.time() if now is None else now
+    fresh = max(0, int(entry['fresh_until'] - now))
+    revalidate = max(0, int(entry['discard_at'] - max(now, entry['fresh_until'])))
+    return f'public, max-age=0, s-maxage={fresh}, stale-while-revalidate={revalidate}'
+
+
 def cache_headers(response, entry, status, started):
-    response.headers['Cache-Control'] = 'public, no-cache, max-age=0, must-revalidate'
+    response.headers['Cache-Control'] = cdn_cache_control(entry, status)
     response.headers['X-Cache-Status'] = status
     for name, field in [('Generated-At', 'generated_at'), ('Expires-At', 'fresh_until')]:
         response.headers['X-Cache-' + name] = datetime.fromtimestamp(entry[field], UTC).isoformat()

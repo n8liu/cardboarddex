@@ -1,4 +1,5 @@
-import { Suspense } from "react";
+import type { Metadata } from "next";
+import { cache, Suspense } from "react";
 import { SectionLoadingBar } from "@/components/section-loading-bar";
 import Image from "@/components/card-image";
 import Link from "next/link";
@@ -22,6 +23,36 @@ type CardPageProps = {
   params: Promise<{ id: string }>;
   searchParams?: Promise<{ ref?: string }>;
 };
+
+// One API read per request, shared by the page and its metadata.
+const loadCard = cache((id: string, ref?: string) => getCard(id, { ref }));
+
+export async function generateMetadata({ params, searchParams }: CardPageProps): Promise<Metadata> {
+  const { id } = await params;
+  const sp = searchParams ? await searchParams : undefined;
+  try {
+    const card = await loadCard(id, sp?.ref);
+    if (!card) return { title: "Card not found · CardboardDex" };
+    const number = card.printed_total ? `${card.number}/${card.printed_total}` : card.number;
+    // Promo names often already carry the number ("Pikachu - 227/S-P").
+    const label = card.number && card.name.includes(card.number) ? card.name : `${card.name} ${number}`;
+    const title = `${label} · ${card.set_name} Price · CardboardDex`;
+    const price = card.market_price != null
+      ? ` Market price ${new Intl.NumberFormat("en-US", { style: "currency", currency: card.market_currency || "USD" }).format(card.market_price)}.`
+      : "";
+    const description = `${label} from ${card.set_name}.${price} Price history, graded comps and matched eBay listings.`;
+    const image = card.image_url ? cardImageUrl(card.image_url) : undefined;
+    return {
+      title, description,
+      alternates: { canonical: `/cards/${encodeURIComponent(card.id)}` },
+      openGraph: { title, description, url: `/cards/${encodeURIComponent(card.id)}`, images: image ? [{ url: image, alt: card.name }] : undefined },
+      twitter: { title, description, images: image ? [image] : undefined },
+    };
+  } catch (err) {
+    console.error(`[CardPage] Metadata fetch failed for ${id}:`, err);
+    return { title: "CardboardDex - Pokémon Card Price" };
+  }
+}
 
 function formatDate(value: string | null): string {
   if (!value) return "Unknown";
@@ -56,7 +87,7 @@ async function CardContent({ id, refParam }: { id: string; refParam?: string }) 
   let fetchFailed = false;
 
   try {
-    card = await getCard(id, { ref: refParam });
+    card = await loadCard(id, refParam);
   } catch (err) {
     console.error(`[CardPage] Failed fetching card ${id} data on Edge SSR:`, err);
     fetchFailed = true;

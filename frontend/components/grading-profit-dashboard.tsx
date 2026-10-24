@@ -3,7 +3,6 @@ import { CacheNotice, useCacheNotice } from "@/components/cache-notice";
 
 import { SectionLoadingBar } from "@/components/section-loading-bar";
 import Image from "@/components/card-image";
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -19,6 +18,7 @@ import type {
 } from "@/types/card";
 import { IMAGE_HOVER, TILE_HOVER } from "@/lib/card-hover";
 import { PriceSourceBadge } from "@/components/ui/price-source-badge";
+import { CardLink } from "@/components/card-link";
 
 type PresetFilter = "all" | "safe" | "high_profit" | "high_roi" | "budget" | "high_spread";
 
@@ -575,9 +575,9 @@ export function GradingProfitDashboard({ initialData }: GradingProfitDashboardPr
                           {item.set_name} {item.number ? `#${item.number}` : ""}
                         </div>
                         <h2 className="text-xs sm:text-sm font-bold text-slate-950 line-clamp-2 leading-snug">
-                          <Link href={`/cards/${encodeURIComponent(item.card_id)}`} prefetch={false} className="hover:underline group-hover:text-slate-900">
+                          <CardLink href={`/cards/${encodeURIComponent(item.card_id)}`} className="hover:underline group-hover:text-slate-900">
                             {item.name}
-                          </Link>
+                          </CardLink>
                         </h2>
                       </div>
 
@@ -657,14 +657,13 @@ export function GradingProfitDashboard({ initialData }: GradingProfitDashboardPr
 
                 {/* Footer Link */}
                 <div className="mt-3 border-t border-slate-100 pt-2.5">
-                  <Link
+                  <CardLink
                     href={`/cards/${encodeURIComponent(item.card_id)}`}
-                    prefetch={false}
                     className="flex w-full items-center justify-between text-xs font-bold text-slate-700 transition hover:text-slate-950"
                   >
                     <span>View Comps &amp; History</span>
                     <span>→</span>
-                  </Link>
+                  </CardLink>
                 </div>
               </div>
             );

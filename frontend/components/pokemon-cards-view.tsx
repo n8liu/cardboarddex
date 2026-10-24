@@ -16,6 +16,7 @@ import { useCurrency } from "@/context/currency-context";
 import { isSealedProduct, summarizeDisplayedCards } from "@/lib/pokemon-card-summary";
 import { shimmerBlurDataUrl } from "@/lib/shimmer";
 import { IMAGE_HOVER, TILE_HOVER } from "@/lib/card-hover";
+import { CardLink } from "@/components/card-link";
 
 type Props = {
   pokemonName: string;
@@ -147,7 +148,7 @@ export function PokemonCardsView({
           <div className="mt-1 font-mono text-2xl font-black text-emerald-600">
             {isLoading ? "…" : summary.highestCard ? formatPrice(summary.highestCard.market_price) : "Unavailable"}
           </div>
-          <div className="mt-1 text-xs text-slate-500">{isLoading ? "Updating results…" : summary.highestCard ? <Link href={`/cards/${encodeURIComponent(summary.highestCard.id)}`} className="hover:text-emerald-700 hover:underline">{summary.highestCard.name}</Link> : "No priced individual cards shown"}</div>
+          <div className="mt-1 text-xs text-slate-500">{isLoading ? "Updating results…" : summary.highestCard ? <CardLink href={`/cards/${encodeURIComponent(summary.highestCard.id)}`} className="hover:text-emerald-700 hover:underline">{summary.highestCard.name}</CardLink> : "No priced individual cards shown"}</div>
         </div>
 
         <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm">
@@ -318,9 +319,8 @@ function CardItem({
   const [failed, setFailed] = useState(false);
 
   return (
-    <Link
+    <CardLink
       href={`/cards/${encodeURIComponent(card.id)}`}
-      prefetch={false}
       style={{ animationDelay: `${Math.min(idx * 25, 300)}ms` }}
       className={`card-cv animate-card-cascade group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-slate-200/90 bg-white p-3 shadow-xs ${TILE_HOVER} focus:outline-none focus:ring-2 focus:ring-emerald-500`}
     >
@@ -384,6 +384,6 @@ function CardItem({
           {formatPrice(card.market_price, { showPending: true })}
         </div>
       </div>
-    </Link>
+    </CardLink>
   );
 }

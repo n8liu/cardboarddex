@@ -99,7 +99,8 @@ def test_endpoint_is_cached_and_queries_do_not_grow_per_release(db, monkeypatch)
             response = client.get('/home/overview')
             assert response.status_code == 200, response.text
             assert response.json()['sealed']['change_percent'] == 5
-            assert response.headers['cache-control'] == 'public, no-cache, max-age=0, must-revalidate'
+            assert response.headers['cache-control'].startswith('public, max-age=0, s-maxage=')
+            assert 'stale-while-revalidate=' in response.headers['cache-control']
             count = len(queries)
             assert count <= 12
             assert client.get('/home/overview').json() == response.json()
