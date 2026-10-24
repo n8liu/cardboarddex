@@ -100,3 +100,6 @@ scratch/
 /manifest.json
 /summary.json
 /image-inventory.jsonl
+
+# Local docs (kept out of the repo)
+/docs/
