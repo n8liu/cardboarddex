@@ -10,7 +10,7 @@ export const runtime = "edge";
 
 const SITE = "https://cardboarddex.app";
 const PAGES = ["", "/catalog", "/market-movers", "/top-volume", "/sealed-signals", "/grading-profit",
-  "/live-updates", "/pokedex", "/calendar", "/faq"];
+  "/live-updates", "/compare", "/pokedex", "/calendar", "/faq"];
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const entries: MetadataRoute.Sitemap = [

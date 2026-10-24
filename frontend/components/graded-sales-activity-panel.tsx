@@ -6,6 +6,7 @@ import Image from "@/components/card-image";
 import { cardImageUrl, getGradedSalesActivity } from "@/lib/api";
 import type { GradedSalesActivity } from "@/types/market-data";
 import { IMAGE_HOVER, TILE_HOVER } from "@/lib/card-hover";
+import { EmptyState } from "@/components/ui/empty-state";
 
 const emptyMessages = {
   provider_disabled: "Graded sales rankings are not enabled yet.",
@@ -50,7 +51,8 @@ export function GradedSalesActivityPanel({ compact = false, query = "" }: { comp
     <p className="mt-2 text-xs leading-relaxed text-slate-500">{data?.coverage || "Graded sales reported by Pokémon Price Tracker. Provider-reported coverage; not a selected-period total."}</p>
     {error ? <p role="alert" className="mt-4 text-sm text-rose-700">{error} <button type="button" onClick={() => setRetry((n) => n + 1)} className="underline">Retry graded sales</button></p>
       : !data ? <p role="status" className="py-6 text-sm text-slate-500">Loading graded sales…</p>
-      : data.status !== "ready" ? <p className="my-4 text-sm text-slate-700">{emptyMessages[data.status]}</p>
+      : data.status !== "ready" ? <EmptyState compact className="my-4" variant={data.status === "no_matches" ? "empty" : "collecting"}
+        title={data.status === "no_matches" ? "No matching graded sales" : "Graded sales not available yet"} description={emptyMessages[data.status]} />
       : <>
         <p className="my-3 text-xs text-slate-500">{data.products_with_sales_data.toLocaleString()} synced cards with reported counts</p>
         {compact ? <ol className="space-y-2">{data.items.slice(0, 15).map((item, index) => <li key={item.card_id}>

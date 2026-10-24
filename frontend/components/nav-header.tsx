@@ -7,9 +7,11 @@ import { usePathname } from "next/navigation";
 import { openCommandPalette } from "@/components/command-palette";
 import { useBinder } from "@/context/binder-context";
 import { SUPPORTED_CURRENCIES, useCurrency } from "@/context/currency-context";
+import { usePaletteShortcutLabel } from "@/lib/shortcut";
 
 export function NavHeader() {
   const pathname = usePathname();
+  const shortcut = usePaletteShortcutLabel();
   const [isScrolled, setIsScrolled] = useState(false);
   const { currency, setCurrency } = useCurrency();
   const { totalCardCount, isHydrated } = useBinder();
@@ -248,13 +250,13 @@ export function NavHeader() {
             type="button"
             onClick={openCommandPalette}
             className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2 sm:px-2.5 py-1 text-xs font-mono font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-100 hover:text-slate-950 focus:outline-none focus:ring-1 focus:ring-slate-900"
-            title="Open spotlight search (Cmd+K)"
+            title={`Open spotlight search (${shortcut})`}
             aria-label="Open command palette search"
           >
             <span className="text-slate-400">⌕</span>
             <span className="hidden lg:inline text-[11px] text-slate-500">Search</span>
             <kbd className="rounded border border-slate-200 bg-white px-1 py-0.2 text-[10px] font-bold text-slate-400">
-              ⌘K
+              {shortcut}
             </kbd>
           </button>
 
