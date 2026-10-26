@@ -56,6 +56,9 @@ COMPOSE_PARALLEL_LIMIT=1 "${compose[@]}" pull
 # docker exec in the API). Non-fatal: public smoke tests report a missing snapshot.
 "${compose[@]}" run --rm --no-deps -T celery-worker python -m jobs.refresh_trending </dev/null \
   || echo 'Warning: Trending snapshot seed failed; /cards/trending returns 503 until a refresh succeeds' >&2
+# Movers, sealed and grading profit: builds only snapshots that are missing or 12h old.
+"${compose[@]}" run --rm --no-deps -T celery-worker python -m jobs.refresh_market_snapshots </dev/null \
+  || echo 'Warning: market snapshot seed failed; Beat rebuilds missing snapshots within 15 minutes' >&2
 if [[ "$ingestion_paused" == false ]]; then
   "${compose[@]}" run --rm --no-deps --user 0 celery-beat chown -R 1001:1001 /beat
   "${compose[@]}" up -d celery-worker

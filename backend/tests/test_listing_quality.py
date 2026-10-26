@@ -314,3 +314,35 @@ def test_analytics_windows_exclude_unmatched_and_ppt(db):
     assert row['current_volume'] == 10 and row['current_count'] == 1
     assert row['prior_volume'] == 20
     assert row['max_price'] == 30
+
+
+def test_grading_snapshot_preserves_asking_outlier_filter(db, monkeypatch):
+    from app.config import get_settings
+    from app.services import grading_service, market_snapshots
+    import json
+    monkeypatch.setattr(get_settings(), "ppt_primary_enabled", False)
+    db.add(PriceObservation(fingerprint="raw", card_id="c", provider="tcgapi", provider_card_id="c",
+                           variant_id="raw", price=60, currency="USD", observed_at=datetime.now(UTC)))
+    for index, price in enumerate([180, 200, 210, 195, 17_500_000]):
+        row = add_quote(db, f"graded-{index}", price)
+        row.grading_company, row.grade = "PSA", 10
+    db.commit()
+    snapshot = json.loads(json.dumps(grading_service.build_snapshot(db, datetime.now(UTC))))
+    monkeypatch.setattr(market_snapshots, "read", lambda name: snapshot)
+    result = grading_service.stored_grading_profit(db, grading_fee=25)
+    assert len(result.items) == 1
+    assert result.items[0].psa10_price == 197.5
+    assert result.items[0].psa10_profit == 112.5
+    assert result.items[0].graded_source == "ebay"
+
+
+def test_grading_snapshot_does_not_retain_expired_single_asking_quote(db, monkeypatch):
+    from app.config import get_settings
+    from app.services import grading_service
+    monkeypatch.setattr(get_settings(), "ppt_primary_enabled", False)
+    db.add(PriceObservation(fingerprint="raw", card_id="c", provider="tcgapi", provider_card_id="c",
+                           variant_id="raw", price=60, currency="USD", observed_at=datetime.now(UTC)))
+    row = add_quote(db, "expired-graded", 200, days=31)
+    row.grading_company, row.grade = "PSA", 10
+    db.commit()
+    assert grading_service.build_snapshot(db, datetime.now(UTC))["rows"] == []

@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { cache, Suspense } from "react";
+import { cache, Suspense, ViewTransition } from "react";
 import { SectionLoadingBar } from "@/components/section-loading-bar";
 import Image from "@/components/card-image";
 import Link from "next/link";
@@ -72,7 +72,11 @@ export default async function CardPage({ params, searchParams }: CardPageProps) 
     <main className="mx-auto min-h-[70vh] max-w-7xl px-5 py-9 sm:px-8 sm:py-12">
       <BackButton />
       <Suspense fallback={<SectionLoadingBar className="mt-8" label="Loading card details…" />}>
-        <CardContent id={id} refParam={sp?.ref} />
+        {/* Card details rise in once when they arrive (.card-reveal in globals.css); "none"
+            keeps later in-page transitions, like chart range changes, from re-animating it. */}
+        <ViewTransition enter="card-reveal" default="none">
+          <CardContent id={id} refParam={sp?.ref} />
+        </ViewTransition>
       </Suspense>
     </main>
   );

@@ -18,7 +18,7 @@ Never use `docker compose down -v`. The database volume is external and explicit
 
 ## Live Comps totals during ingestion pauses
 
-`refresh_live_stats.sh` runs only the stored-data totals job in a separate container
+`refresh_live_stats.sh` runs the stored-data totals and Trending jobs in a separate container
 using the current release's worker memory limits. Do not seed using `docker exec`
 inside the API: the extra Python process caused an API OOM on October 18.
 The script takes a shared deployment lock and skips a refresh during deployment.
@@ -46,6 +46,31 @@ a release without `jobs.refresh_live_stats`. Disable with
 refresh with `sudo systemctl stop cardboarddex-live-stats.service`.
 These units are installed separately; existing release/bootstrap scripts do not
 install them automatically on replacement hosts.
+
+## Market rankings during ingestion pauses
+
+Install the separate market snapshot timer from the reviewed release. It checks every
+fifteen minutes and rebuilds Movers, Sealed and Grading Profit only when missing or
+twelve hours old. It never starts provider ingestion. Reinstall `refresh_live_stats.sh` too: both
+scripts now share a maintenance mutex so two maintenance containers cannot overlap.
+
+```bash
+sudo install -m 755 scripts/lightsail/refresh_live_stats.sh /usr/local/sbin/cardboarddex-refresh-live-stats
+sudo install -m 755 scripts/lightsail/refresh_market_snapshots.sh /usr/local/sbin/cardboarddex-refresh-market-snapshots
+sudo install -m 644 scripts/lightsail/cardboarddex-market-snapshots.service /etc/systemd/system/
+sudo install -m 644 scripts/lightsail/cardboarddex-market-snapshots.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now cardboarddex-market-snapshots.timer
+sudo systemctl start cardboarddex-market-snapshots.service
+```
+
+The service requires the pause marker and uses its own worker-budget container with
+an 840-second limit. Its shared deployment lock can exceed the release's 120-second
+wait; stop this service before a planned release if it is rebuilding. Do not remove
+the lock file. The separate Live Comps timer retains its 110-second limit.
+Before rolling back to an older release without the market snapshot job, disable
+this timer and stop its active service. Inspect its journal for publication results.
+See [the tracked operations runbook](../../OPERATIONS.md) for validation and freshness semantics.
 
 ## Delete-first recovery (explicitly authorized maintenance only)
 

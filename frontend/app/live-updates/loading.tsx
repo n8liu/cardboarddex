@@ -8,7 +8,7 @@ export default function LiveUpdatesLoading() {
         <div className="flex flex-col justify-between gap-4 border-b border-slate-200 pb-8 sm:flex-row sm:items-end">
           <div>
             <div className="flex items-center gap-2">
-              <span className="flex h-2 w-2 rounded-full bg-sky-500 animate-ping" />
+              <span className="flex h-2 w-2 rounded-full bg-sky-500" />
               <span className="text-xs font-bold uppercase tracking-[0.16em] text-sky-700">
                 Real-Time Ingestion Stream
               </span>

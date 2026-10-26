@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import {
   Area,
   CartesianGrid,
@@ -43,6 +44,8 @@ type PriceHistoryChartProps = {
   label?: string;
   obsCounts?: SeriesCounts;
 };
+
+const LINE_DRAW_MS = 700;
 
 function money(value: number, currency: string, compact = false): string {
   return new Intl.NumberFormat("en-US", {
@@ -141,6 +144,13 @@ function MultiLineTooltip({
 
 export function PriceHistoryChart({ data, currency, label = "eBay listings", obsCounts, extraSeries = [], formatValue }: PriceHistoryChartProps) {
   const format: ValueFormatter = formatValue ?? ((value, compact) => money(value, currency, compact));
+  // Lines draw in once on mount ("auto" honours prefers-reduced-motion); range and series
+  // toggles afterwards update in place instead of replaying the draw.
+  const [animate, setAnimate] = useState<"auto" | false>("auto");
+  useEffect(() => {
+    const timer = setTimeout(() => setAnimate(false), LINE_DRAW_MS + 100);
+    return () => clearTimeout(timer);
+  }, []);
   const hasRaw = data.some((d) => d.rawPrice !== null && d.rawPrice !== undefined);
   const hasTcg = data.some((d) => d.tcgPrice !== null && d.tcgPrice !== undefined);
   const hasPsa10 = data.some((d) => d.psa10Price !== null && d.psa10Price !== undefined);
@@ -264,14 +274,14 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
             iconType="line"
             iconSize={8}
           />
-          {extraSeries.map((s) => <Line key={s.key} dataKey={`${s.key}:line`} name={s.name} stroke={s.color} strokeWidth={2} connectNulls={true} dot={pointDot(s.key)} type="stepAfter" />)}
+          {extraSeries.map((s) => <Line key={s.key} dataKey={`${s.key}:line`} name={s.name} stroke={s.color} strokeWidth={2} connectNulls={true} dot={pointDot(s.key)} isAnimationActive={animate} animationDuration={LINE_DRAW_MS} animationEasing="ease-out" type="stepAfter" />)}
           {hasRaw && (
             <Area
               connectNulls={true}
               dataKey="rawPrice:line"
               fill="url(#rawGradient)"
-              isAnimationActive={true}
-              animationDuration={700}
+              isAnimationActive={animate}
+              animationDuration={LINE_DRAW_MS}
               animationEasing="ease-out"
               legendType="none"
               stroke="none"
@@ -285,8 +295,8 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
               connectNulls={true}
               dataKey="rawPrice:line"
               dot={pointDot("rawPrice")}
-              isAnimationActive={true}
-              animationDuration={700}
+              isAnimationActive={animate}
+              animationDuration={LINE_DRAW_MS}
               animationEasing="ease-out"
               name="Raw eBay"
               stroke="#10b981"
@@ -300,8 +310,8 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
               connectNulls={true}
               dataKey="tcgPrice:line"
               dot={pointDot("tcgPrice")}
-              isAnimationActive={true}
-              animationDuration={700}
+              isAnimationActive={animate}
+              animationDuration={LINE_DRAW_MS}
               animationEasing="ease-out"
               name="PPT market"
               stroke="#8b5cf6"
@@ -315,8 +325,8 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
               connectNulls={true}
               dataKey="psa10Price:line"
               dot={pointDot("psa10Price")}
-              isAnimationActive={true}
-              animationDuration={700}
+              isAnimationActive={animate}
+              animationDuration={LINE_DRAW_MS}
               animationEasing="ease-out"
               name="PSA 10 eBay"
               stroke="#f59e0b"
@@ -330,8 +340,8 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
               connectNulls={true}
               dataKey="psa9Price:line"
               dot={pointDot("psa9Price")}
-              isAnimationActive={true}
-              animationDuration={700}
+              isAnimationActive={animate}
+              animationDuration={LINE_DRAW_MS}
               animationEasing="ease-out"
               name="PSA 9 eBay"
               stroke="#0284c7"
@@ -345,8 +355,8 @@ export function PriceHistoryChart({ data, currency, label = "eBay listings", obs
               connectNulls={true}
               dataKey="price:line"
               dot={pointDot("price")}
-              isAnimationActive={true}
-              animationDuration={700}
+              isAnimationActive={animate}
+              animationDuration={LINE_DRAW_MS}
               animationEasing="ease-out"
               name={label}
               stroke="#65a30d"

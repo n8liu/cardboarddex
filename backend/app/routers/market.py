@@ -35,8 +35,9 @@ from app.schemas.cards import (
     MarketMoversResponse,
     SealedSignalsResponse,
 )
-from app.services.grading_service import calculate_grading_profit
-from app.services.sealed_service import calculate_sealed_signals
+from app.services.grading_service import stored_grading_profit
+from app.services.market_snapshots import cache_headers as snapshot_headers
+from app.services.sealed_service import stored_sealed_signals
 from app.services.image_download import ImageClient
 
 logger = logging.getLogger(__name__)
@@ -169,22 +170,25 @@ def get_market_movers(
     per_page: int = Query(default=24, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> MarketMoversResponse:
-    rankings = stored_movers(response=response, db=db, game=game, period=period)
-    gainers, losers = rankings['gainers'], rankings['losers']
+    ranking, updated_at = stored_movers(db=db, game=game, period=period)
+    snapshot_headers(response, updated_at)
     start = (page - 1) * per_page
-    count = max(len(gainers) if direction != 'down' else 0, len(losers) if direction != 'up' else 0)
+    # Pages stop at the snapshot's rows; the totals still count every mover.
+    count = max(len(ranking.gainers) if direction != 'down' else 0, len(ranking.losers) if direction != 'up' else 0)
+    # The worker does not mount the image manifest, so image URLs resolve per page here.
+    page_items = lambda items: [item.model_copy(update={'image_url': card_image_url(item.card_id)})
+                                for item in items[start:start + per_page]]
     return MarketMoversResponse(
         period=period, direction=direction, page=page, per_page=per_page,
-        total_gainers=len(gainers), total_losers=len(losers),
+        total_gainers=ranking.total_gainers, total_losers=ranking.total_losers,
         total_pages=max(1, math.ceil(count / per_page)),
-        gainers=gainers[start:start + per_page] if direction != 'down' else [],
-        losers=losers[start:start + per_page] if direction != 'up' else [],
-        updated_at=datetime.fromisoformat(response.headers['X-Cache-Generated-At']),
+        gainers=page_items(ranking.gainers) if direction != 'down' else [],
+        losers=page_items(ranking.losers) if direction != 'up' else [],
+        updated_at=updated_at,
     )
 
 
 @router.get("/grading-profit", response_model=GradingProfitResponse)
-@cached_read("get_grading_profit_identity_v2", fresh=300, maximum=1800)
 def get_grading_profit(
     response: Response,
     grading_fee: float | None = Query(default=None, ge=0.0, le=1000.0),
@@ -209,9 +213,8 @@ def get_grading_profit(
     per_page: int = Query(default=24, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> GradingProfitResponse:
-    return calculate_grading_profit(
+    result = stored_grading_profit(
         db,
-        use_cache=False,
         grading_fee=grading_fee,
         sort_by=sort_by,
         target_grade=target_grade,
@@ -224,10 +227,11 @@ def get_grading_profit(
         page=page,
         per_page=per_page,
     )
+    snapshot_headers(response, result.updated_at)
+    return result
 
 
 @router.get("/sealed-signals", response_model=SealedSignalsResponse)
-@cached_read("get_sealed_signals_v2", fresh=300, maximum=1800)
 def get_sealed_signals(
     response: Response,
     game: Literal["all", "pokemon", "pokemon-japan"] = Query(default="all"),
@@ -258,9 +262,8 @@ def get_sealed_signals(
     per_page: int = Query(default=24, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> SealedSignalsResponse:
-    return calculate_sealed_signals(
+    result = stored_sealed_signals(
         db,
-        use_cache=False,
         game=game,
         era=era,
         period=int(period),
@@ -272,6 +275,8 @@ def get_sealed_signals(
         page=page,
         per_page=per_page,
     )
+    snapshot_headers(response, result.updated_at)
+    return result
 
 
 def _live_feed_query(provider, grade_filter, set_id, q):

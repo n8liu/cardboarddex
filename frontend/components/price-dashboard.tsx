@@ -32,14 +32,17 @@ function timestamp(item: PriceObservation): number {
   return Math.max(obsTime, provTime);
 }
 
+// Use the same identity for deduplication and React rows, including each printing/grade.
+function variantKey(item: PriceObservation): string {
+  return JSON.stringify([item.provider, item.variant_id,
+    isEbayObservation(item) ? item.provider_card_id : null,
+    item.printing, item.condition, item.grading_company, item.grade, item.currency]);
+}
+
 function latestByVariant(observations: PriceObservation[]): PriceObservation[] {
   const latest = new Map<string, PriceObservation>();
   for (const observation of observations) {
-    // For eBay comps, keep individual verified listings distinct by provider_card_id;
-    // for catalog providers like TCG API, deduplicate by variant printing.
-    const key = isEbayObservation(observation)
-      ? `${observation.provider}:${observation.variant_id}:${observation.provider_card_id}`
-      : `${observation.provider}:${observation.variant_id}`;
+    const key = variantKey(observation);
     const current = latest.get(key);
     if (!current || timestamp(observation) >= timestamp(current)) latest.set(key, observation);
   }
@@ -755,7 +758,7 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
               {displayedVariants.map((item) => {
                 const listingUrl = getListingUrl(item);
                 return (
-                  <tr key={`${item.provider}:${item.provider_card_id || item.variant_id}`}>
+                  <tr key={variantKey(item)}>
                     <td className="px-5 py-3 text-sm font-medium text-zinc-900">{variantLabel(item)}</td>
                     <td className="px-5 py-3 text-sm text-zinc-600">{item.printing ?? "Standard"}</td>
                     <td className="px-5 py-3 text-sm">

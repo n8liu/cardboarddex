@@ -49,6 +49,23 @@ it("shows a PPT row ingested by the worker on the next poll without a reload", a
   expect(names.filter((name) => name === "Pikachu")).toHaveLength(1);  // no duplicates
 });
 
+it("tints only rows added by a poll, once", async () => {
+  const old = item("1", "Pikachu", "2026-10-18T01:52:52Z");
+  const fresh = item("2", "Charizard", "2026-10-20T01:00:00Z");
+  vi.mocked(getLiveFeed).mockResolvedValueOnce(feed([old])).mockResolvedValue(feed([fresh, old]));
+  render(<LiveUpdatesDashboard initialData={empty} />);
+  await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+  const tile = (name: string) => screen.getByRole("link", { name }).closest(".rounded-2xl");
+  expect(tile("Pikachu")).not.toHaveClass("animate-fresh-row");  // initial load is not "new"
+
+  await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+  expect(tile("Charizard")).toHaveClass("animate-fresh-row");
+  expect(tile("Pikachu")).not.toHaveClass("animate-fresh-row");
+
+  await act(async () => { await vi.advanceTimersByTimeAsync(1_500); });
+  expect(tile("Charizard")).not.toHaveClass("animate-fresh-row");
+});
+
 it("keeps showing totals from a paused worker, labelled as dated", async () => {
   vi.mocked(getLiveFeed).mockResolvedValue(empty);
   vi.mocked(getLiveStats).mockReset().mockResolvedValue({

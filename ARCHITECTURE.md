@@ -20,4 +20,4 @@ Catalog projection version 2 materializes current candidates; rebuild and verify
 
 PPT requests share atomic weighted daily/minute quotas and single-flight leases through scheduled and manual paths. Old provider clients and tasks are inert compatibility entrypoints. Direct eBay retains its parser, evidence screening, quotas and schedule. Validated image downloading uses approved origins and preserves existing objects.
 
-PPT health reports expose mapping, stale/due coverage, quarantine, transition and quota diagnostics without credentials. The deployment pause marker, isolated maintenance containers, backup restoration, rollback host and unchanged public smoke deadlines remain operational requirements. See [cutover](docs/ppt-cutover.md) and [current context](PROJECT_CONTEXT.md).
+PPT health reports expose mapping, stale/due coverage, quarantine, transition and quota diagnostics without credentials. The deployment pause marker, isolated maintenance containers, backup restoration, rollback host and unchanged public smoke deadlines remain operational requirements. See [operations runbook](OPERATIONS.md) and [current context](PROJECT_CONTEXT.md).

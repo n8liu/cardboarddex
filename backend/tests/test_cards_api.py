@@ -616,7 +616,7 @@ def test_get_grading_profit_endpoint() -> None:
             provider_card_id="p-char",
             variant_id="raw",
             price=Decimal("200.00"),
-            observed_at=datetime(2026, 8, 29, 10, 0, tzinfo=UTC),
+            observed_at=datetime.now(UTC).replace(hour=10, minute=0),
         ))
         # PSA 10 price: $2000
         session.add(PriceObservation(
@@ -628,7 +628,7 @@ def test_get_grading_profit_endpoint() -> None:
             grading_company="PSA",
             grade=Decimal("10.0"),
             price=Decimal("2000.00"),
-            observed_at=datetime(2026, 8, 29, 11, 0, tzinfo=UTC),
+            observed_at=datetime.now(UTC).replace(hour=11, minute=0),
         ))
         # PSA 9 price: $400
         session.add(PriceObservation(
@@ -640,7 +640,7 @@ def test_get_grading_profit_endpoint() -> None:
             grading_company="PSA",
             grade=Decimal("9.0"),
             price=Decimal("400.00"),
-            observed_at=datetime(2026, 8, 29, 11, 0, tzinfo=UTC),
+            observed_at=datetime.now(UTC).replace(hour=11, minute=0),
         ))
 
         # Card 2: Safe flip Pikachu
@@ -652,7 +652,7 @@ def test_get_grading_profit_endpoint() -> None:
             provider_card_id="p-pika",
             variant_id="raw",
             price=Decimal("5.00"),
-            observed_at=datetime(2026, 8, 29, 10, 0, tzinfo=UTC),
+            observed_at=datetime.now(UTC).replace(hour=10, minute=0),
         ))
         session.add(PriceObservation(
             fingerprint="fp-pika-psa10",
@@ -663,7 +663,7 @@ def test_get_grading_profit_endpoint() -> None:
             grading_company="PSA",
             grade=Decimal("10.0"),
             price=Decimal("150.00"),
-            observed_at=datetime(2026, 8, 29, 11, 0, tzinfo=UTC),
+            observed_at=datetime.now(UTC).replace(hour=11, minute=0),
         ))
         session.add(PriceObservation(
             fingerprint="fp-pika-psa9",
@@ -674,7 +674,7 @@ def test_get_grading_profit_endpoint() -> None:
             grading_company="PSA",
             grade=Decimal("9.0"),
             price=Decimal("40.00"),
-            observed_at=datetime(2026, 8, 29, 11, 0, tzinfo=UTC),
+            observed_at=datetime.now(UTC).replace(hour=11, minute=0),
         ))
         session.flush()
         from app.models import ListingAssessment
