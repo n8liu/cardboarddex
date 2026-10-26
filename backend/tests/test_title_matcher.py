@@ -6,8 +6,10 @@ from parsers.title_matcher import (
     extract_grade_from_title,
     extract_numbers_from_title,
     extract_printing_from_title,
+    image_number_matches,
     normalize_card_number,
     parse_ebay_title,
+    strict_identity_issue,
 )
 
 
@@ -263,6 +265,35 @@ class TestHelperUtilities:
         assert "4" in extract_numbers_from_title("Charizard #004 Base Set")
         assert "swsh050" in extract_numbers_from_title("Charizard V Promo SWSH050 Sealed")
         assert "gg36" in extract_numbers_from_title("Entei V GG36/GG70 Crown Zenith")
+
+
+class TestHyphenatedPromoNumbers:
+    """Promo totals like "S-P" contain a hyphen; the total check must compare the whole code."""
+
+    SET = "SWSH Sword Shield Promo Cards"
+    NAME = "Pikachu - 227/S-P"
+
+    def test_exact_hyphenated_total_is_accepted(self) -> None:
+        title = "Pikachu - 227/S-P 227/S-P SWSH: Sword & Shield Promo Cards Regular"
+        assert strict_identity_issue(title, "227/S-P", self.SET, None, card_name=self.NAME) is None
+
+    @pytest.mark.parametrize("title", [
+        "Pikachu 227/SM-P SWSH Sword & Shield Promo Cards",  # different promo series
+        "Pikachu 227/S SWSH Sword & Shield Promo Cards",     # truncated total
+    ])
+    def test_other_totals_are_rejected(self, title: str) -> None:
+        assert strict_identity_issue(title, "227/S-P", self.SET, None, card_name=self.NAME) == (
+            "rejected", "card_number_denominator_mismatch")
+
+    def test_numeric_totals_are_unchanged(self) -> None:
+        set_name = "Base Set"
+        assert strict_identity_issue("Charizard 4/102 Base Set Holo", "4", set_name, 102, card_name="Charizard") is None
+        assert strict_identity_issue("Charizard 4/130 Base Set Holo", "4", set_name, 102, card_name="Charizard") == (
+            "rejected", "card_number_denominator_mismatch")
+
+    def test_image_check_reads_hyphenated_totals(self) -> None:
+        assert image_number_matches("227/S-P", "227/S-P", None)[0] == "matched"
+        assert image_number_matches("227/SM-P", "227/S-P", None)[0] == "rejected"
 
 
 class TestSealedProductTitleMatching:
