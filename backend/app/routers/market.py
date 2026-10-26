@@ -169,17 +169,22 @@ def get_market_movers(
     per_page: int = Query(default=24, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> MarketMoversResponse:
-    rankings = stored_movers(response=response, db=db, game=game, period=period)
-    gainers, losers = rankings['gainers'], rankings['losers']
+    ranking, updated_at = stored_movers(db=db, game=game, period=period)
+    response.headers['Cache-Control'] = 'public, no-cache, max-age=0, must-revalidate'
+    response.headers['X-Cache-Generated-At'] = updated_at.isoformat()
     start = (page - 1) * per_page
-    count = max(len(gainers) if direction != 'down' else 0, len(losers) if direction != 'up' else 0)
+    # Pages stop at the snapshot's rows; the totals still count every mover.
+    count = max(len(ranking.gainers) if direction != 'down' else 0, len(ranking.losers) if direction != 'up' else 0)
+    # The worker does not mount the image manifest, so image URLs resolve per page here.
+    page_items = lambda items: [item.model_copy(update={'image_url': card_image_url(item.card_id)})
+                                for item in items[start:start + per_page]]
     return MarketMoversResponse(
         period=period, direction=direction, page=page, per_page=per_page,
-        total_gainers=len(gainers), total_losers=len(losers),
+        total_gainers=ranking.total_gainers, total_losers=ranking.total_losers,
         total_pages=max(1, math.ceil(count / per_page)),
-        gainers=gainers[start:start + per_page] if direction != 'down' else [],
-        losers=losers[start:start + per_page] if direction != 'up' else [],
-        updated_at=datetime.fromisoformat(response.headers['X-Cache-Generated-At']),
+        gainers=page_items(ranking.gainers) if direction != 'down' else [],
+        losers=page_items(ranking.losers) if direction != 'up' else [],
+        updated_at=updated_at,
     )
 
 

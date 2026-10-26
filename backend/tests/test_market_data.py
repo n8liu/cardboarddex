@@ -166,6 +166,136 @@ def test_sealed_language_filters_before_pagination_and_isolates_cache(db, monkey
         app.dependency_overrides.clear()
 
 
+@pytest.mark.parametrize("projection", [False, True])
+def test_movers_and_sealed_pages_are_disjoint(db, monkeypatch, projection):
+    from app.config import get_settings
+    from app.models import PPTProduct
+    from app.services.catalog_prices import refresh_candidates
+    from app.services.movers_service import build_rankings
+    monkeypatch.setattr(get_settings(), "ppt_primary_enabled", False)
+    monkeypatch.setattr(get_settings(), "catalog_current_prices_enabled", projection)
+    now = datetime.now(UTC)
+    # "box" (fixture) has no rarity and no metadata: the legacy sealed fallback.
+    db.add(Card(id="single", name="Charizard", set_id="set", number="4", rarity="Rare Holo"))
+    db.add(Card(id="ppt-box", name="Elite Trainer Box", set_id="set", number="ETB", rarity="Rare Holo"))
+    db.add(Card(id="ppt-card", name="Pikachu", set_id="set", number="25"))  # no rarity, explicit card
+    for pid, card_id, segment in [("a", "ppt-box", "english:sealed"), ("b", "ppt-card", "english:cards")]:
+        db.add(PPTProduct(id=pid, provider_id=pid, card_id=card_id, segment=segment, status="matched",
+                          metadata_payload={}, quotes=[]))
+    for card_id in ["box", "single", "ppt-box", "ppt-card"]:
+        db.add(PriceObservation(fingerprint=card_id, card_id=card_id, provider="tcgapi", provider_card_id=card_id,
+            variant_id="default", price=100, observed_at=now,
+            payload={"market_price": 100, "price_change_24h": 10, "price_change_30d": 10}))
+    db.commit()
+    refresh_candidates(db, ["box", "single", "ppt-box", "ppt-card"])
+    db.commit()
+    movers = build_rankings(db, now)["pokemon:24h"]
+    assert sorted(item.card_id for item in movers.gainers) == ["ppt-card", "single"]
+    sealed = sealed_service.calculate_sealed_signals(db, use_cache=False, game="all", per_page=10)
+    assert sorted(item.card_id for item in sealed.items) == ["box", "ppt-box"]
+
+
+class FakeRedis:
+    def __init__(self):
+        self.values = {}
+    def get(self, key):
+        return self.values.get(key)
+    def set(self, key, value, nx=False, ex=None):
+        if nx and key in self.values:
+            return False
+        self.values[key] = value
+        return True
+    def eval(self, script, count, *args):
+        keys, argv = args[:count], args[count:]
+        if self.values.get(keys[0]) != argv[0]:
+            return 0
+        del self.values[keys[0]]
+        if count == 2:
+            self.values[keys[1]] = argv[1]
+        return 1
+
+
+@pytest.mark.parametrize("projection", [False, True])
+def test_movers_snapshot_ranks_every_game_and_period_from_one_read(db, monkeypatch, projection):
+    from sqlalchemy import event
+    from app.config import get_settings
+    from app.services import movers_service
+    from app.services.catalog_prices import refresh_candidates
+    monkeypatch.setattr(get_settings(), "ppt_primary_enabled", False)
+    monkeypatch.setattr(get_settings(), "catalog_current_prices_enabled", projection)
+    db.add(Set(id="jp", name="Japanese", series="Pokemon Japan"))
+    now = datetime.now(UTC)
+    rows = [("up", "set", {"price_change_24h": 30, "price_change_7d": -10}, "USD", now),
+            ("up2", "set", {"price_change_24h": 10}, "USD", now),
+            ("week", "set", {"price_change_7d": 90}, "USD", now),
+            ("jp-card", "jp", {"price_change_24h": 99}, "USD", now),
+            ("eur", "set", {"price_change_24h": 999}, "EUR", now),
+            ("future", "set", {"price_change_24h": 999}, "USD", now + timedelta(days=1))]
+    for index, (card_id, set_id, changes, currency, observed) in enumerate(rows):
+        db.add(Card(id=card_id, name=card_id, set_id=set_id, number=str(index), rarity="Rare"))
+        db.add(PriceObservation(fingerprint=card_id, card_id=card_id, provider="tcgapi", provider_card_id=card_id,
+            variant_id="normal", currency=currency, price=10, observed_at=observed, payload=changes))
+    db.commit()
+    refresh_candidates(db, [row[0] for row in rows])
+    db.commit()
+    statements = []
+    record = lambda *args: statements.append(args[2])
+    event.listen(db.get_bind(), "before_cursor_execute", record)
+    try:
+        rankings = movers_service.build_rankings(db, now, limit=1)
+    finally:
+        event.remove(db.get_bind(), "before_cursor_execute", record)
+    assert len(statements) == 1
+    assert [item.card_id for item in rankings["pokemon:24h"].gainers] == ["up"]
+    assert rankings["pokemon:24h"].total_gainers == 2
+    assert [item.card_id for item in rankings["pokemon:7d"].gainers] == ["week"]
+    assert [item.card_id for item in rankings["pokemon:7d"].losers] == ["up"]
+    assert [item.card_id for item in rankings["pokemon-japan:24h"].gainers] == ["jp-card"]
+    assert rankings["pokemon-japan:30d"].total_gainers == 0
+
+
+def test_movers_api_serves_snapshot_without_sql_and_503s_when_missing(db, monkeypatch):
+    from sqlalchemy import event
+    from app.config import get_settings
+    from app.services import movers_service
+    monkeypatch.setattr(get_settings(), "ppt_primary_enabled", False)
+    monkeypatch.setattr("app.main.check_rate_limit", AsyncMock(return_value=(True, 0)))
+    redis = FakeRedis()
+    monkeypatch.setattr(movers_service, "get_redis", lambda: redis)
+    monkeypatch.setattr(movers_service, "SessionLocal", lambda: Session(db.get_bind()))
+    for index in range(3):
+        db.add(Card(id=f"c{index}", name=f"c{index}", set_id="set", number=str(index), rarity="Rare"))
+        db.add(PriceObservation(fingerprint=f"c{index}", card_id=f"c{index}", provider="tcgapi",
+            provider_card_id=f"c{index}", variant_id="normal", price=10, observed_at=datetime.now(UTC),
+            payload={"price_change_24h": index + 1}))
+    db.commit()
+    app.dependency_overrides[get_db] = lambda: db
+    try:
+        with TestClient(app) as client:
+            missing = client.get("/cards/market-movers")
+            assert missing.status_code == 503 and missing.headers["cache-control"] == "no-store"
+            assert movers_service.refresh_snapshot() is True
+            statements = []
+            record = lambda *args: statements.append(args[2])
+            event.listen(db.get_bind(), "before_cursor_execute", record)
+            try:
+                page = client.get("/cards/market-movers?direction=up&per_page=2&page=2")
+            finally:
+                event.remove(db.get_bind(), "before_cursor_execute", record)
+            assert page.status_code == 200, page.text
+            assert statements == []
+            data = page.json()
+            assert [item["card_id"] for item in data["gainers"]] == ["c0"]
+            assert data["total_gainers"] == 3 and data["total_pages"] == 2 and data["losers"] == []
+            # A day-old snapshot is no longer served.
+            stale = movers_service.MoversSnapshot.model_validate_json(redis.values[movers_service.snapshot_key()])
+            redis.values[movers_service.snapshot_key()] = stale.model_copy(
+                update={"updated_at": stale.updated_at - timedelta(days=1)}).model_dump_json()
+            assert client.get("/cards/market-movers").status_code == 503
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_market_data_migration_preserves_catalog(tmp_path, monkeypatch):
     # Alembic logging setup must not disable pytest/application loggers.
     monkeypatch.setattr("logging.config.fileConfig", lambda *args, **kwargs: None)

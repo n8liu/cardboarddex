@@ -103,15 +103,13 @@ def calculate_sealed_signals(
     if use_cache and local_cached and (now - local_cached[0]) < _SEALED_CACHE_TTL:
         return local_cached[1]
 
-    # Explicit provider metadata takes precedence over the legacy rarity fallback.
-    from app.services.product_metadata import product_type_expression
-    explicit_type = product_type_expression()
+    from app.services.product_metadata import sealed_product
     query = (
         select(Card, Set)
         .join(Set, Card.set_id == Set.id)
         .outerjoin(ProviderCardState, and_(ProviderCardState.card_id == Card.id, ProviderCardState.provider == "tcgapi"))
         .where(
-            or_(explicit_type == "Sealed Products", and_(explicit_type.is_(None), or_(Card.rarity.is_(None), Card.rarity == ""))),
+            sealed_product(),
             Card.name.not_ilike("%code card%"),
         )
     )

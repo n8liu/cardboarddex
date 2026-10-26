@@ -89,6 +89,8 @@ elif command == 'systemctl':
         # Trending is seeded in an isolated worker-budget container, never in the API.
         seed = next(call for call in calls if call[-3:] == ['python', '-m', 'jobs.refresh_trending'])
         assert 'run' in seed and 'celery-worker' in seed and 'exec' not in seed
+        movers = next(call for call in calls if call[-3:] == ['python', '-m', 'jobs.refresh_movers'])
+        assert 'run' in movers and 'celery-worker' in movers and 'exec' not in movers
     if paused:
         assert not any('up' in call and 'celery-worker' in call for call in calls)
         assert not any('up' in call and 'celery-beat' in call for call in calls)

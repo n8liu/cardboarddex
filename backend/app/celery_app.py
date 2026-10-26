@@ -9,7 +9,7 @@ celery_app = Celery(
     "cardboarddex",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["jobs.refresh_live_stats", "jobs.refresh_trending", "jobs.sync_catalog", "jobs.collect_prices", "jobs.collect_ebay_prices", "jobs.cycle_prices", "jobs.sync_market_data", "jobs.check_listing_images", "jobs.sync_ppt", "jobs.ppt_report"],
+    include=["jobs.refresh_live_stats", "jobs.refresh_trending", "jobs.refresh_movers", "jobs.sync_catalog", "jobs.collect_prices", "jobs.collect_ebay_prices", "jobs.cycle_prices", "jobs.sync_market_data", "jobs.check_listing_images", "jobs.sync_ppt", "jobs.ppt_report"],
 )
 
 celery_app.conf.update(
@@ -41,6 +41,13 @@ celery_app.conf.beat_schedule = {
     "refresh-trending": {
         "task": "jobs.refresh_trending.refresh_trending",
         "schedule": crontab(minute="1-59/5"),
+        "options": {"expires": 240, "time_limit": 110},
+    },
+    # Movers cannot rank on request within the API's 5s deadline. Minutes 3,8,13,...
+    # avoid Trending (1,6,11,...) and eBay (:15/:45); a snapshot is served for a day.
+    "refresh-movers": {
+        "task": "jobs.refresh_movers.refresh_movers",
+        "schedule": crontab(minute="3-59/5"),
         "options": {"expires": 240, "time_limit": 110},
     },
     # Minute :15 and :45 -> eBay market comps
