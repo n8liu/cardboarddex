@@ -9,7 +9,7 @@ celery_app = Celery(
     "cardboarddex",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["jobs.refresh_live_stats", "jobs.refresh_trending", "jobs.sync_catalog", "jobs.collect_prices", "jobs.collect_ebay_prices", "jobs.cycle_prices", "jobs.sync_market_data", "jobs.check_listing_images", "jobs.sync_ppt", "jobs.ppt_report"],
+    include=["jobs.refresh_live_stats", "jobs.refresh_trending", "jobs.refresh_market_snapshots", "jobs.sync_catalog", "jobs.collect_prices", "jobs.collect_ebay_prices", "jobs.cycle_prices", "jobs.sync_market_data", "jobs.check_listing_images", "jobs.sync_ppt", "jobs.ppt_report"],
 )
 
 celery_app.conf.update(
@@ -42,6 +42,14 @@ celery_app.conf.beat_schedule = {
         "task": "jobs.refresh_trending.refresh_trending",
         "schedule": crontab(minute="1-59/5"),
         "options": {"expires": 240, "time_limit": 110},
+    },
+    # Movers, sealed and grading profit cannot be computed within the API's 5s deadline.
+    # Each snapshot is rebuilt only when 12 hours old or missing; the 15-minute check is a
+    # Redis TTL read. Minutes 7,22,37,52 avoid Trending (1,6,11,...) and eBay (:15/:45).
+    "refresh-market-snapshots": {
+        "task": "jobs.refresh_market_snapshots.refresh_market_snapshots",
+        "schedule": crontab(minute="7-59/15"),
+        "options": {"expires": 840, "time_limit": 840},
     },
     # Minute :15 and :45 -> eBay market comps
     "collect-ebay-prices-alternating": {

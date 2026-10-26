@@ -1,0 +1,11 @@
+[Unit]
+Description=Check stored market rankings every fifteen minutes
+
+[Timer]
+OnBootSec=120
+OnUnitActiveSec=900
+AccuracySec=5
+Unit=cardboarddex-market-snapshots.service
+
+[Install]
+WantedBy=timers.target

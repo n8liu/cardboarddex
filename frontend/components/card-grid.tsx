@@ -10,6 +10,7 @@ import { shimmerBlurDataUrl } from "@/lib/shimmer";
 import type { CardSummary } from "@/types/card";
 import { isStalePriceDate } from "@/components/ui/price-source-badge";
 import { CardLink } from "@/components/card-link";
+import { EmptyState } from "@/components/ui/empty-state";
 
 type CardGridProps = {
   cards: CardSummary[];
@@ -88,12 +89,8 @@ export function CardGrid({ cards, query }: CardGridProps) {
 
   if (cards.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center">
-        <p className="text-sm font-semibold text-slate-900">No cards found</p>
-        <p className="mt-1 text-sm text-slate-500">
-          {query ? "Try a different card or set name." : "Run a catalog sync to add cards."}
-        </p>
-      </div>
+      <EmptyState compact title="No cards found"
+        description={query ? "Try a different card or set name." : "Run a catalog sync to add cards."} />
     );
   }
 

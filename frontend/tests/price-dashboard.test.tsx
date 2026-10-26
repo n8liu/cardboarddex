@@ -111,3 +111,25 @@ it("defaults the price history to every printing on, grading companies off and 3
   expect(within(printings).getByRole("button", { name: "Holofoil" })).toHaveAttribute("aria-pressed", "false");
   expect(screen.getByRole("button", { name: "3 Months" })).toHaveAttribute("aria-pressed", "true");
 });
+
+it("keeps variants with a shared provider card ID distinct while sorting", () => {
+  const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const variants = [
+      { ...observation, price: 100, printing: "Normal" },
+      { ...observation, price: 200, printing: "Holofoil" },
+      { ...observation, price: 900, grading_company: "PSA", grade: 10 },
+    ];
+    render(<PriceDashboard pricing={{ card_id: "card", provider_states: [], observations: variants }} />);
+    const table = screen.getByRole("table");
+    expect(within(table).getAllByRole("row")).toHaveLength(4);
+    fireEvent.click(within(table).getByText("Market price"));
+    expect(within(table).getAllByRole("row")).toHaveLength(4);
+    for (const price of ["$100.00", "$200.00", "$900.00"]) {
+      expect(within(table).getByText(price)).toBeInTheDocument();
+    }
+    expect(errors.mock.calls.filter(args => args.some(arg => String(arg).includes("same key")))).toEqual([]);
+  } finally {
+    errors.mockRestore();
+  }
+});

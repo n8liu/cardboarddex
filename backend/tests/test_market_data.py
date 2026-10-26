@@ -166,6 +166,225 @@ def test_sealed_language_filters_before_pagination_and_isolates_cache(db, monkey
         app.dependency_overrides.clear()
 
 
+@pytest.mark.parametrize("projection", [False, True])
+def test_movers_and_sealed_pages_are_disjoint(db, monkeypatch, projection):
+    from app.config import get_settings
+    from app.models import PPTProduct
+    from app.services.catalog_prices import refresh_candidates
+    from app.services.movers_service import build_rankings
+    monkeypatch.setattr(get_settings(), "ppt_primary_enabled", False)
+    monkeypatch.setattr(get_settings(), "catalog_current_prices_enabled", projection)
+    now = datetime.now(UTC)
+    # "box" (fixture) has no rarity and no metadata: the legacy sealed fallback.
+    db.add(Card(id="single", name="Charizard", set_id="set", number="4", rarity="Rare Holo"))
+    db.add(Card(id="ppt-box", name="Elite Trainer Box", set_id="set", number="ETB", rarity="Rare Holo"))
+    db.add(Card(id="ppt-card", name="Pikachu", set_id="set", number="25"))  # no rarity, explicit card
+    for pid, card_id, segment in [("a", "ppt-box", "english:sealed"), ("b", "ppt-card", "english:cards")]:
+        db.add(PPTProduct(id=pid, provider_id=pid, card_id=card_id, segment=segment, status="matched",
+                          metadata_payload={}, quotes=[]))
+    for card_id in ["box", "single", "ppt-box", "ppt-card"]:
+        db.add(PriceObservation(fingerprint=card_id, card_id=card_id, provider="tcgapi", provider_card_id=card_id,
+            variant_id="default", price=100, observed_at=now,
+            payload={"market_price": 100, "price_change_24h": 10, "price_change_30d": 10}))
+    db.commit()
+    refresh_candidates(db, ["box", "single", "ppt-box", "ppt-card"])
+    db.commit()
+    movers = build_rankings(db, now)["pokemon:24h"]
+    assert sorted(item.card_id for item in movers.gainers) == ["ppt-card", "single"]
+    sealed = sealed_service.calculate_sealed_signals(db, use_cache=False, game="all", per_page=10)
+    assert sorted(item.card_id for item in sealed.items) == ["box", "ppt-box"]
+
+
+class FakeRedis:
+    """Enough Redis for snapshot leases, publishes and TTLs, on a clock tests can advance."""
+    def __init__(self):
+        self.values, self.clock = {}, 0
+    def _live(self, key):
+        value, expires = self.values.get(key, (None, None))
+        if expires is not None and expires <= self.clock:
+            self.values.pop(key)
+            return None
+        return value
+    def get(self, key):
+        return self._live(key)
+    def mget(self, keys):
+        return [self._live(key) for key in keys]
+    def ttl(self, key):
+        if self._live(key) is None:
+            return -2
+        expires = self.values[key][1]
+        return -1 if expires is None else expires - self.clock
+    def set(self, key, value, nx=False, ex=None):
+        if nx and self._live(key) is not None:
+            return False
+        self.values[key] = (value, None if ex is None else self.clock + ex)
+        return True
+    def setex(self, key, ex, value):
+        return self.set(key, value, ex=ex)
+    def eval(self, script, count, *args):
+        keys, argv = args[:count], args[count:]
+        if self._live(keys[0]) != argv[0]:
+            return 0
+        del self.values[keys[0]]
+        for key, value in zip(keys[1:], argv[1:-1]):
+            self.set(key, value, ex=int(argv[-1]))
+        return 1
+
+
+@pytest.fixture
+def snapshot_redis(db, monkeypatch):
+    from app.services import market_snapshots
+    redis = FakeRedis()
+    monkeypatch.setattr(market_snapshots, "get_redis", lambda: redis)
+    monkeypatch.setattr(market_snapshots, "SessionLocal", lambda: Session(db.get_bind()))
+    return redis
+
+
+@pytest.mark.parametrize("projection", [False, True])
+def test_movers_snapshot_ranks_every_game_and_period_from_one_read(db, monkeypatch, projection):
+    from sqlalchemy import event
+    from app.config import get_settings
+    from app.services import movers_service
+    from app.services.catalog_prices import refresh_candidates
+    monkeypatch.setattr(get_settings(), "ppt_primary_enabled", False)
+    monkeypatch.setattr(get_settings(), "catalog_current_prices_enabled", projection)
+    db.add(Set(id="jp", name="Japanese", series="Pokemon Japan"))
+    now = datetime.now(UTC)
+    rows = [("up", "set", {"price_change_24h": 30, "price_change_7d": -10}, "USD", now),
+            ("up2", "set", {"price_change_24h": 10}, "USD", now),
+            ("week", "set", {"price_change_7d": 90}, "USD", now),
+            ("jp-card", "jp", {"price_change_24h": 99}, "USD", now),
+            ("eur", "set", {"price_change_24h": 999}, "EUR", now),
+            ("future", "set", {"price_change_24h": 999}, "USD", now + timedelta(days=1))]
+    for index, (card_id, set_id, changes, currency, observed) in enumerate(rows):
+        db.add(Card(id=card_id, name=card_id, set_id=set_id, number=str(index), rarity="Rare"))
+        db.add(PriceObservation(fingerprint=card_id, card_id=card_id, provider="tcgapi", provider_card_id=card_id,
+            variant_id="normal", currency=currency, price=10, observed_at=observed, payload=changes))
+    db.commit()
+    refresh_candidates(db, [row[0] for row in rows])
+    db.commit()
+    statements = []
+    record = lambda *args: statements.append(args[2])
+    event.listen(db.get_bind(), "before_cursor_execute", record)
+    try:
+        rankings = movers_service.build_rankings(db, now, limit=1)
+    finally:
+        event.remove(db.get_bind(), "before_cursor_execute", record)
+    assert len(statements) == 1
+    assert [item.card_id for item in rankings["pokemon:24h"].gainers] == ["up"]
+    assert rankings["pokemon:24h"].total_gainers == 2
+    assert [item.card_id for item in rankings["pokemon:7d"].gainers] == ["week"]
+    assert [item.card_id for item in rankings["pokemon:7d"].losers] == ["up"]
+    assert [item.card_id for item in rankings["pokemon-japan:24h"].gainers] == ["jp-card"]
+    assert rankings["pokemon-japan:30d"].total_gainers == 0
+
+
+def test_market_snapshots_rebuild_only_every_12_hours(db, monkeypatch, snapshot_redis):
+    from sqlalchemy import event
+    from app.config import get_settings
+    from app.services import market_snapshots
+    from jobs.refresh_market_snapshots import refresh_due
+    monkeypatch.setattr(get_settings(), "ppt_primary_enabled", False)
+    monkeypatch.setattr("app.main.check_rate_limit", AsyncMock(return_value=(True, 0)))
+    app.dependency_overrides[get_db] = lambda: db
+    try:
+        with TestClient(app) as client:
+            for path in ["/cards/market-movers", "/cards/sealed-signals", "/cards/grading-profit"]:
+                missing = client.get(path)
+                assert missing.status_code == 503 and missing.headers["cache-control"] == "no-store"
+            assert refresh_due() == {"movers": True, "sealed": True, "grading-identity-v2": True}
+            statements = []
+            record = lambda *args: statements.append(args[2])
+            event.listen(db.get_bind(), "before_cursor_execute", record)
+            try:
+                # The 15-minute Beat check queries nothing until a snapshot is 12 hours old.
+                snapshot_redis.clock += 12 * 3600 - 60
+                assert refresh_due() == {"movers": False, "sealed": False, "grading-identity-v2": False}
+                for path in ["/cards/market-movers", "/cards/grading-profit"]:
+                    assert client.get(path).status_code == 200
+            finally:
+                event.remove(db.get_bind(), "before_cursor_execute", record)
+            assert statements == []
+            snapshot_redis.clock += 60
+            assert refresh_due() == {"movers": True, "sealed": True, "grading-identity-v2": True}
+            # A lost snapshot (cache eviction) is rebuilt on the next check, not in 12 hours.
+            snapshot_redis.values.pop(market_snapshots.part_key("grading-identity-v2"))
+            assert refresh_due() == {"movers": False, "sealed": False, "grading-identity-v2": True}
+            # Failed rebuilds keep serving the previous snapshot for up to 36 hours.
+            snapshot_redis.clock += 36 * 3600
+            assert client.get("/cards/market-movers").status_code == 503
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_sealed_and_grading_snapshots_match_on_demand_results(db, monkeypatch, snapshot_redis):
+    from app.config import get_settings
+    from app.services import grading_service
+    monkeypatch.setattr(get_settings(), "ppt_primary_enabled", False)
+    now = datetime.now(UTC)
+    db.add(Set(id="old", name="Vintage Set", release_date=date(2001, 1, 1)))
+    for card_id, set_id, name, price, listings in [("etb", "set", "Elite Trainer Box", 60, 10),
+                                                   ("bb", "old", "Booster Box", 900, 200)]:
+        db.add(Card(id=card_id, name=name, set_id=set_id, number=card_id))
+        db.add(PriceObservation(fingerprint=card_id, card_id=card_id, provider="tcgapi", provider_card_id=card_id,
+            variant_id="default", price=price, observed_at=now,
+            payload={"market_price": price, "total_listings": listings, "price_change_30d": 12}))
+    for card_id, raw, psa10, psa9 in [("zard", 100, 900, 300), ("pika", 10, 40, None), ("mew", 50, None, 45)]:
+        db.add(Card(id=card_id, name=card_id.title(), set_id="set", number=card_id, rarity="Rare Holo"))
+        for grade, price in [(None, raw), (10, psa10), (9, psa9)]:
+            if price is not None:
+                db.add(PriceObservation(fingerprint=f"{card_id}-{grade}", card_id=card_id, provider="tcgapi",
+                    provider_card_id=card_id, variant_id="default", price=price, observed_at=now,
+                    grading_company="PSA" if grade else None, grade=grade, payload={}))
+    db.commit()
+    assert sealed_service.refresh_snapshot(force=True) and grading_service.refresh_snapshot(force=True)
+    for filters in [{}, {"era": "older"}, {"product_type": "etb"}, {"signal": "strong_buy"}, {"q": "vintage"},
+                    {"sort_by": "price_asc", "per_page": 1, "page": 2}, {"period": 90, "sort_by": "momentum_desc"}]:
+        stored = sealed_service.stored_sealed_signals(db, **filters)
+        fresh = sealed_service.calculate_sealed_signals(db, use_cache=False, **filters)
+        assert stored.model_dump(exclude={"updated_at"}) == fresh.model_dump(exclude={"updated_at"}), filters
+    assert sealed_service.stored_sealed_signals(db).total_items == 2
+    for filters in [{}, {"grading_fee": 100}, {"target_grade": "psa9"}, {"sort_by": "spread_desc"},
+                    {"max_raw_price": 60, "min_profit": 0}, {"psa9_safe_only": True}, {"q": "pika"}, {"set_id": "nope"}]:
+        stored = grading_service.stored_grading_profit(db, **filters)
+        fresh = grading_service.calculate_grading_profit(db, use_cache=False, **filters)
+        assert stored.model_dump(exclude={"updated_at"}) == fresh.model_dump(exclude={"updated_at"}), filters
+    assert [item.card_id for item in grading_service.stored_grading_profit(db).items] == ["zard", "pika", "mew"]
+
+
+def test_movers_api_serves_snapshot_without_sql(db, monkeypatch, snapshot_redis):
+    from sqlalchemy import event
+    from app.config import get_settings
+    from app.services import movers_service
+    monkeypatch.setattr(get_settings(), "ppt_primary_enabled", False)
+    monkeypatch.setattr("app.main.check_rate_limit", AsyncMock(return_value=(True, 0)))
+    for index in range(3):
+        db.add(Card(id=f"c{index}", name=f"c{index}", set_id="set", number=str(index), rarity="Rare"))
+        db.add(PriceObservation(fingerprint=f"c{index}", card_id=f"c{index}", provider="tcgapi",
+            provider_card_id=f"c{index}", variant_id="normal", price=10, observed_at=datetime.now(UTC),
+            payload={"price_change_24h": index + 1}))
+    db.commit()
+    app.dependency_overrides[get_db] = lambda: db
+    try:
+        with TestClient(app) as client:
+            assert movers_service.refresh_snapshot() is True
+            statements = []
+            record = lambda *args: statements.append(args[2])
+            event.listen(db.get_bind(), "before_cursor_execute", record)
+            try:
+                page = client.get("/cards/market-movers?direction=up&per_page=2&page=2")
+            finally:
+                event.remove(db.get_bind(), "before_cursor_execute", record)
+            assert page.status_code == 200, page.text
+            assert statements == []
+            data = page.json()
+            assert [item["card_id"] for item in data["gainers"]] == ["c0"]
+            assert data["total_gainers"] == 3 and data["total_pages"] == 2 and data["losers"] == []
+            assert page.headers["x-cache-generated-at"] == data["updated_at"].replace("Z", "+00:00")
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_market_data_migration_preserves_catalog(tmp_path, monkeypatch):
     # Alembic logging setup must not disable pytest/application loggers.
     monkeypatch.setattr("logging.config.fileConfig", lambda *args, **kwargs: None)
@@ -351,3 +570,88 @@ def test_public_graded_sales_api(db, monkeypatch):
             assert client.get('/market/graded-sales-activity?q=' + 'x' * 121).status_code == 422
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.parametrize("redis_failure", ["missing_client", "connection"])
+def test_market_snapshot_outage_never_computes_public_rankings(db, monkeypatch, redis_failure):
+    from app.config import get_settings
+    from app.services import market_snapshots, movers_service, grading_service
+    from fastapi import HTTPException
+    monkeypatch.setattr(get_settings(), "market_snapshots_on_demand_fallback", False)
+    redis = None if redis_failure == "missing_client" else Mock(get=Mock(side_effect=ConnectionError("offline")))
+    monkeypatch.setattr(market_snapshots, "get_redis", lambda: redis)
+    def unexpected(*args, **kwargs):
+        pytest.fail("Public request attempted a full database rebuild")
+    monkeypatch.setattr(movers_service, "build_rankings", unexpected)
+    monkeypatch.setattr(sealed_service, "build_snapshot", unexpected)
+    monkeypatch.setattr(grading_service, "build_snapshot", unexpected)
+    for call in [lambda: movers_service.stored_movers(db, "pokemon", "24h"),
+                 lambda: sealed_service.stored_sealed_signals(db),
+                 lambda: grading_service.stored_grading_profit(db)]:
+        with pytest.raises(HTTPException) as error:
+            call()
+        assert error.value.status_code == 503
+        assert error.value.headers["Cache-Control"] == "no-store"
+
+
+@pytest.mark.parametrize("raw", ['null', '[]', '{"updated_at":"bad"}',
+                                  '{"updated_at":"2020-01-01T00:00:00+00:00"}'])
+def test_market_snapshot_rejects_invalid_and_expired_payloads(monkeypatch, raw):
+    from fastapi import HTTPException
+    from app.services import market_snapshots
+    monkeypatch.setattr(market_snapshots, "get_redis", lambda: Mock(get=Mock(return_value=raw)))
+    with pytest.raises(HTTPException) as error:
+        market_snapshots.read("movers", "pokemon:24h")
+    assert error.value.status_code == 503
+
+
+def test_market_snapshot_failed_rebuild_keeps_previous_publication(db, monkeypatch):
+    import fakeredis
+    import json
+    from app.services import market_snapshots
+    redis = fakeredis.FakeRedis(decode_responses=True)
+    monkeypatch.setattr(market_snapshots, "get_redis", lambda: redis)
+    monkeypatch.setattr(market_snapshots, "SessionLocal", lambda: Session(db.get_bind()))
+    build = lambda session, now: {part: json.dumps({"updated_at": now.isoformat(), "value": part})
+                                for part in ["a", "b"]}
+    assert market_snapshots.refresh("test", ["a", "b"], build)
+    before = redis.mget([market_snapshots.part_key("test", part) for part in ["a", "b"]])
+    def fail(session, now):
+        raise RuntimeError("database rebuild failed")
+    assert market_snapshots.refresh("test", ["a", "b"], fail, force=True) is False
+    assert redis.mget([market_snapshots.part_key("test", part) for part in ["a", "b"]]) == before
+    assert redis.get(market_snapshots.part_key("test", "lock")) is None
+    # A worker that loses its lease cannot overwrite a newer owner's publication.
+    def lose_lease(session, now):
+        redis.set(market_snapshots.part_key("test", "lock"), "new-owner", ex=600)
+        return build(session, now)
+    assert market_snapshots.refresh("test", ["a", "b"], lose_lease, force=True) is False
+    assert redis.mget([market_snapshots.part_key("test", part) for part in ["a", "b"]]) == before
+    assert redis.get(market_snapshots.part_key("test", "lock")) == "new-owner"
+
+
+def test_market_snapshot_seed_reports_failed_and_fresh_runs(db, monkeypatch, snapshot_redis):
+    from jobs import refresh_market_snapshots as job
+    from app.services import movers_service
+    assert job.main() == 0
+    assert job.main() == 0  # Fresh snapshots skipped successfully.
+    monkeypatch.setattr(movers_service, "refresh_snapshot", lambda **kwargs: False)
+    assert job.main(force=True) == 1
+
+
+def test_grading_snapshot_keeps_cards_across_batch_boundaries(db, monkeypatch):
+    from app.config import get_settings
+    from app.services import grading_service
+    monkeypatch.setattr(get_settings(), "ppt_primary_enabled", False)
+    now = datetime.now(UTC)
+    for index in range(257):
+        card_id = f"graded-{index}"
+        db.add(Card(id=card_id, name=card_id, set_id="set", number=str(index), rarity="Rare"))
+        for grade, price in [(None, 10), (10, 100)]:
+            db.add(PriceObservation(fingerprint=f"{card_id}-{grade}", card_id=card_id, provider="tcgapi",
+                provider_card_id=card_id, variant_id=str(grade), price=price, observed_at=now,
+                grading_company="PSA" if grade else None, grade=grade))
+    db.commit()
+    snapshot = grading_service.build_snapshot(db, now)
+    assert {row[0] for row in snapshot["rows"]} == {f"graded-{i}" for i in range(257)}
+    assert all(row[6:9] == [10, 100, None] for row in snapshot["rows"])

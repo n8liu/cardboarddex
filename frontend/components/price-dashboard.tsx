@@ -32,14 +32,17 @@ function timestamp(item: PriceObservation): number {
   return Math.max(obsTime, provTime);
 }
 
+// Use the same identity for deduplication and React rows, including each printing/grade.
+function variantKey(item: PriceObservation): string {
+  return JSON.stringify([item.provider, item.variant_id,
+    isEbayObservation(item) ? item.provider_card_id : null,
+    item.printing, item.condition, item.grading_company, item.grade, item.currency]);
+}
+
 function latestByVariant(observations: PriceObservation[]): PriceObservation[] {
   const latest = new Map<string, PriceObservation>();
   for (const observation of observations) {
-    // For eBay comps, keep individual verified listings distinct by provider_card_id;
-    // for catalog providers like TCG API, deduplicate by variant printing.
-    const key = isEbayObservation(observation)
-      ? `${observation.provider}:${observation.variant_id}:${observation.provider_card_id}`
-      : `${observation.provider}:${observation.variant_id}`;
+    const key = variantKey(observation);
     const current = latest.get(key);
     if (!current || timestamp(observation) >= timestamp(current)) latest.set(key, observation);
   }
@@ -555,19 +558,20 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
             </div>
           </div>
           <div className="mt-5">
+            {/* Phones: one horizontally scrolling row of chips; wider screens wrap. */}
             {(historyPrintings.length > 0 || GRADING_COMPANIES.some((company) => companySeriesCount(company) > 0)) && (
-              <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
-                {historyPrintings.length > 0 && <div role="group" aria-label="Printings" className="flex flex-wrap items-center gap-1.5">
+              <div className="-mx-1 mb-3 flex flex-nowrap items-center gap-x-4 gap-y-2 overflow-x-auto px-1 pb-1 text-xs [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
+                {historyPrintings.length > 0 && <div role="group" aria-label="Printings" className="flex shrink-0 flex-nowrap items-center gap-1.5 sm:shrink sm:flex-wrap">
                   {historyPrintings.map((printing) => {
                     const on = !hiddenPrintings.includes(printing);
                     return <button key={printing} type="button" aria-pressed={on}
                       onClick={() => setHiddenPrintings((hidden) => on ? [...hidden, printing] : hidden.filter((item) => item !== printing))}
-                      className={`rounded-lg border px-2.5 py-1 font-semibold transition ${on ? "border-slate-900 bg-slate-900 text-white" : "border-stone-200 bg-white text-slate-500 hover:border-slate-300"}`}>
+                      className={`shrink-0 whitespace-nowrap rounded-lg border px-2.5 py-1 font-semibold transition ${on ? "border-slate-900 bg-slate-900 text-white" : "border-stone-200 bg-white text-slate-500 hover:border-slate-300"}`}>
                       {printing}
                     </button>;
                   })}
                 </div>}
-                <div role="group" aria-label="Graded" className="flex flex-wrap items-center gap-1.5">
+                <div role="group" aria-label="Graded" className="flex shrink-0 flex-nowrap items-center gap-1.5 sm:shrink sm:flex-wrap">
                   {/* Only companies with history for this card get a toggle. */}
                   {GRADING_COMPANIES.filter((company) => companySeriesCount(company) > 0).map((company) => {
                     const on = shownCompanies.includes(company);
@@ -575,7 +579,7 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
                     return <button key={company} type="button" aria-pressed={on}
                       title={`Show all ${company.toUpperCase()} grades`}
                       onClick={() => setShownCompanies((shown) => on ? shown.filter((item) => item !== company) : [...shown, company])}
-                      className={`rounded-lg border px-2.5 py-1 font-semibold transition ${on ? "border-amber-600 bg-amber-500 text-white" : "border-stone-200 bg-white text-slate-600 hover:border-slate-300"}`}>
+                      className={`shrink-0 whitespace-nowrap rounded-lg border px-2.5 py-1 font-semibold transition ${on ? "border-amber-600 bg-amber-500 text-white" : "border-stone-200 bg-white text-slate-600 hover:border-slate-300"}`}>
                       {company.toUpperCase()}<span className="ml-1 font-normal opacity-70">{count}</span>
                     </button>;
                   })}
@@ -597,7 +601,7 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
           {/* Timeframe Buttons below chart */}
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-stone-100 pt-4">
             <span className="text-xs font-medium text-slate-500">History timeframe:</span>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {(["1M", "3M", "6M", "1Y"] as const).map((range) => {
                 const label = range === "1M" ? "1 Month" : range === "3M" ? "3 Months" : range === "6M" ? "6 Months" : "1 Year";
                 const active = timeframe === range;
@@ -606,6 +610,7 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
                     key={range}
                     type="button"
                     aria-pressed={active}
+                    aria-label={label}
                     onClick={() => setTimeframe(range)}
                     className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
                       active
@@ -613,7 +618,8 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
                         : "border border-stone-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-stone-50"
                     }`}
                   >
-                    {label}
+                    <span className="sm:hidden">{range}</span>
+                    <span className="hidden sm:inline">{label}</span>
                   </button>
                 );
               })}
@@ -752,7 +758,7 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
               {displayedVariants.map((item) => {
                 const listingUrl = getListingUrl(item);
                 return (
-                  <tr key={`${item.provider}:${item.provider_card_id || item.variant_id}`}>
+                  <tr key={variantKey(item)}>
                     <td className="px-5 py-3 text-sm font-medium text-zinc-900">{variantLabel(item)}</td>
                     <td className="px-5 py-3 text-sm text-zinc-600">{item.printing ?? "Standard"}</td>
                     <td className="px-5 py-3 text-sm">

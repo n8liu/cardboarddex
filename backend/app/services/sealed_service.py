@@ -7,16 +7,18 @@ import json
 import logging
 import math
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Literal
 
+from fastapi.encoders import jsonable_encoder
 from redis.exceptions import RedisError
-from sqlalchemy import and_, func, or_, select, tuple_
+from sqlalchemy import and_, func, select, tuple_
 from sqlalchemy.orm import Session
 
-from app.common.formatters import escape_like, extract_float
+from app.common.formatters import extract_float
 from app.common.redis import get_redis
 from app.models import Card, PriceObservation, ProviderCardState, MarketHistory, Set
+from app.services import market_snapshots
 from app.services.market_data_service import freshness, historical_returns, summarize_history, estimated_price_change
 from app.schemas.cards import SealedSignalItem, SealedSignalsResponse
 
@@ -24,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 _SEALED_SIGNALS_LOCAL_FALLBACK = TTLCache(max_entries=64, ttl=300)
 _SEALED_CACHE_TTL = 300  # 5 minutes
+SNAPSHOT_NAME = "sealed"
+PERIODS = (30, 90)
 
 
 def classify_sealed_product(name: str) -> tuple[str, str]:
@@ -49,113 +53,23 @@ def classify_sealed_product(name: str) -> tuple[str, str]:
     return "Sealed Product", "all"
 
 
-def calculate_sealed_signals(
-    db: Session,
-    *,
-    signal: Literal["all", "strong_buy", "buy", "hold", "underperform"] = "all",
-    product_type: Literal[
-        "all",
-        "booster_box",
-        "etb",
-        "bundle",
-        "case",
-        "pack",
-        "blister",
-        "collection",
-    ] = "all",
-    sort_by: Literal[
-        "score_desc",
-        "supply_asc",
-        "momentum_desc",
-        "price_desc",
-        "price_asc",
-        "age_desc",
-    ] = "score_desc",
-    set_id: str | None = None,
-    q: str = "",
-    era: Literal["all", "newer", "older"] = "all",
-    game: Literal["all", "pokemon", "pokemon-japan"] = "all",
-    period: Literal[30, 90] = 30,
-    page: int = 1,
-    per_page: int = 24,
-    use_cache: bool = True,
-) -> SealedSignalsResponse:
-    """Calculate multi-factor sealed market investment signals and scores."""
-    now = time.time()
-    cache_key_raw = f"v6:{game}:{period}:{era}:{signal}:{product_type}:{sort_by}:{set_id}:{q.strip().lower()}:{page}:{per_page}"
-    cache_hash = hashlib.md5(cache_key_raw.encode()).hexdigest()
-    source_key = "ppt" if get_settings().ppt_primary_enabled else "legacy"
-    redis_key = f"cardboarddex:{source_key}:sealed_signals:{cache_hash}"
-    redis_key = f"{image_generation()}:{redis_key}"
-
-    # 1. Try Redis cache first
-    r = get_redis() if use_cache else None
-    if r is not None:
-        try:
-            cached_data = r.get(redis_key)
-            if cached_data:
-                return SealedSignalsResponse.model_validate_json(cached_data)
-        except (RedisError, Exception) as exc:
-            logger.warning("Redis sealed signals cache read failed error=%s: %s", type(exc).__name__, exc)
-
-    # 2. Try in-process fallback
-    local_cached = _SEALED_SIGNALS_LOCAL_FALLBACK.get(redis_key)
-    if use_cache and local_cached and (now - local_cached[0]) < _SEALED_CACHE_TTL:
-        return local_cached[1]
-
-    # Explicit provider metadata takes precedence over the legacy rarity fallback.
-    from app.services.product_metadata import product_type_expression
-    explicit_type = product_type_expression()
+def build_snapshot(db: Session, now: datetime) -> dict:
+    """Score every sealed product once. Filters, sorting, pages and history happen per request."""
+    from app.services.product_metadata import sealed_product
     query = (
         select(Card, Set)
         .join(Set, Card.set_id == Set.id)
         .outerjoin(ProviderCardState, and_(ProviderCardState.card_id == Card.id, ProviderCardState.provider == "tcgapi"))
         .where(
-            or_(explicit_type == "Sealed Products", and_(explicit_type.is_(None), or_(Card.rarity.is_(None), Card.rarity == ""))),
+            sealed_product(),
             Card.name.not_ilike("%code card%"),
         )
     )
-
-    # Match the catalog's language marker, including legacy English sets without a series.
-    if game == "pokemon-japan":
-        query = query.where(Set.series == "Pokemon Japan")
-    elif game == "pokemon":
-        query = query.where(or_(Set.series.is_(None), Set.series != "Pokemon Japan"))
-
-    today = datetime.now(UTC).date()
-    # Calendar years, with Feb 29 clamped to Feb 28 in the cutoff year.
-    cutoff = today.replace(year=today.year - 3, day=28 if today.month == 2 and today.day == 29 else today.day)
-    if era == "newer":
-        query = query.where(Set.release_date > cutoff, Set.release_date <= today)
-    elif era == "older":
-        query = query.where(Set.release_date <= cutoff)
-
-    if set_id:
-        query = query.where(Card.set_id == set_id)
-    query_str = q.strip().lower()
-    if query_str:
-        pattern = f"%{escape_like(query_str)}%"
-        query = query.where(
-            or_(Card.name.ilike(pattern, escape="\\"), Set.name.ilike(pattern, escape="\\"))
-        )
-
     sealed_rows = db.execute(query).all()
+    snapshot = {"updated_at": now.isoformat(), "items": [], "returns": {str(p): {} for p in PERIODS},
+                "printings": {}, "ppt_card_ids": []}
     if not sealed_rows:
-        return SealedSignalsResponse(
-            page=page,
-            per_page=per_page,
-            total_items=0,
-            total_pages=1,
-            signal_filter=signal,
-            product_type_filter=product_type,
-            sort_by=sort_by,
-            strong_buy_count=0,
-            buy_count=0,
-            hold_count=0,
-            underperform_count=0,
-            items=[],
-            updated_at=datetime.now(UTC),
-        )
+        return snapshot
 
     card_ids = [c.id for c, _ in sealed_rows]
     # Only materialize the latest payload for each product, not its full history.
@@ -177,15 +91,10 @@ def calculate_sealed_signals(
     ).all()
     obs_map: dict[str, PriceObservation] = {o.card_id: o for o in obs_list}
 
-    returns = historical_returns(db, card_ids, period)
-    from app.services.ppt_prices import primary_quotes, market_history as ppt_market_history
+    returns_by_period = {period: historical_returns(db, card_ids, period) for period in PERIODS}
+    from app.services.ppt_prices import primary_quotes
     ppt_quotes = primary_quotes(db, card_ids)
-    today = datetime.now(UTC).date()
-    all_scored_items: list[tuple[SealedSignalItem, str]] = []
-    strong_buy_count = 0
-    buy_count = 0
-    hold_count = 0
-    underperform_count = 0
+    today = now.date()
 
     for card, cset in sealed_rows:
         obs = obs_map.get(card.id)
@@ -202,7 +111,7 @@ def calculate_sealed_signals(
             continue
 
         clean_name = str(p.get("clean_name") or card.name.lower())
-        disp_type, cat_slug = classify_sealed_product(card.name)
+        disp_type, _ = classify_sealed_product(card.name)
 
         total_listings = int(p.get("total_listings") or 0)
         low_price = extract_float(p, "low_price")
@@ -293,16 +202,12 @@ def calculate_sealed_signals(
         total_score = min(100, supply_score + vintage_score + demand_score + momentum_score)
         if total_score >= 75:
             signal_label = "STRONG BUY"
-            strong_buy_count += 1
         elif total_score >= 60:
             signal_label = "BUY"
-            buy_count += 1
         elif total_score >= 45:
             signal_label = "HOLD"
-            hold_count += 1
         else:
             signal_label = "UNDERPERFORM"
-            underperform_count += 1
 
         item = SealedSignalItem(
             card_id=card.id,
@@ -312,15 +217,12 @@ def calculate_sealed_signals(
             set_name=cset.name,
             series=cset.series,
             release_date=cset.release_date,
-            image_url=card_image_url(card.id),
+            image_url="",
             product_type=disp_type,
             market_source=obs.provider if obs else None,
             market_price=round(market_price, 2),
             **freshness(p),
             checked_at=obs.provider_updated_at if obs else None,
-            return_days=period,
-            return_percent=(ppt_quotes[card.id].get(f"price_change_{period}d") if card.id in ppt_quotes else returns.get((card.id, "Normal" if obs.printing in (None, "Standard") else obs.printing)) if obs else None),
-
             low_price=round(low_price, 2) if low_price is not None else None,
             median_price=round(median_price, 2) if median_price is not None else None,
             lowest_with_shipping=round(lowest_with_shipping, 2) if lowest_with_shipping is not None else None,
@@ -339,74 +241,140 @@ def calculate_sealed_signals(
             signal_label=signal_label,
             last_updated_at=obs.observed_at if obs else card.updated_at,
         )
-        if item.return_percent is None and period == 30:
-            item.return_percent = item.price_change_30d
-        all_scored_items.append((item, cat_slug))
+        snapshot["items"].append(item.model_dump(mode="json", exclude={"history", "return_percent", "return_days"}))
+        printing = "Normal" if not obs or obs.printing in (None, "Standard") else obs.printing
+        for period in PERIODS:
+            value = (ppt_quotes[card.id].get(f"price_change_{period}d") if card.id in ppt_quotes
+                     else returns_by_period[period].get((card.id, printing)) if obs else None)
+            if value is None and period == 30:
+                value = item.price_change_30d
+            snapshot["returns"][str(period)][card.id] = value
+        if obs:
+            snapshot["printings"][card.id] = printing
+        if card.id in ppt_quotes:
+            snapshot["ppt_card_ids"].append(card.id)
+    return snapshot
 
-    # Filter items
-    filtered_items: list[SealedSignalItem] = []
-    for item, cat_slug in all_scored_items:
-        # Signal filter
-        if signal == "strong_buy" and item.signal_label != "STRONG BUY":
-            continue
-        if signal == "buy" and item.signal_label != "BUY":
-            continue
-        if signal == "hold" and item.signal_label != "HOLD":
-            continue
-        if signal == "underperform" and item.signal_label != "UNDERPERFORM":
-            continue
 
-        # Product type filter
-        if product_type != "all" and cat_slug != product_type:
-            continue
+def _history_key(card_id: str, period: int, printing: str) -> str:
+    return market_snapshots.part_key(SNAPSHOT_NAME, f"history:{card_id}:{period}:{printing}")
 
-        filtered_items.append(item)
 
-    # Sorting
-    if sort_by == "supply_asc":
-        filtered_items.sort(key=lambda x: (x.total_listings == 0, x.total_listings, -x.signal_score))
-    elif sort_by == "momentum_desc":
-        # Unknown returns follow negative returns; zero is a valid observation.
-        filtered_items.sort(key=lambda x: (
-            x.return_percent is None,
-            -(x.return_percent if x.return_percent is not None else 0),
-            x.card_id,
-        ))
-    elif sort_by == "price_desc":
-        filtered_items.sort(key=lambda x: x.market_price, reverse=True)
-    elif sort_by == "price_asc":
-        filtered_items.sort(key=lambda x: x.market_price)
-    elif sort_by == "age_desc":
-        filtered_items.sort(key=lambda x: x.set_age_months, reverse=True)
-    else:  # default "score_desc"
-        filtered_items.sort(key=lambda x: (x.signal_score, -x.total_listings), reverse=True)
-
-    total_items = len(filtered_items)
-    total_pages = max(1, math.ceil(total_items / per_page))
-    start_idx = (page - 1) * per_page
-    end_idx = start_idx + per_page
-    paged_items = filtered_items[start_idx:end_idx]
-
-    selected_printings = {item.card_id: (obs_map[item.card_id].printing or "Normal") for item in paged_items if item.card_id in obs_map}
-    selected_printings = {cid: "Normal" if printing == "Standard" else printing for cid, printing in selected_printings.items()}
+def _page_history(db: Session, items: list[SealedSignalItem], period: int, snapshot: dict, today: date) -> None:
+    """Sparkline history for one page only, cached per product for the snapshot interval."""
+    printings = {item.card_id: snapshot["printings"][item.card_id] for item in items if item.card_id in snapshot["printings"]}
+    ppt_ids = set(snapshot["ppt_card_ids"])
+    redis = market_snapshots.get_redis()
+    keys = {cid: _history_key(cid, period, printing) for cid, printing in printings.items()}
+    cached = {}
+    if redis is not None and keys:
+        try:
+            cached = {cid: json.loads(raw) for cid, raw in zip(keys, redis.mget(list(keys.values()))) if raw}
+        except Exception as exc:
+            logger.warning("Sealed history cache read failed error=%s: %s", type(exc).__name__, exc)
+    missing = {cid: printing for cid, printing in printings.items() if cid not in cached}
     history_by_card = {}
-    if selected_printings:
+    if missing:
         history_rows = db.scalars(select(MarketHistory).where(
-            tuple_(MarketHistory.card_id, MarketHistory.printing).in_(list(selected_printings.items())),
+            tuple_(MarketHistory.card_id, MarketHistory.printing).in_(list(missing.items())),
             MarketHistory.day >= today - timedelta(days=period + 7), MarketHistory.day <= today,
         ).order_by(MarketHistory.day))
         for row in history_rows:
             history_by_card.setdefault(row.card_id, []).append(row)
-    for item in paged_items:
-        item.history = summarize_history(history_by_card.get(item.card_id, []), item.card_id, period,
-                                         selected_printings.get(item.card_id, "Normal"), today=today)
-        if item.card_id in ppt_quotes:
-            item.history = ppt_market_history(db, item.card_id, period) or item.history
+    from app.services.ppt_prices import market_history as ppt_market_history
+    for item in items:
+        if item.card_id in cached:
+            item.history = cached[item.card_id]
+        else:
+            item.history = summarize_history(history_by_card.get(item.card_id, []), item.card_id, period,
+                                             printings.get(item.card_id, "Normal"), today=today)
+            if item.card_id in ppt_ids:
+                item.history = ppt_market_history(db, item.card_id, period) or item.history
+            item.history = jsonable_encoder(item.history)
+            if redis is not None and item.card_id in keys:
+                try:
+                    redis.setex(keys[item.card_id], market_snapshots.REFRESH_SECONDS, json.dumps(item.history))
+                except Exception as exc:
+                    logger.warning("Sealed history cache write failed error=%s: %s", type(exc).__name__, exc)
         comparison = item.history if item.history["complete_return_window"] else estimated_price_change(item.market_price, item.return_percent)
         for field in ("previous_price", "comparison_price", "price_change_amount", "comparison_source"):
             setattr(item, field, comparison.get(field))
 
-    response = SealedSignalsResponse(
+
+def select_sealed_signals(
+    db: Session,
+    snapshot: dict,
+    *,
+    signal: str = "all",
+    product_type: str = "all",
+    sort_by: str = "score_desc",
+    set_id: str | None = None,
+    q: str = "",
+    era: str = "all",
+    game: str = "all",
+    period: int = 30,
+    page: int = 1,
+    per_page: int = 24,
+) -> SealedSignalsResponse:
+    """Filter, count, sort and page the scored products, then add history for that page."""
+    today = datetime.now(UTC).date()
+    # Calendar years, with Feb 29 clamped to Feb 28 in the cutoff year.
+    cutoff = today.replace(year=today.year - 3, day=28 if today.month == 2 and today.day == 29 else today.day)
+    query_str = q.strip().lower()
+    returns = snapshot["returns"][str(period)]
+    rows = []
+    for row in snapshot["items"]:
+        # Match the catalog's language marker, including legacy English sets without a series.
+        japanese = row["series"] == "Pokemon Japan"
+        if (game == "pokemon-japan" and not japanese) or (game == "pokemon" and japanese):
+            continue
+        released = date.fromisoformat(row["release_date"]) if row["release_date"] else None
+        if era == "newer" and not (released and cutoff < released <= today):
+            continue
+        if era == "older" and not (released and released <= cutoff):
+            continue
+        if set_id and row["set_id"] != set_id:
+            continue
+        if query_str and query_str not in row["name"].lower() and query_str not in row["set_name"].lower():
+            continue
+        rows.append(row)
+
+    counts = {label: sum(row["signal_label"] == label for row in rows)
+              for label in ("STRONG BUY", "BUY", "HOLD", "UNDERPERFORM")}
+    labels = {"strong_buy": "STRONG BUY", "buy": "BUY", "hold": "HOLD", "underperform": "UNDERPERFORM"}
+    filtered = [row for row in rows
+                if (signal == "all" or row["signal_label"] == labels[signal])
+                and (product_type == "all" or classify_sealed_product(row["name"])[1] == product_type)]
+
+    # Sorting
+    if sort_by == "supply_asc":
+        filtered.sort(key=lambda x: (x["total_listings"] == 0, x["total_listings"], -x["signal_score"]))
+    elif sort_by == "momentum_desc":
+        # Unknown returns follow negative returns; zero is a valid observation.
+        filtered.sort(key=lambda x: (
+            returns.get(x["card_id"]) is None,
+            -(returns.get(x["card_id"]) or 0),
+            x["card_id"],
+        ))
+    elif sort_by == "price_desc":
+        filtered.sort(key=lambda x: x["market_price"], reverse=True)
+    elif sort_by == "price_asc":
+        filtered.sort(key=lambda x: x["market_price"])
+    elif sort_by == "age_desc":
+        filtered.sort(key=lambda x: x["set_age_months"], reverse=True)
+    else:  # default "score_desc"
+        filtered.sort(key=lambda x: (x["signal_score"], -x["total_listings"]), reverse=True)
+
+    total_items = len(filtered)
+    total_pages = max(1, math.ceil(total_items / per_page))
+    start_idx = (page - 1) * per_page
+    paged_items = [SealedSignalItem.model_validate({
+        **row, "image_url": card_image_url(row["card_id"]), "return_days": period,
+        "return_percent": returns.get(row["card_id"]),
+    }) for row in filtered[start_idx:start_idx + per_page]]
+    _page_history(db, paged_items, period, snapshot, today)
+
+    return SealedSignalsResponse(
         page=page,
         per_page=per_page,
         total_items=total_items,
@@ -414,13 +382,91 @@ def calculate_sealed_signals(
         signal_filter=signal,
         product_type_filter=product_type,
         sort_by=sort_by,
-        strong_buy_count=strong_buy_count,
-        buy_count=buy_count,
-        hold_count=hold_count,
-        underperform_count=underperform_count,
+        strong_buy_count=counts["STRONG BUY"],
+        buy_count=counts["BUY"],
+        hold_count=counts["HOLD"],
+        underperform_count=counts["UNDERPERFORM"],
         items=paged_items,
-        updated_at=datetime.now(UTC),
+        updated_at=datetime.fromisoformat(snapshot["updated_at"]),
     )
+
+
+def _snapshot_now(db: Session) -> dict:
+    # A JSON round trip gives exactly the shape the worker publishes.
+    return json.loads(json.dumps(build_snapshot(db, datetime.now(UTC))))
+
+
+def refresh_snapshot(*, force=False) -> bool:
+    return market_snapshots.refresh(SNAPSHOT_NAME, ["all"], lambda db, now: {"all": json.dumps(build_snapshot(db, now))},
+                                    force=force)
+
+
+def stored_sealed_signals(db: Session, **filters) -> SealedSignalsResponse:
+    """Serve the worker snapshot; compute on request only when Redis is unreachable."""
+    snapshot = market_snapshots.read(SNAPSHOT_NAME)
+    if snapshot is None:
+        db = market_snapshots.on_demand_session(db)
+        snapshot = _snapshot_now(db)
+    return select_sealed_signals(db, snapshot, **filters)
+
+
+def calculate_sealed_signals(
+    db: Session,
+    *,
+    signal: Literal["all", "strong_buy", "buy", "hold", "underperform"] = "all",
+    product_type: Literal[
+        "all",
+        "booster_box",
+        "etb",
+        "bundle",
+        "case",
+        "pack",
+        "blister",
+        "collection",
+    ] = "all",
+    sort_by: Literal[
+        "score_desc",
+        "supply_asc",
+        "momentum_desc",
+        "price_desc",
+        "price_asc",
+        "age_desc",
+    ] = "score_desc",
+    set_id: str | None = None,
+    q: str = "",
+    era: Literal["all", "newer", "older"] = "all",
+    game: Literal["all", "pokemon", "pokemon-japan"] = "all",
+    period: Literal[30, 90] = 30,
+    page: int = 1,
+    per_page: int = 24,
+    use_cache: bool = True,
+) -> SealedSignalsResponse:
+    """Calculate multi-factor sealed market investment signals and scores on demand."""
+    now = time.time()
+    cache_key_raw = f"v6:{game}:{period}:{era}:{signal}:{product_type}:{sort_by}:{set_id}:{q.strip().lower()}:{page}:{per_page}"
+    cache_hash = hashlib.md5(cache_key_raw.encode()).hexdigest()
+    source_key = "ppt" if get_settings().ppt_primary_enabled else "legacy"
+    redis_key = f"cardboarddex:{source_key}:sealed_signals:{cache_hash}"
+    redis_key = f"{image_generation()}:{redis_key}"
+
+    # 1. Try Redis cache first
+    r = get_redis() if use_cache else None
+    if r is not None:
+        try:
+            cached_data = r.get(redis_key)
+            if cached_data:
+                return SealedSignalsResponse.model_validate_json(cached_data)
+        except (RedisError, Exception) as exc:
+            logger.warning("Redis sealed signals cache read failed error=%s: %s", type(exc).__name__, exc)
+
+    # 2. Try in-process fallback
+    local_cached = _SEALED_SIGNALS_LOCAL_FALLBACK.get(redis_key)
+    if use_cache and local_cached and (now - local_cached[0]) < _SEALED_CACHE_TTL:
+        return local_cached[1]
+
+    response = select_sealed_signals(db, _snapshot_now(db), signal=signal, product_type=product_type,
+                                     sort_by=sort_by, set_id=set_id, q=q, era=era, game=game, period=period,
+                                     page=page, per_page=per_page)
 
     if r is not None:
         try:

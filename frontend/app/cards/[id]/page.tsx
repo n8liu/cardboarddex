@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { cache, Suspense } from "react";
+import { cache, Suspense, ViewTransition } from "react";
 import { SectionLoadingBar } from "@/components/section-loading-bar";
 import Image from "@/components/card-image";
 import Link from "next/link";
@@ -10,6 +10,7 @@ import { CardDetailClientFallback } from "@/components/card-detail-client-fallba
 import { RememberViewedCard } from "@/components/recently-viewed";
 import { PriceDashboard } from "@/components/price-dashboard";
 import { ShopOnEbayButton } from "@/components/shop-ebay-button";
+import { StickyCardActions } from "@/components/sticky-card-actions";
 import { AddToBinderButton } from "@/components/binder/add-to-binder-button";
 import { HoloCard } from "@/components/ui/holo-card";
 import { cardImageUrl, getCard, getCardPricing } from "@/lib/api";
@@ -71,7 +72,11 @@ export default async function CardPage({ params, searchParams }: CardPageProps) 
     <main className="mx-auto min-h-[70vh] max-w-7xl px-5 py-9 sm:px-8 sm:py-12">
       <BackButton />
       <Suspense fallback={<SectionLoadingBar className="mt-8" label="Loading card details…" />}>
-        <CardContent id={id} refParam={sp?.ref} />
+        {/* Card details rise in once when they arrive (.card-reveal in globals.css); "none"
+            keeps later in-page transitions, like chart range changes, from re-animating it. */}
+        <ViewTransition enter="card-reveal" default="none">
+          <CardContent id={id} refParam={sp?.ref} />
+        </ViewTransition>
       </Suspense>
     </main>
   );
@@ -154,10 +159,16 @@ async function CardContent({ id, refParam }: { id: string; refParam?: string }) 
           </h1>
           <p className="mt-2 font-mono text-sm text-slate-500">#{number}</p>
 
-          <div className="mt-5 flex flex-wrap items-center gap-3">
-            <ShopOnEbayButton card={card} variant="hero" />
-            <AddToBinderButton cardId={card.id} cardName={card.name} />
-          </div>
+          <StickyCardActions card={card}>
+            <div className="mt-5 flex flex-wrap items-center gap-3">
+              <ShopOnEbayButton card={card} variant="hero" />
+              <AddToBinderButton cardId={card.id} cardName={card.name} />
+              <Link href={`/compare?ids=${encodeURIComponent(card.id)}`} prefetch={false}
+                className="rounded-xl border border-stone-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950">
+                Compare
+              </Link>
+            </div>
+          </StickyCardActions>
 
           <dl className="mt-6 divide-y divide-stone-200 border-y border-stone-200">
             {species && (

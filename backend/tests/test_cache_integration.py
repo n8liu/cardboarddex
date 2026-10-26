@@ -9,13 +9,13 @@ from datetime import UTC, date, datetime, timedelta
 import pytest
 from fastapi import Response
 from redis import Redis
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 from app.common.response_cache import ResponseCache, cached_read, response_cache
 from app.database import Base
 from app.models import Card, PriceObservation, Set
-from app.services.movers_service import stored_movers
+from app.services.movers_service import build_rankings
 
 
 @pytest.fixture
@@ -72,7 +72,7 @@ def test_real_redis_coalesces_workers_and_preserves_timestamps(infrastructure):
     assert all(result[0] == results[0][0] for result in results)
 
 
-def test_postgres_rankings_and_cache_hits_do_not_execute_sql(infrastructure):
+def test_postgres_movers_rankings(infrastructure):
     engine, _ = infrastructure
     now = datetime.now(UTC)
     with Session(engine) as db:
@@ -94,22 +94,11 @@ def test_postgres_rankings_and_cache_hits_do_not_execute_sql(infrastructure):
                 provider_card_id=cid, variant_id='normal', currency=currency, price=10,
                 grading_company=grade, observed_at=now - timedelta(days=1), payload=changes))
         db.commit()
-        statements = []
-        def record(_conn, _cursor, statement, *_args): statements.append(statement)
-        event.listen(engine, 'before_cursor_execute', record)
-        first = stored_movers(response=Response(), db=db, game='pokemon', period='24h')
-        assert [item.card_id for item in first['gainers']] == ['first', 'second']
-        count = len(statements)
-        response = Response()
-        second = stored_movers(response=response, db=db, game='pokemon', period='24h')
-        assert first == second and len(statements) == count
-        assert response.headers['X-Cache-Status'] == 'hit'
-        week = stored_movers(response=Response(), db=db, game='pokemon', period='7d')
-        assert [item.card_id for item in week['losers']] == ['first']
-        assert [item.card_id for item in week['gainers']] == ['missing']
-        japanese = stored_movers(response=Response(), db=db, game='pokemon-japan', period='24h')
-        assert [item.card_id for item in japanese['gainers']] == ['jp']
-        event.remove(engine, 'before_cursor_execute', record)
+        rankings = build_rankings(db, datetime.now(UTC))
+        assert [item.card_id for item in rankings['pokemon:24h'].gainers] == ['first', 'second']
+        assert [item.card_id for item in rankings['pokemon:7d'].losers] == ['first']
+        assert [item.card_id for item in rankings['pokemon:7d'].gainers] == ['missing']
+        assert [item.card_id for item in rankings['pokemon-japan:24h'].gainers] == ['jp']
 
 
 def test_rebuild_session_timeout_and_lease_ownership(infrastructure):

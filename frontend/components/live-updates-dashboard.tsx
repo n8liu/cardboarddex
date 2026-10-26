@@ -92,12 +92,14 @@ function GradeBadge({ item }: { item: LiveUpdateItem }) {
   );
 }
 
-function LiveUpdateRow({ item, grid = false }: { item: LiveUpdateItem; grid?: boolean }) {
+const FRESH_ROW_MS = 1500;
+
+function LiveUpdateRow({ item, grid = false, fresh = false }: { item: LiveUpdateItem; grid?: boolean; fresh?: boolean }) {
   const [imageFailed, setImageFailed] = useState(false);
   const isEbay = item.provider.toLowerCase().includes("ebay");
 
   return (
-    <div className={`group relative flex min-w-0 flex-col justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-xs ${TILE_HOVER} ${grid ? "" : "sm:flex-row sm:items-center sm:p-4"}`}>
+    <div className={`group relative flex min-w-0 flex-col justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-xs ${TILE_HOVER} ${grid ? "" : "sm:flex-row sm:items-center sm:p-4"} ${fresh ? "animate-fresh-row" : ""}`}>
       {/* Left: Thumbnail & Card Details */}
       <div className={`flex min-w-0 gap-3.5 ${grid ? "flex-col" : "items-center"}`}>
         <div className={`relative shrink-0 overflow-hidden rounded-lg bg-slate-100 shadow-xs ${grid ? "aspect-[5/7] w-full" : "h-14 w-10"}`}>
@@ -230,6 +232,15 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
   const [secondsUntilRefresh, setSecondsUntilRefresh] = useState<number>(15);
   const [viewMode, setViewMode] = useState<"side-by-side" | "stacked">(initialParams.viewMode);
   const isFirstMount = useRef(true);
+  // Rows a background poll prepended; they get a one-off tint (see .animate-fresh-row).
+  const [freshIds, setFreshIds] = useState<ReadonlySet<string>>(() => new Set());
+  const itemsRef = useRef(items);
+  useEffect(() => { itemsRef.current = items; }, [items]);
+  useEffect(() => {
+    if (freshIds.size === 0) return;
+    const timer = setTimeout(() => setFreshIds(new Set()), FRESH_ROW_MS);
+    return () => clearTimeout(timer);
+  }, [freshIds]);
 
   // Sync browser back/forward buttons
   useEffect(() => {
@@ -375,6 +386,9 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
           query: searchQuery.trim() || undefined, page: 1, perPage: 24,
           abortSignal: controller.signal });
         if (disposed || controller.signal.aborted || version !== requestVersion.current) return;
+        const known = new Set(itemsRef.current.map((item) => item.id));
+        const added = res.items.filter((item) => !known.has(item.id)).map((item) => item.id);
+        if (added.length > 0) setFreshIds(new Set(added));
         setItems((existing) => {
           const ids = new Set(existing.map((item) => item.id));
           return [...res.items.filter((item) => !ids.has(item.id)), ...existing];
@@ -422,7 +436,7 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
       <div className="flex flex-col justify-between gap-4 border-b border-slate-200 pb-8 sm:flex-row sm:items-end">
         <div>
           <div className="flex items-center gap-2">
-            <span className="flex h-2 w-2 rounded-full bg-sky-500 animate-ping" />
+            <span className="flex h-2 w-2 rounded-full bg-sky-500" />
             <span className="text-xs font-bold uppercase tracking-[0.16em] text-sky-700">
               Real-Time Ingestion Stream
             </span>
@@ -650,7 +664,7 @@ export function LiveUpdatesDashboard({ initialData }: LiveUpdatesDashboardProps)
             />
           </div>
         ) : (
-          items.map((item) => <LiveUpdateRow key={item.id} item={item} grid={viewMode === "side-by-side"} />)
+          items.map((item) => <LiveUpdateRow key={item.id} item={item} grid={viewMode === "side-by-side"} fresh={freshIds.has(item.id)} />)
         )}
       </div>
 

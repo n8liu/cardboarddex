@@ -17,6 +17,8 @@ import { SearchInput } from "@/components/ui/search-input";
 import type { MarketMoverItem, MarketMoversResponse, MoverDirection, MoverPeriod } from "@/types/card";
 import { IMAGE_HOVER, TILE_HOVER } from "@/lib/card-hover";
 import { CardLink } from "@/components/card-link";
+import { writeUrlFilters } from "@/lib/url-state";
+import { EmptyState } from "@/components/ui/empty-state";
 
 type MoverQuickFilter = "all" | "surge25" | "dip15" | "high50" | "budget15";
 
@@ -278,7 +280,8 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
     const g = params.get("game");
     const game: "pokemon" | "pokemon-japan" = g === "pokemon-japan" ? "pokemon-japan" : "pokemon";
     const q = params.get("q")?.trim() ?? "";
-    return { period, direction, game, q };
+    const layout: "cards" | "table" = params.get("layout") === "table" ? "table" : "cards";
+    return { period, direction, game, q, layout };
   }, [initialData.period, searchParams]);
 
   const { formatPrice } = useCurrency();
@@ -292,7 +295,7 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
   const [period, setPeriod] = useState<MoverPeriod>(initialParams.period);
   const [direction, setDirection] = useState<MoverDirection>(initialParams.direction);
   const [game, setGame] = useState<"pokemon" | "pokemon-japan">(initialParams.game);
-  const [layoutMode, setLayoutMode] = useState<"cards" | "table">("cards");
+  const [layoutMode, setLayoutMode] = useState<"cards" | "table">(initialParams.layout);
   const [searchTerm, setSearchTerm] = useState(initialParams.q);
   const [page, setPage] = useState(initialData.page || 1);
   const [perPage] = useState(initialData.per_page || 24);
@@ -362,6 +365,7 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
       setDirection(params.direction);
       setGame(params.game);
       setSearchTerm(params.q);
+      setLayoutMode(params.layout);
       void fetchFresh(params.period, params.game);
     };
     window.addEventListener("popstate", handlePopState);
@@ -386,16 +390,14 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
     }
 
     const timer = window.setTimeout(() => {
-      const url = new URL(window.location.href);
-      period !== "24h" ? url.searchParams.set("period", period) : url.searchParams.delete("period");
-      direction !== "all" ? url.searchParams.set("direction", direction) : url.searchParams.delete("direction");
-      game !== "pokemon" ? url.searchParams.set("game", game) : url.searchParams.delete("game");
-      searchTerm.trim() ? url.searchParams.set("q", searchTerm.trim()) : url.searchParams.delete("q");
-      window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+      writeUrlFilters({
+        period: period !== "24h" ? period : null, direction: direction !== "all" ? direction : null,
+        game: game !== "pokemon" ? game : null, q: searchTerm.trim(), layout: layoutMode !== "cards" ? layoutMode : null,
+      }, ["q"]);
     }, 150);
 
     return () => window.clearTimeout(timer);
-  }, [period, direction, game, searchTerm, fetchFresh, initialParams.period, initialParams.game, initialData.period, initialData.gainers, initialData.losers]);
+  }, [period, direction, game, searchTerm, layoutMode, fetchFresh, initialParams.period, initialParams.game, initialData.period, initialData.gainers, initialData.losers]);
 
   const handlePeriodChange = (newPeriod: MoverPeriod) => {
     setPeriod(newPeriod);
@@ -766,9 +768,7 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
               </div>
 
               {filteredGainers.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-10 text-center text-sm text-slate-500">
-                  Insufficient stored growth data for this period.
-                </div>
+                <EmptyState compact variant="collecting" title="No gainers yet" description="Insufficient stored growth data for this period." />
               ) : layoutMode === "table" ? (
                 <MoverTableList items={filteredGainers} />
               ) : (
@@ -795,9 +795,7 @@ export function MarketMoversDashboard({ initialData }: MarketMoversDashboardProp
               </div>
 
               {filteredLosers.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-10 text-center text-sm text-slate-500">
-                  Insufficient stored decline data for this period.
-                </div>
+                <EmptyState compact variant="collecting" title="No drops yet" description="Insufficient stored decline data for this period." />
               ) : layoutMode === "table" ? (
                 <MoverTableList items={filteredLosers} />
               ) : (

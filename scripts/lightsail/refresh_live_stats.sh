@@ -3,6 +3,9 @@
 set -euo pipefail
 exec 9>/opt/cardboarddex/deploy.lock
 flock -sn 9 || exit 0
+# Only one maintenance container at a time on the memory-constrained host.
+exec 8>/opt/cardboarddex/maintenance.lock
+flock -n 8 || exit 0
 release=$(readlink -f /opt/cardboarddex/current)
 [[ "$release" == /opt/cardboarddex/releases/* ]]
 export APP_ENV_FILE=/etc/cardboarddex/app.env

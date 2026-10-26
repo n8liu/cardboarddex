@@ -1,5 +1,5 @@
 """PPT identity metadata with read-only legacy fallback."""
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, or_, select
 from app.models import Card, PPTProduct, ProviderCardState
 
 
@@ -10,6 +10,14 @@ def product_type_expression():
         ProviderCardState.payload['card']['data']['product_type'].as_string())).where(
         ProviderCardState.card_id == Card.id, ProviderCardState.provider == 'tcgapi').correlate(Card).scalar_subquery()
     return func.coalesce(ppt, legacy)
+
+
+def sealed_product():
+    """Exactly what the sealed page lists. Explicit metadata wins over the rarity fallback.
+    Never NULL, so not_() keeps cards that have no product metadata."""
+    explicit_type = product_type_expression()
+    return or_(func.coalesce(explicit_type, '') == 'Sealed Products',
+               and_(explicit_type.is_(None), or_(Card.rarity.is_(None), Card.rarity == '')))
 
 
 def ppt_catalog_coverage(db):

@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh stored market rankings while ingestion is paused
+After=docker.service
+Requires=docker.service
+ConditionPathExists=/opt/cardboarddex/ingestion.paused
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/cardboarddex-refresh-market-snapshots
+TimeoutStartSec=840
+TimeoutStopSec=15
+KillMode=mixed

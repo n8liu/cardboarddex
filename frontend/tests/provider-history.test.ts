@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { carryForward, mergeProviderHistory, providerSeriesName, robustMedian, selectHistorySeries, withoutAskingOutliers } from "@/lib/provider-history";
+import { carryForward, indexToFirstValue, mergeProviderHistory, primaryMarketSeries, providerSeriesName, robustMedian, selectHistorySeries, withoutAskingOutliers } from "@/lib/provider-history";
 import type { ProviderHistorySeries } from "@/types/card";
 const series: ProviderHistorySeries = { id: "ppt", provider: "pokemonpricetracker", language: "english", currency: "USD", printing: "Holofoil", condition: "Near Mint", grade: null, metric: "market", fetched_at: "2026-10-16", points: [
   { date: "2026-10-14", price: 20, sales_count: null }, { date: "2026-10-16", price: 30, sales_count: 0 },
@@ -75,4 +75,24 @@ it("ignores wild eBay asks and matches the backend robust median", () => {
   expect(robustMedian([])).toBeNull();
   // A wider band keeps real moves over a long series.
   expect(withoutAskingOutliers([100, 150, 400, 17_500_000], 10)).toEqual([100, 150, 400]);
+});
+
+it("picks the primary printing's preferred raw line for comparisons", () => {
+  const base = { provider: "ppt", language: "english", currency: "USD", metric: "market", fetched_at: "2026-10-01", points: [] };
+  const series: ProviderHistorySeries[] = [
+    { ...base, id: "holo-lp", printing: "Holofoil", condition: "Lightly Played", grade: null },
+    { ...base, id: "holo-nm", printing: "Holofoil", condition: "Near Mint", grade: null },
+    { ...base, id: "rev-nm", printing: "Reverse Holofoil", condition: "Near Mint", grade: null },
+    { ...base, id: "psa10", printing: null, condition: null, grade: "psa10" },
+  ];
+  expect(primaryMarketSeries(series, { printing: "Reverse Holofoil", condition: "Near Mint" })?.id).toBe("rev-nm");
+  expect(primaryMarketSeries(series, null)?.id).toBe("holo-nm");
+  expect(primaryMarketSeries(series.slice(3), null)).toBeNull();
+});
+
+it("indexes each line to 100 on its own first value", () => {
+  const rows = [{ date: "d1", a: 50, b: null }, { date: "d2", a: 75, b: 200 }, { date: "d3", a: null, b: 100 }];
+  expect(indexToFirstValue(rows, ["a", "b"])).toEqual([
+    { date: "d1", a: 100, b: null }, { date: "d2", a: 150, b: 100 }, { date: "d3", a: null, b: 50 },
+  ]);
 });

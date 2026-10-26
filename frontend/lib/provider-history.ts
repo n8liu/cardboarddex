@@ -116,3 +116,33 @@ export function selectHistorySeries(series: ProviderHistorySeries[], options: {
       || gradeValue(b.grade!) - gradeValue(a.grade!));
   return [...raw.filter((item) => item.condition === conditionFor.get(seriesPrinting(item))), ...graded];
 }
+
+/**
+ * The single raw line that best represents a card's market price: the primary quote's
+ * printing and condition when known, else the first raw series (Near Mint preferred).
+ */
+export function primaryMarketSeries(series: ProviderHistorySeries[], primary?: { printing: string | null; condition: string | null } | null): ProviderHistorySeries | null {
+  const raw = series.filter((item) => !item.grade);
+  if (!raw.length) return null;
+  const printing = primary?.printing && raw.some((item) => item.printing === primary.printing) ? primary.printing : seriesPrinting(raw[0]);
+  return selectHistorySeries(raw, {
+    printings: new Set([printing || "Unknown printing"]), companies: new Set(), preferredCondition: primary?.condition,
+  })[0] ?? null;
+}
+
+/**
+ * Rescales each key so its first recorded value in `rows` is 100, for comparing cards at
+ * different price levels. Other keys and missing days are left as they are.
+ */
+export function indexToFirstValue(rows: ChartPoint[], keys: string[]): ChartPoint[] {
+  const base = new Map<string, number>();
+  for (const key of keys) {
+    const first = rows.find((row) => typeof row[key] === "number" && (row[key] as number) > 0);
+    if (first) base.set(key, first[key] as number);
+  }
+  return rows.map((row) => {
+    const out: ChartPoint = { ...row };
+    for (const [key, start] of base) if (typeof row[key] === "number") out[key] = Math.round((row[key] as number) / start * 10000) / 100;
+    return out;
+  });
+}

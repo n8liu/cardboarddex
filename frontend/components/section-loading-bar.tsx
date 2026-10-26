@@ -24,9 +24,8 @@ export function SectionLoadingBar({
       {/* Header Row: Label & Status Indicator */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2.5">
-          {/* Animated Pulsing Status Dot */}
+          {/* Status dot (static: the progress bar below shows activity) */}
           <span className="relative flex h-2.5 w-2.5 shrink-0">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
             <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500 shadow-xs" />
           </span>
           <span className="text-xs sm:text-sm font-bold tracking-tight text-slate-900 uppercase">
