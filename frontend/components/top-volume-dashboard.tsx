@@ -49,8 +49,16 @@ function pokemonDisplay(item: TrendingPokemonItem) {
   };
 }
 
-function CardActivity({ item }: { item: TrendingCardItem }) {
-  if (item.clicks_count > 0) return <span className="text-slate-700 font-semibold">{item.clicks_count} clicks</span>;
+/** 24h/7d/30d count page views (site analytics); all-time counts the original click counters. */
+type CountUnit = "views" | "clicks";
+const WINDOW_LABELS: Partial<Record<VolumeTimeframe, string>> = { "24h": "last 24 hours", "7d": "last 7 days", "30d": "last 30 days" };
+
+function countUnit(timeframe: string): CountUnit {
+  return timeframe in WINDOW_LABELS ? "views" : "clicks";
+}
+
+function CardActivity({ item, unit }: { item: TrendingCardItem; unit: CountUnit }) {
+  if (item.clicks_count > 0) return <span className="text-slate-700 font-semibold">{item.clicks_count} {unit}</span>;
   if (item.price_change_7d !== null && item.price_change_7d !== undefined) {
     return (
       <span className={item.price_change_7d >= 0 ? "text-emerald-700" : "text-rose-700"}>
@@ -62,8 +70,8 @@ function CardActivity({ item }: { item: TrendingCardItem }) {
   return <span className="text-slate-400">active comp</span>;
 }
 
-function PokemonActivity({ item }: { item: TrendingPokemonItem }) {
-  if (item.clicks_count > 0) return <span className="text-slate-700 font-semibold">{item.clicks_count} clicks</span>;
+function PokemonActivity({ item, unit }: { item: TrendingPokemonItem; unit: CountUnit }) {
+  if (item.clicks_count > 0) return <span className="text-slate-700 font-semibold">{item.clicks_count} {unit}</span>;
   if (item.searches_count > 0) return <span>{item.searches_count} searches</span>;
   if (item.top_card_price) return <>{`Top: $${item.top_card_price.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}</>;
   return <>{`${item.cards_count} cards`}</>;
@@ -72,7 +80,7 @@ function PokemonActivity({ item }: { item: TrendingPokemonItem }) {
 // ---------------------------------------------------------------------------
 // Tile Component: Trending Card (full view grid)
 // ---------------------------------------------------------------------------
-function CardTile({ item }: { item: TrendingCardItem }) {
+function CardTile({ item, unit }: { item: TrendingCardItem; unit: CountUnit }) {
   const { formatPrice } = useCurrency();
   return (
     <CardLink
@@ -97,7 +105,7 @@ function CardTile({ item }: { item: TrendingCardItem }) {
       </p>
       <div className="mt-2 flex items-baseline justify-between gap-2 font-mono">
         <span className="truncate text-sm font-bold text-slate-950">{formatPrice(item.market_price)}</span>
-        <span className="truncate text-[10px] font-medium"><CardActivity item={item} /></span>
+        <span className="truncate text-[10px] font-medium"><CardActivity item={item} unit={unit} /></span>
       </div>
     </CardLink>
   );
@@ -106,7 +114,7 @@ function CardTile({ item }: { item: TrendingCardItem }) {
 // ---------------------------------------------------------------------------
 // Tile Component: Popular Pokémon (full view grid)
 // ---------------------------------------------------------------------------
-function PokemonTile({ item }: { item: TrendingPokemonItem }) {
+function PokemonTile({ item, unit }: { item: TrendingPokemonItem; unit: CountUnit }) {
   const { dexNumber, spriteUrl, href } = pokemonDisplay(item);
   return (
     <Link
@@ -137,7 +145,7 @@ function PokemonTile({ item }: { item: TrendingPokemonItem }) {
         <span className="truncate text-sm font-bold text-slate-950">
           {item.trend_score.toFixed(0)} <span className="text-[10px] font-normal text-slate-400">pts</span>
         </span>
-        <span className="truncate text-[10px] text-slate-500"><PokemonActivity item={item} /></span>
+        <span className="truncate text-[10px] text-slate-500"><PokemonActivity item={item} unit={unit} /></span>
       </div>
     </Link>
   );
@@ -146,7 +154,7 @@ function PokemonTile({ item }: { item: TrendingPokemonItem }) {
 // ---------------------------------------------------------------------------
 // Row Component: Trending Card
 // ---------------------------------------------------------------------------
-function CardRow({ item }: { item: TrendingCardItem }) {
+function CardRow({ item, unit }: { item: TrendingCardItem; unit: CountUnit }) {
   const { formatPrice } = useCurrency();
 
   return (
@@ -200,7 +208,7 @@ function CardRow({ item }: { item: TrendingCardItem }) {
           {formatPrice(item.market_price)}
         </div>
         <div className="mt-0.5 truncate text-[10px] font-medium">
-          <CardActivity item={item} />
+          <CardActivity item={item} unit={unit} />
         </div>
       </div>
     </CardLink>
@@ -210,7 +218,7 @@ function CardRow({ item }: { item: TrendingCardItem }) {
 // ---------------------------------------------------------------------------
 // Row Component: Popular Pokémon
 // ---------------------------------------------------------------------------
-function PokemonRow({ item }: { item: TrendingPokemonItem }) {
+function PokemonRow({ item, unit }: { item: TrendingPokemonItem; unit: CountUnit }) {
   const { dexNumber, spriteUrl, href: pokemonHref } = pokemonDisplay(item);
 
   return (
@@ -268,7 +276,7 @@ function PokemonRow({ item }: { item: TrendingPokemonItem }) {
           {item.trend_score.toFixed(0)} <span className="text-[10px] text-slate-400 font-normal">pts</span>
         </div>
         <div className="mt-0.5 truncate text-[10px] text-slate-500">
-          <PokemonActivity item={item} />
+          <PokemonActivity item={item} unit={unit} />
         </div>
       </div>
     </Link>
@@ -336,6 +344,10 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
   }, [data.trending_pokemon, searchQuery]);
 
 
+
+  // Label counts by the timeframe the shown data is for, not the button being loaded.
+  const unit = countUnit(data.timeframe);
+  const windowLabel = WINDOW_LABELS[data.timeframe as VolumeTimeframe];
 
   // Top summary stats
   const topCard = data.trending_cards[0] || null;
@@ -513,7 +525,9 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
                 <h2 className="font-mono text-xs font-bold uppercase tracking-wider text-slate-900 leading-tight">
                   Trending Cards
                 </h2>
-                <p className="font-mono text-[11px] text-slate-500 leading-tight">Most searched &amp; clicked</p>
+                <p className="font-mono text-[11px] text-slate-500 leading-tight">
+                  {windowLabel ? `Most viewed · ${windowLabel}` : <>Most searched &amp; clicked · all time</>}
+                </p>
               </div>
               <button
                 type="button"
@@ -526,7 +540,7 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
 
             <div className="space-y-2 flex-1">
               {filteredCards.slice(0, 15).map((card) => (
-                <CardRow key={card.card_id} item={card} />
+                <CardRow key={card.card_id} item={card} unit={unit} />
               ))}
               {!isLoading && filteredCards.length === 0 && (
                 <EmptyState compact className="m-4" title="No matching cards" description={<>No cards found matching “{searchQuery}”</>} />
@@ -541,7 +555,7 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
                 <h2 className="font-mono text-xs font-bold uppercase tracking-wider text-slate-900 leading-tight">
                   Popular Pokémon
                 </h2>
-                <p className="font-mono text-[11px] text-slate-500 leading-tight">Most viewed species</p>
+                <p className="font-mono text-[11px] text-slate-500 leading-tight">{windowLabel ? `Most viewed species · ${windowLabel}` : "Most viewed species · all time"}</p>
               </div>
               <button
                 type="button"
@@ -554,7 +568,7 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
 
             <div className="space-y-2 flex-1">
               {filteredPokemon.slice(0, 15).map((poke) => (
-                <PokemonRow key={poke.pokemon_name} item={poke} />
+                <PokemonRow key={poke.pokemon_name} item={poke} unit={unit} />
               ))}
               {!isLoading && filteredPokemon.length === 0 && (
                 <EmptyState compact className="m-4" title="No matching Pokémon" description={<>No Pokémon found matching “{searchQuery}”</>} />
@@ -580,7 +594,7 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
 
           <div className={TILE_GRID_CLASS}>
             {filteredCards.map((card) => (
-              <CardTile key={card.card_id} item={card} />
+              <CardTile key={card.card_id} item={card} unit={unit} />
             ))}
           </div>
         </div>
@@ -600,7 +614,7 @@ export function TopVolumeDashboard({ initialData }: TopVolumeDashboardProps) {
 
           <div className={TILE_GRID_CLASS}>
             {filteredPokemon.map((poke) => (
-              <PokemonTile key={poke.pokemon_name} item={poke} />
+              <PokemonTile key={poke.pokemon_name} item={poke} unit={unit} />
             ))}
           </div>
         </div>

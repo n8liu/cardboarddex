@@ -439,7 +439,7 @@ def seeded_db(client: TestClient) -> Generator[Session, None, None]:
 
 
 def _published(db: Session, *, age_seconds: float = 0) -> str:
-    snapshot = trending_service.build_snapshot(db, datetime.now(UTC) - timedelta(seconds=age_seconds))
+    snapshot = trending_service.build_snapshots(db, datetime.now(UTC) - timedelta(seconds=age_seconds))["7d"]
     return snapshot.model_dump_json()
 
 
@@ -544,10 +544,12 @@ def test_refresh_requires_lease_and_publishes_atomically(seeded_db: Session, mon
     monkeypatch.setattr(trending_service, "SessionLocal", lambda: nullcontext(seeded_db))
     assert trending_service.refresh_snapshot() is True
     publish = redis.eval.call_args_list[0].args
-    assert publish[0] == trending_service._PUBLISH
-    assert publish[3] == trending_service.snapshot_key()
+    timeframes = trending_service.SNAPSHOT_TIMEFRAMES
+    assert publish[0] == trending_service._PUBLISH_PARTS
+    assert publish[1] == 1 + len(timeframes)  # lock plus one key per timeframe, published together
+    assert list(publish[3:3 + len(timeframes)]) == [trending_service.snapshot_key(tf) for tf in timeframes]
     assert publish[-1] == trending_service.SNAPSHOT_RETAIN_SECONDS
-    assert '"trending_cards"' in publish[-2]
+    assert all('"trending_cards"' in raw for raw in publish[-1 - len(timeframes):-1])
 
 
 def test_snapshot_key_isolates_source_mode(monkeypatch) -> None:
@@ -565,3 +567,75 @@ def test_clicks_never_scan_shared_redis(monkeypatch) -> None:
     record_action("search", "pikachu", "search")
     redis.scan_iter.assert_not_called()
     redis.delete.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Windowed click counts (site analytics page views)
+# ---------------------------------------------------------------------------
+
+def _view(db: Session, path: str, age: timedelta, n: int = 1) -> None:
+    import uuid
+    from app.models.analytics import AnalyticsEvent
+    for _ in range(n):
+        db.add(AnalyticsEvent(id=str(uuid.uuid4()), visitor_id="v", session_id="s",
+                              occurred_at=datetime.now(UTC) - age, path=path, country="US"))
+    db.commit()
+
+
+def test_timeframes_count_page_views_inside_their_window(seeded_db: Session) -> None:
+    _view(seeded_db, "/cards/pika-base", timedelta(hours=2), n=3)
+    _view(seeded_db, "/cards/pika-base", timedelta(days=3), n=2)
+    _view(seeded_db, "/cards/char-base", timedelta(days=20), n=4)
+    _view(seeded_db, "/cards/char-base", timedelta(days=45))  # outside every window
+    _view(seeded_db, "/catalog", timedelta(hours=1))  # not an entity page
+    snapshots = trending_service.build_snapshots(seeded_db, datetime.now(UTC))
+    clicks = {tf: {c.card_id: c.clicks_count for c in snap.trending_cards} for tf, snap in snapshots.items()}
+    assert clicks["24h"]["pika-base"] == 3 and clicks["24h"]["char-base"] == 0
+    assert clicks["7d"]["pika-base"] == 5 and clicks["7d"]["char-base"] == 0
+    assert clicks["30d"]["pika-base"] == 5 and clicks["30d"]["char-base"] == 4
+    assert snapshots["30d"].trending_cards[0].card_id == "pika-base"
+    assert {tf: snap.timeframe for tf, snap in snapshots.items()} == {tf: tf for tf in snapshots}
+
+
+def test_windowed_pokemon_counts_include_card_views_and_dex_pages(seeded_db: Session) -> None:
+    _view(seeded_db, "/pokemon/143", timedelta(hours=1), n=2)  # Snorlax by Dex number
+    _view(seeded_db, "/pokemon/pikachu", timedelta(hours=1))  # slug
+    _view(seeded_db, "/cards/snorlax-1", timedelta(hours=1), n=3)  # credited to Snorlax by card name
+    _view(seeded_db, "/pokemon/99999", timedelta(hours=1))  # unknown Dex number is ignored
+    cards, pokemon = trending_service.windowed_view_counts(seeded_db, datetime.now(UTC))["24h"]
+    assert cards == {"snorlax-1": 3}
+    assert pokemon == {"Snorlax": 5, "Pikachu": 1}
+    snapshot = trending_service.build_snapshots(seeded_db, datetime.now(UTC))["24h"]
+    snorlax = next(p for p in snapshot.trending_pokemon if p.pokemon_name == "Snorlax")
+    assert snorlax.clicks_count == 5 and snorlax.searches_count == 0
+
+
+def test_all_time_snapshot_keeps_redis_counters(seeded_db: Session) -> None:
+    record_action("card", "char-base", "view")
+    record_action("card", "char-base", "view")
+    _view(seeded_db, "/cards/pika-base", timedelta(hours=1))
+    snapshots = trending_service.build_snapshots(seeded_db, datetime.now(UTC))
+    all_time = {c.card_id: c.clicks_count for c in snapshots["all_time"].trending_cards}
+    day = {c.card_id: c.clicks_count for c in snapshots["24h"].trending_cards}
+    assert all_time["char-base"] == 2 and all_time["pika-base"] == 0
+    assert day["char-base"] == 0 and day["pika-base"] == 1
+
+
+def test_each_timeframe_reads_its_own_snapshot(seeded_db: Session, monkeypatch) -> None:
+    _view(seeded_db, "/cards/pika-base", timedelta(hours=1), n=2)
+    _view(seeded_db, "/cards/char-base", timedelta(days=10), n=7)
+    snapshots = trending_service.build_snapshots(seeded_db, datetime.now(UTC))
+    store = {trending_service.snapshot_key(tf): snap.model_dump_json() for tf, snap in snapshots.items()}
+    monkeypatch.setattr(trending_service, "get_redis", lambda: Mock(get=Mock(side_effect=store.get)))
+    db = Mock()
+    db.execute.side_effect = AssertionError("public reads must not query")
+
+    def top(timeframe: str) -> tuple[str, int]:
+        dash = trending_service.get_trending_dashboard(db, timeframe=timeframe, include_observation_volume=False)
+        assert dash.timeframe == timeframe
+        return dash.trending_cards[0].card_id, dash.trending_cards[0].clicks_count
+
+    assert top("24h") == ("pika-base", 2)
+    assert top("30d") == ("char-base", 7)
+    # Timeframes without a window (2026_ytd) are served the all-time snapshot.
+    assert trending_service.snapshot_key("2026_ytd") == trending_service.snapshot_key("all_time")

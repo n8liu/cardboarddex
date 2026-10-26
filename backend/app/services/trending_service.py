@@ -6,7 +6,7 @@ import logging
 import re
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from fastapi import HTTPException
@@ -15,8 +15,10 @@ from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 
 from app.common.redis import get_redis
-from app.common.response_cache import _PUBLISH, _RELEASE
+from app.common.response_cache import _RELEASE
 from app.database import SessionLocal
+from app.services.market_snapshots import _PUBLISH_PARTS
+from app.services.site_analytics_service import entity_view_counts
 from app.services.passive_refresh import record_card_interest
 from app.models import Card, PriceObservation, ProviderCardState, Set
 from app.schemas.cards import (
@@ -53,6 +55,10 @@ SNAPSHOT_MAX_SECONDS = 1800
 SNAPSHOT_RETAIN_SECONDS = 86400
 SNAPSHOT_LEASE_SECONDS = 120
 SNAPSHOT_TIMEFRAME = "7d"
+# Windowed click columns count page views from site analytics (analytics_events);
+# "all_time" keeps the Redis counters. Other timeframes are served the all-time snapshot.
+VIEW_WINDOWS = {"24h": timedelta(hours=24), "7d": timedelta(days=7), "30d": timedelta(days=30)}
+SNAPSHOT_TIMEFRAMES = (*VIEW_WINDOWS, "all_time")
 # Worker-only bound; public SQL keeps its five-second deadline.
 SNAPSHOT_STATEMENT_TIMEOUT = "30000ms"
 
@@ -189,9 +195,12 @@ def calculate_trending_cards(
     limit: int = 50,
     q: str | None = None,
     _snapshot=None,
+    card_clicks: dict[str, int] | None = None,
 ) -> list[TrendingCardItem]:
-    """Calculate the top trending/most searched or clicked cards."""
-    card_clicks = _get_redis_scores(REDIS_KEY_CARD_CLICKS, _IN_MEMORY_CARD_CLICKS)
+    """Calculate the top trending/most searched or clicked cards.
+    `card_clicks` (highest first) replaces the all-time counters for a windowed snapshot."""
+    if card_clicks is None:
+        card_clicks = _get_redis_scores(REDIS_KEY_CARD_CLICKS, _IN_MEMORY_CARD_CLICKS)
 
     if _snapshot is None:
         stats = card_observation_stats()
@@ -348,10 +357,15 @@ def calculate_trending_pokemon(
     limit: int = 50,
     q: str | None = None,
     _snapshot=None,
+    poke_clicks: dict[str, int] | None = None,
+    searches: dict[str, int] | None = None,
 ) -> list[TrendingPokemonItem]:
-    """Calculate the most clicked or searched on Pokémon characters."""
-    poke_clicks = _get_redis_scores(REDIS_KEY_POKE_CLICKS, _IN_MEMORY_POKE_CLICKS)
-    searches = _get_redis_scores(REDIS_KEY_SEARCHES, _IN_MEMORY_SEARCHES)
+    """Calculate the most clicked or searched on Pokémon characters.
+    Passed counts replace the all-time counters for a windowed snapshot."""
+    if poke_clicks is None:
+        poke_clicks = _get_redis_scores(REDIS_KEY_POKE_CLICKS, _IN_MEMORY_POKE_CLICKS)
+    if searches is None:
+        searches = _get_redis_scores(REDIS_KEY_SEARCHES, _IN_MEMORY_SEARCHES)
 
     active_pokemon_names = list(POKEMON_TOP_50_NAMES)
     for p_name, cnt in poke_clicks.items():
@@ -466,26 +480,80 @@ def calculate_trending_pokemon(
     return items
 
 
-def snapshot_key() -> str:
+def snapshot_key(timeframe: str = SNAPSHOT_TIMEFRAME) -> str:
     # No image generation here: the worker does not mount the image manifest,
     # so card image URLs are resolved by the API at read time instead.
     source_key = "ppt" if get_settings().ppt_primary_enabled else "legacy"
-    return f"cardboarddex:{source_key}:trending-snapshot:v1"
+    part = timeframe if timeframe in SNAPSHOT_TIMEFRAMES else "all_time"
+    return f"cardboarddex:{source_key}:trending-snapshot:v2:{part}"
 
 
-def build_snapshot(db: Session, now: datetime) -> TrendingDashboardResponse:
-    """One history aggregation shared by every default section."""
+def _lock_key() -> str:
+    return snapshot_key("all_time").rsplit(":", 1)[0] + ":lock"
+
+
+def _pokedex_slugs() -> dict[str, str]:
+    return {re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-"): name for name in POKEMON_DEX_NUMBERS}
+
+
+def _highest_first(counts: dict[str, int]) -> dict[str, int]:
+    return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
+
+
+def windowed_view_counts(db: Session, now: datetime) -> dict[str, tuple[dict[str, int], dict[str, int]]]:
+    """(card views, Pokémon views) per VIEW_WINDOWS timeframe, keyed like the Redis counters.
+
+    A card view also counts for the Pokémon in its name, as record_action does for
+    card reads. Mappings are ordered highest first."""
+    views = entity_view_counts(db, {tf: now - window for tf, window in VIEW_WINDOWS.items()})
+    viewed = sorted({card_id for tf in views for card_id in views[tf]["cards"]})
+    card_pokemon: dict[str, str | None] = {}
+    for start in range(0, len(viewed), 500):
+        for card_id, card_name in db.execute(select(Card.id, Card.name).where(Card.id.in_(viewed[start:start + 500]))):
+            card_pokemon[card_id] = match_to_pokemon(card_name)
+    by_dex = {dex: name for name, dex in POKEMON_DEX_NUMBERS.items()}
+    slugs = _pokedex_slugs()
+    result = {}
+    for tf, counts in views.items():
+        pokemon: dict[str, int] = {}
+
+        def credit(name: str | None, count: int) -> None:
+            if name:
+                key = name.capitalize()  # record_action's key normalization
+                pokemon[key] = pokemon.get(key, 0) + count
+
+        for page_id, count in counts["pokemon"].items():
+            credit(by_dex.get(int(page_id)) if page_id.isdigit() else slugs.get(page_id.lower()), count)
+        for card_id, count in counts["cards"].items():
+            credit(card_pokemon.get(card_id), count)
+        result[tf] = (_highest_first(counts["cards"]), _highest_first(pokemon))
+    return result
+
+
+def build_snapshots(db: Session, now: datetime) -> dict[str, TrendingDashboardResponse]:
+    """One history aggregation shared by every timeframe; only click counts differ."""
     rows = dashboard_observation_snapshot(db, SNAPSHOT_TIMEFRAME, now)
     volume = calculate_top_pokemon_volume(db, timeframe=SNAPSHOT_TIMEFRAME, sort_by="volume_desc", _snapshot=rows)
-    return TrendingDashboardResponse(
-        timeframe=SNAPSHOT_TIMEFRAME,
-        trending_cards=calculate_trending_cards(db, limit=50, _snapshot=rows),
-        trending_pokemon=calculate_trending_pokemon(db, limit=50, _snapshot=rows),
-        volume_pokemon=volume.items,
-        total_volume_usd=volume.total_volume_usd,
-        total_sales_count=volume.total_sales_count,
-        updated_at=now,
-    )
+    windowed = windowed_view_counts(db, now)
+    snapshots: dict[str, TrendingDashboardResponse] = {}
+    for timeframe in SNAPSHOT_TIMEFRAMES:
+        if timeframe in VIEW_WINDOWS:
+            card_clicks, poke_clicks = windowed[timeframe]
+            # Searches are not stored with dates, so windowed views rank on page views only.
+            counts = {"card_clicks": card_clicks, "poke_clicks": poke_clicks, "searches": {}}
+        else:
+            counts = {"card_clicks": None, "poke_clicks": None, "searches": None}
+        snapshots[timeframe] = TrendingDashboardResponse(
+            timeframe=timeframe,
+            trending_cards=calculate_trending_cards(db, limit=50, _snapshot=rows, card_clicks=counts["card_clicks"]),
+            trending_pokemon=calculate_trending_pokemon(db, limit=50, _snapshot=rows,
+                                                        poke_clicks=counts["poke_clicks"], searches=counts["searches"]),
+            volume_pokemon=volume.items,
+            total_volume_usd=volume.total_volume_usd,
+            total_sales_count=volume.total_sales_count,
+            updated_at=now,
+        )
+    return snapshots
 
 
 def refresh_snapshot() -> bool:
@@ -494,19 +562,22 @@ def refresh_snapshot() -> bool:
     if redis is None:
         logger.warning("Trending refresh unavailable: Redis client unavailable")
         return False
-    key, token = snapshot_key(), uuid.uuid4().hex
+    lock, token = _lock_key(), uuid.uuid4().hex
     acquired = False
     try:
-        acquired = bool(redis.set(key + ":lock", token, nx=True, ex=SNAPSHOT_LEASE_SECONDS))
+        acquired = bool(redis.set(lock, token, nx=True, ex=SNAPSHOT_LEASE_SECONDS))
         if not acquired:
             return False
         with SessionLocal() as db:
             if db.get_bind().dialect.name == "postgresql":
                 db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"))
                 db.execute(text(f"SET LOCAL statement_timeout = '{SNAPSHOT_STATEMENT_TIMEOUT}'"))
-            snapshot = build_snapshot(db, datetime.now(UTC))
-        published = bool(redis.eval(_PUBLISH, 2, key + ":lock", key, token,
-                                    snapshot.model_dump_json(), SNAPSHOT_RETAIN_SECONDS))
+            snapshots = build_snapshots(db, datetime.now(UTC))
+        # Every timeframe is published together, so toggles never mix refresh times.
+        published = bool(redis.eval(_PUBLISH_PARTS, 1 + len(SNAPSHOT_TIMEFRAMES), lock,
+                                    *[snapshot_key(tf) for tf in SNAPSHOT_TIMEFRAMES], token,
+                                    *[snapshots[tf].model_dump_json() for tf in SNAPSHOT_TIMEFRAMES],
+                                    SNAPSHOT_RETAIN_SECONDS))
         logger.info("Trending refresh published=%s duration_ms=%.1f", published,
                     (time.monotonic() - started) * 1000)
         return published
@@ -516,17 +587,17 @@ def refresh_snapshot() -> bool:
     finally:
         if acquired:
             try:
-                redis.eval(_RELEASE, 1, key + ":lock", token)
+                redis.eval(_RELEASE, 1, lock, token)
             except Exception as exc:
                 logger.warning("Trending lock release failed error=%s: %s", type(exc).__name__, exc)
 
 
-def read_snapshot(redis) -> TrendingDashboardResponse | None:
+def read_snapshot(redis, timeframe: str = SNAPSHOT_TIMEFRAME) -> TrendingDashboardResponse | None:
     """Return the published dashboard; None only when Redis itself is unreachable."""
     if redis is None:
         return None
     try:
-        raw = redis.get(snapshot_key())
+        raw = redis.get(snapshot_key(timeframe))
     except Exception as exc:
         logger.warning("Trending snapshot read failed error=%s: %s", type(exc).__name__, exc)
         return None
@@ -558,21 +629,21 @@ def get_trending_dashboard(
     clean_q = (q or "").strip().lower()
     r = get_redis()
     if not clean_q:
-        # Card and Pokémon columns use all-time aggregates, so one snapshot serves
-        # every timeframe. Only the volume column depends on the window.
+        # Each timeframe has its own published snapshot (windowed page views, or the
+        # all-time counters). The volume column inside it is always the 7-day window.
         try:
-            published = read_snapshot(r)
+            published = read_snapshot(r, timeframe)
         except HTTPException:
             if not get_settings().trending_on_demand_fallback:
                 raise
             # Dev without a worker: publish through the normal leased path, then serve it.
             logger.warning("Trending snapshot missing; publishing on request (TRENDING_ON_DEMAND_FALLBACK)")
             refresh_snapshot()
-            published = read_snapshot(r)
+            published = read_snapshot(r, timeframe)
         if published is not None and published.is_stale and get_settings().trending_on_demand_fallback:
             logger.warning("Trending snapshot stale; republishing on request (TRENDING_ON_DEMAND_FALLBACK)")
             if refresh_snapshot():
-                published = read_snapshot(r)
+                published = read_snapshot(r, timeframe)
         if published is not None:
             if not include_observation_volume:
                 return published.model_copy(update={"timeframe": timeframe, "volume_pokemon": [],

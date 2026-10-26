@@ -1,10 +1,11 @@
 """Small indexed telemetry writes and SQL aggregates; never query catalog tables."""
 import hashlib
 import hmac
+import re
 from datetime import UTC, date, datetime, time, timedelta
 from uuid import uuid4
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import case, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
@@ -15,6 +16,8 @@ from app.models.analytics import AdminSession, AnalyticsDay, AnalyticsEvent, Ana
 from app.schemas.analytics import PageView
 
 RETENTION_DAYS = 90
+# Card and Pokémon detail pages as the tracker records them (path only, no query string).
+ENTITY_PATH = re.compile(r"^/(cards|pokemon)/([A-Za-z0-9_-]{1,64})$")
 
 
 def insert_for(db: Session, model):
@@ -49,6 +52,30 @@ def record_page_view(db: Session, event: PageView, country: str, now: datetime |
         index_elements=["day"], set_={"views": AnalyticsDay.views + 1}))
     db.commit()
     return True
+
+
+def entity_view_counts(db: Session, windows: dict[str, datetime]) -> dict[str, dict[str, dict[str, int]]]:
+    """Page views per card ID and Pokémon page ID for each named window start, for Trending.
+
+    One grouped range scan on ix_analytics_events_time from the earliest start, with a
+    conditional count per window. Windows beyond RETENTION_DAYS only see retained rows."""
+    names = list(windows)
+    rows = db.execute(select(AnalyticsEvent.path, *[
+        func.sum(case((AnalyticsEvent.occurred_at >= windows[name], 1), else_=0)) for name in names
+    ]).where(
+        AnalyticsEvent.occurred_at >= min(windows.values()),
+        or_(AnalyticsEvent.path.like("/cards/%"), AnalyticsEvent.path.like("/pokemon/%")),
+    ).group_by(AnalyticsEvent.path)).all()
+    counts = {name: {"cards": {}, "pokemon": {}} for name in names}
+    for path, *views in rows:
+        match = ENTITY_PATH.match(path)
+        if not match:
+            continue
+        for name, count in zip(names, views):
+            if count:
+                bucket = counts[name][match[1]]
+                bucket[match[2]] = bucket.get(match[2], 0) + int(count)
+    return counts
 
 
 def report(db: Session, start: date, end: date, now: datetime | None = None) -> dict:

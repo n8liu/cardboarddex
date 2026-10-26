@@ -1,5 +1,18 @@
 # CardboardDex project context
 
+## Trending windows count page views — 2026-10-26 (branch `trending-windowed-views` off `phase3-ui-polish`, uncommitted, not deployed)
+
+Production `/cards/trending` returned the same click counts for every timeframe: clicks are all-time Redis counters with no dates, and one snapshot served every timeframe.
+
+- **24h/7d/30d** now count page views from `analytics_events` (`site_analytics_service.entity_view_counts`: one grouped scan from the 30-day start, with one conditional count per window). Card views also count for the Pokémon in the card name, as `record_action` does. Pokémon pages are matched by Dex number or slug.
+- **All-time** keeps the Redis counters, unchanged. `2026_ytd` is served the all-time snapshot.
+- Searches have no dates, so windowed rankings use views only (`searches_count` is 0).
+- The worker publishes one snapshot per timeframe, all together, under `cardboarddex:{ppt|legacy}:trending-snapshot:v2:{24h|7d|30d|all_time}` using `market_snapshots._PUBLISH_PARTS`. The old `:v1` key is no longer read, so Trending returns 503 after deploy until the first refresh. `release.sh` seeds it.
+- The frontend labels counts as "views · last N days" for windows and "clicks · all time" otherwise.
+- Limits: views need `ANALYTICS_ENABLED` (on in production; confirmed because the telemetry endpoint returned 403 to a request with no origin) and skip visitors who opt out. Views reached from the Trending page itself count, unlike the API counters, which skip `ref=trending`.
+
+Validation: backend 433 passed (30 skipped); the 2 failing tests were OCR tests that can't run in the sandbox. Frontend 184 passed; typecheck and build passed. Not run against PostgreSQL or production data.
+
 ## Integrated market snapshots and final fixes — 2026-10-26 (local, uncommitted, not deployed)
 
 Integrated the source changes from `fix-movers-snapshot` commits `4a91076` and `2492f18` into the existing Phase 1–3 checkout. This is a source integration, not a Git merge/commit. The separate worktree is untouched. Existing frontend motion edits are preserved. No migrations or Cards/Sets changes.
