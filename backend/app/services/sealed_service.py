@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 _SEALED_SIGNALS_LOCAL_FALLBACK = TTLCache(max_entries=64, ttl=300)
 _SEALED_CACHE_TTL = 300  # 5 minutes
-SNAPSHOT_NAME = "sealed"
+SNAPSHOT_NAME = "sealed-evidence-v2"
 PERIODS = (30, 90)
 
 
@@ -137,8 +137,8 @@ def build_snapshot(db: Session, now: datetime) -> dict:
                 supply_score = 4
                 supply_rating = "High Supply"
         else:
-            supply_score = 15
-            supply_rating = "Moderate"
+            supply_score = None
+            supply_rating = "Unavailable"
 
         # 2. Set Vintage & Out-of-Print Age (0-20 pts)
         set_age_months = 0
@@ -156,7 +156,7 @@ def build_snapshot(db: Session, now: datetime) -> dict:
             else:
                 vintage_score = 4
         else:
-            vintage_score = 10
+            vintage_score = None
 
         # 3. Demand & Liquidity (0-25 pts)
         if buylist_price and market_price > 0:
@@ -169,26 +169,24 @@ def build_snapshot(db: Session, now: datetime) -> dict:
                 demand_score = 12
             else:
                 demand_score = 6
-        else:
-            spread = (
-                ((median_price - low_price) / median_price)
-                if (median_price and low_price and median_price > 0)
-                else 0.20
-            )
+        elif median_price is not None and low_price is not None and median_price > 0:
+            spread = (median_price - low_price) / median_price
             if spread < 0.10:
                 demand_score = 18
             elif spread < 0.25:
                 demand_score = 12
             else:
                 demand_score = 8
+        else:
+            demand_score = None
 
         # 4. Price Momentum (0-25 pts)
-        p30 = extract_float(p, "price_change_30d") or 0.0
-        p7 = extract_float(p, "price_change_7d") or 0.0
-        p24 = extract_float(p, "price_change_24h") or 0.0
-
-        momentum_pct = p30 if p30 != 0 else (p7 * 4.0 if p7 != 0 else p24 * 30.0)
-        if momentum_pct >= 15.0:
+        # Use the reported monthly return, including zero. Shorter periods
+        # cannot establish a missing monthly return through extrapolation.
+        momentum_pct = extract_float(p, "price_change_30d")
+        if momentum_pct is None:
+            momentum_score = None
+        elif momentum_pct >= 15.0:
             momentum_score = 25
         elif momentum_pct >= 5.0:
             momentum_score = 18
@@ -199,8 +197,11 @@ def build_snapshot(db: Session, now: datetime) -> dict:
         else:
             momentum_score = 4
 
-        total_score = min(100, supply_score + vintage_score + demand_score + momentum_score)
-        if total_score >= 75:
+        components = (supply_score, vintage_score, demand_score, momentum_score)
+        total_score = min(100, sum(components)) if all(score is not None for score in components) else None
+        if total_score is None:
+            signal_label = "INSUFFICIENT DATA"
+        elif total_score >= 75:
             signal_label = "STRONG BUY"
         elif total_score >= 60:
             signal_label = "BUY"
@@ -348,7 +349,7 @@ def select_sealed_signals(
 
     # Sorting
     if sort_by == "supply_asc":
-        filtered.sort(key=lambda x: (x["total_listings"] == 0, x["total_listings"], -x["signal_score"]))
+        filtered.sort(key=lambda x: (x["total_listings"] == 0, x["total_listings"], -(x["signal_score"] if x["signal_score"] is not None else -1)))
     elif sort_by == "momentum_desc":
         # Unknown returns follow negative returns; zero is a valid observation.
         filtered.sort(key=lambda x: (
@@ -363,7 +364,7 @@ def select_sealed_signals(
     elif sort_by == "age_desc":
         filtered.sort(key=lambda x: x["set_age_months"], reverse=True)
     else:  # default "score_desc"
-        filtered.sort(key=lambda x: (x["signal_score"], -x["total_listings"]), reverse=True)
+        filtered.sort(key=lambda x: (x["signal_score"] is not None, x["signal_score"] if x["signal_score"] is not None else 0, -x["total_listings"]), reverse=True)
 
     total_items = len(filtered)
     total_pages = max(1, math.ceil(total_items / per_page))
@@ -443,7 +444,7 @@ def calculate_sealed_signals(
 ) -> SealedSignalsResponse:
     """Calculate multi-factor sealed market investment signals and scores on demand."""
     now = time.time()
-    cache_key_raw = f"v6:{game}:{period}:{era}:{signal}:{product_type}:{sort_by}:{set_id}:{q.strip().lower()}:{page}:{per_page}"
+    cache_key_raw = f"v7:{game}:{period}:{era}:{signal}:{product_type}:{sort_by}:{set_id}:{q.strip().lower()}:{page}:{per_page}"
     cache_hash = hashlib.md5(cache_key_raw.encode()).hexdigest()
     source_key = "ppt" if get_settings().ppt_primary_enabled else "legacy"
     redis_key = f"cardboarddex:{source_key}:sealed_signals:{cache_hash}"

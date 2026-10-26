@@ -31,7 +31,7 @@ const selectClass = "py-2 w-full rounded-lg border border-slate-200 bg-white px-
 function ProductDetails({ item }: { item: SealedSignalItem }) {
   return (
         <div className="mt-2 border-t border-slate-100 pt-3">
-          <p className="mb-2">{item.product_type} · Signal score {item.signal_score}/100</p>
+          <p className="mb-2">{item.product_type} · Signal score {item.signal_score == null ? "Unavailable" : `${item.signal_score}/100`}</p>
           <PriceFreshness value={item} />
           <HistorySparkline points={item.history?.points ?? []} />
           {item.history?.coverage_start && <p>History: {item.history.coverage_start} – {item.history.coverage_end}</p>}
@@ -58,7 +58,7 @@ function ProductRow({ item, rank, period, era }: { item: SealedSignalItem; rank:
       <td className="p-3"><Link href={`/cards/${encodeURIComponent(item.card_id)}`} prefetch={false} className="flex items-center gap-3 font-bold hover:underline"><span className="relative h-20 w-14 shrink-0 rounded border border-slate-100 bg-slate-50"><Image src={cardImageUrl(item.image_url)} alt="" fill sizes="56px" className="object-contain" /></span><span className="min-w-28 max-w-52"><span className="line-clamp-2">{item.name}</span><span className="mt-1 block text-[10px] font-normal text-slate-500">{item.set_name} · {item.product_type}</span></span></Link></td>
       <td className="p-3 text-right"><Growth item={item} period={period} /></td>
       <td className="p-3 text-right font-bold">{formatPrice(item.market_price)}<PriceComparison value={item} period={`${period}d`} /></td>
-      <td className="hidden p-3 text-slate-500 xl:table-cell">{item.signal_label}<span className="block">{item.signal_score}/100</span></td>
+      <td className="hidden p-3 text-slate-500 xl:table-cell">{item.signal_label}<span className="block">{item.signal_score == null ? "Unavailable" : `${item.signal_score}/100`}</span></td>
       <td className="p-3"><button type="button" aria-expanded={expanded} aria-controls={detailsId} aria-label={`Details for ${item.name}`} onClick={() => setExpanded(!expanded)} className="min-h-9 rounded-lg border border-slate-200 px-3 font-semibold hover:bg-slate-100">{expanded ? "Close" : "Details"}</button></td>
     </tr>
     <tr id={detailsId} hidden={!expanded}><td colSpan={6} className="px-4 pb-4 text-xs text-slate-500">{expanded && <ProductDetails item={item} />}</td></tr>
@@ -88,7 +88,7 @@ function ProductCard({ item, rank, period }: { item: SealedSignalItem; rank: num
           </div>
           <div className="mt-3 text-[10px] leading-relaxed text-slate-500">
             <p>Released {item.release_date?.slice(0, 4) ?? "Unknown"}</p>
-            <p className="mt-1">Signal score {item.signal_score}/100</p>
+            <p className="mt-1">Signal score {item.signal_score == null ? "Unavailable" : `${item.signal_score}/100`}</p>
           </div>
         </div>
       </div>

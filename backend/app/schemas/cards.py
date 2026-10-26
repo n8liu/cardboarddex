@@ -271,11 +271,11 @@ class SealedSignalItem(BaseModel):
     price_change_24h: float | None = None
     price_change_7d: float | None = None
     price_change_30d: float | None = None
-    supply_score: int
-    demand_score: int
-    momentum_score: int
-    vintage_score: int
-    signal_score: int
+    supply_score: int | None
+    demand_score: int | None
+    momentum_score: int | None
+    vintage_score: int | None
+    signal_score: int | None
     signal_label: str
     last_updated_at: datetime | None = None
 

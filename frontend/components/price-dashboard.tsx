@@ -5,7 +5,7 @@ import { AnimatedNumber } from "@/components/ui/animated-number";
 import { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { ShopOnEbayButton, type EbaySearchCardTarget } from "@/components/shop-ebay-button";
-import type { CardPricing, PriceObservation } from "@/types/card";
+import type { CardPricing, PriceObservation, ProviderQuote } from "@/types/card";
 import { GRADING_COMPANIES, gradeCompany, mergeProviderHistory, providerSeriesName, robustMedian, selectHistorySeries, seriesPrinting, withoutAskingOutliers, type GradingCompany } from "@/lib/provider-history";
 import type { ChartPoint } from "@/components/price-history-chart";
 import { isStalePriceDate, PriceSourceBadge } from "@/components/ui/price-source-badge";
@@ -50,9 +50,25 @@ function latestByVariant(observations: PriceObservation[]): PriceObservation[] {
 }
 
 function providerName(value: string): string {
+  if (value === "pokemonpricetracker") return "Pokémon Price Tracker (PPT)";
   if (value.toLowerCase().includes("ebay")) return "eBay listings";
   if (value === "tcgapi") return "Legacy market history";
   return value;
+}
+
+type LatestVariant = PriceObservation & { metric?: string; stale?: boolean };
+
+function quoteVariant(quote: ProviderQuote): LatestVariant {
+  const grade = quote.grade?.match(/^([a-z]+)([0-9]+(?:\.[0-9]+)?)$/i);
+  return {
+    provider: quote.provider, provider_card_id: "",
+    variant_id: JSON.stringify([quote.language, quote.printing, quote.condition, quote.grade, quote.metric, quote.currency]),
+    printing: quote.printing, condition: quote.condition,
+    grading_company: grade?.[1].toUpperCase() ?? (quote.grade ? quote.grade.toUpperCase() : null),
+    grade: grade ? Number(grade[2]) : null, price: quote.price, currency: quote.currency,
+    provider_updated_at: quote.price_date, observed_at: quote.fetched_at ?? quote.price_date,
+    metric: quote.metric, stale: quote.stale,
+  };
 }
 
 function isEbayObservation(item: PriceObservation): boolean {
@@ -190,6 +206,8 @@ function formatUpdatedDate(value: string | null): string {
     const d = new Date(value);
     if (isNaN(d.getTime())) return "Recent";
     return new Intl.DateTimeFormat("en-US", {
+      // Provider price dates are calendar dates, not local-time instants.
+      ...(/^\d{4}-\d{2}-\d{2}$/.test(value) ? { timeZone: "UTC" } : {}),
       month: "short",
       day: "numeric",
       year: "numeric",
@@ -218,6 +236,28 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
 
   const latest = useMemo(() => latestByVariant(pricing.observations), [pricing.observations]);
   const primaryRaw = useMemo(() => choosePrimaryRaw(latest), [latest]);
+  const pptVariants = useMemo(() => (pricing.provider_quotes ?? pricing.market_quotes ?? [])
+    .filter((quote) => quote.provider === "pokemonpricetracker").map(quoteVariant),
+  [pricing.provider_quotes, pricing.market_quotes]);
+  const latestVariants = useMemo(() => {
+    const hasRawPpt = pptVariants.some((item) => !item.grading_company);
+    // Keep historical observations for the chart. Only the current pricing table
+    // replaces retired raw prices after PPT supplies a raw quote.
+    const historical = latest.filter((item) => item.provider !== "pokemonpricetracker" &&
+      !(hasRawPpt && item.provider === "tcgapi"));
+    return latestByVariant([...historical, ...pptVariants]) as LatestVariant[];
+  }, [latest, pptVariants]);
+  const providerStates = useMemo(() => {
+    const states = new Map(pricing.provider_states.map((state) => [state.provider, state]));
+    // Support cached API responses from before PPT was included in provider_states.
+    const fetched = (pricing.provider_quotes ?? pricing.market_quotes ?? [])
+      .filter((quote) => quote.provider === "pokemonpricetracker" && quote.fetched_at)
+      .map((quote) => quote.fetched_at!).sort().at(-1);
+    if (pricing.ppt_mapped && fetched && !states.has("pokemonpricetracker")) {
+      states.set("pokemonpricetracker", { provider: "pokemonpricetracker", match_status: "matched", last_synced_at: fetched });
+    }
+    return [...states.values()];
+  }, [pricing.provider_states, pricing.provider_quotes, pricing.market_quotes, pricing.ppt_mapped]);
   const tcgSnapshot = useMemo(
     () => choosePrimaryRaw((pricing.tcg_market_prices ?? []).filter((item) => item.provider === "tcgapi")),
     [pricing.tcg_market_prices],
@@ -240,7 +280,7 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
     .filter((item) => item.grading_company === "PSA" && item.grade === 10)
     .sort((a, b) => timestamp(b) - timestamp(a))[0] ?? null;
   const graded = latest.filter((item) => item.grading_company);
-  const matchedSources = pricing.provider_states.filter((item) => item.match_status === "matched").length + (pricing.ppt_mapped ? 1 : 0);
+  const matchedSources = providerStates.filter((item) => item.match_status === "matched").length;
   const gradedMin = graded.length ? Math.min(...graded.map((item) => item.price)) : null;
   const gradedMax = graded.length ? Math.max(...graded.map((item) => item.price)) : null;
   const momentum = pptPrimary?.stale ? null : pptPrimary;
@@ -325,7 +365,7 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
   };
 
   const sortedVariants = useMemo(() => {
-    const list = [...latest];
+    const list = [...latestVariants];
     list.sort((a, b) => {
       if (sortBy === "date") {
         const diff = timestamp(b) - timestamp(a);
@@ -356,7 +396,7 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
       return 0;
     });
     return list;
-  }, [latest, sortBy, sortOrder]);
+  }, [latestVariants, sortBy, sortOrder]);
 
   const displayedVariants = showAllVariants ? sortedVariants : sortedVariants.slice(0, 15);
 
@@ -540,8 +580,9 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
         />
         <Metric
           label="Source Coverage"
-          value={`${matchedSources}/${pricing.provider_states.length + (pricing.ppt_mapped ? 1 : 0) || 1}`}
-          note={`${pricing.observations.length} observations`}
+          wrapNote
+          value={`${matchedSources}/${providerStates.length || 1}`}
+          note={providerStates.filter((state) => state.match_status === "matched").map((state) => providerName(state.provider)).join(" · ") || "No matched sources"}
         />
       </div>
 
@@ -630,9 +671,9 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
         <div className="rounded-2xl border border-stone-200 bg-stone-50/70 p-5 sm:p-6">
           <h3 className="text-sm font-bold text-slate-950">Provider status</h3>
           <div className="mt-4 divide-y divide-zinc-200 border-y border-zinc-200">
-            {pricing.provider_states.map((state) => (
+            {providerStates.map((state) => (
               <div className="flex items-center justify-between gap-4 py-3" key={state.provider}>
-                <span className="text-sm text-zinc-700">{providerName(state.provider)}</span>
+                <span className="text-sm text-zinc-700">{providerName(state.provider)}<span className="mt-1 block text-xs text-zinc-500">Synced {formatUpdatedDate(state.last_synced_at)}</span></span>
                 <span
                   className={`rounded-full border px-2 py-1 text-[11px] font-medium ${
                     state.match_status === "matched"
@@ -657,7 +698,7 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
           <div>
             <h3 className="text-sm font-semibold text-zinc-950">Latest variants & pricing data</h3>
             <p className="text-xs text-zinc-500 mt-0.5">
-              Showing {displayedVariants.length} of {sortedVariants.length} variants
+              Showing {displayedVariants.length} of {sortedVariants.length} variants{pptVariants.length > 0 ? " · PPT current quotes and matched eBay listings; legacy history stays in the chart" : ""}
             </p>
           </div>
           <div className="flex items-center gap-1.5">
@@ -786,7 +827,7 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
                           </svg>
                         </a>
                       ) : (
-                        <span className="text-zinc-600">{providerName(item.provider)}</span>
+                        <span className="text-zinc-600">{providerName(item.provider)}{item.metric && <span className="block text-xs text-zinc-500">{item.metric === "median_7d" ? "7-day median" : "Market quote"}</span>}</span>
                       )}
                     </td>
                     <td className="px-5 py-3 text-xs text-zinc-600">
@@ -796,6 +837,7 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
                     <td className="px-5 py-3 text-xs text-zinc-600">{money(item.buylist_price)}</td>
                     <td className="px-5 py-3 text-xs text-zinc-500">
                       {formatUpdatedDate(item.provider_updated_at ?? item.observed_at)}
+                      {item.stale && <span className="block text-amber-700">Last known price</span>}
                     </td>
                     <td className="px-5 py-3 text-right font-mono text-sm font-bold text-zinc-950">
                       {money(item.price, item.currency)}
@@ -824,12 +866,12 @@ export function PriceDashboard({ pricing: originalPricing, cardMeta }: PriceDash
   );
 }
 
-function Metric({ label, value, note }: { label: string; value: string; note: string }) {
+function Metric({ label, value, note, wrapNote = false }: { label: string; value: string; note: string; wrapNote?: boolean }) {
   return (
     <div className="rounded-2xl border border-stone-200 bg-white p-5 shadow-[0_8px_24px_rgba(33,45,25,0.035)]">
       <p className="text-xs font-semibold text-slate-500">{label}</p>
       <p className="mt-3 text-2xl font-bold tracking-tight text-slate-950">{value}</p>
-      <p className="mt-2 truncate text-xs text-slate-500">{note}</p>
+      <p className={`mt-2 text-xs text-slate-500 ${wrapNote ? "leading-5" : "truncate"}`}>{note}</p>
     </div>
   );
 }

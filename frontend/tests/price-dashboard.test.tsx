@@ -133,3 +133,51 @@ it("keeps variants with a shared provider card ID distinct while sorting", () =>
     errors.mockRestore();
   }
 });
+
+it("shows PPT once in source coverage and status and replaces legacy latest prices after an update", () => {
+  const quote = { provider: "pokemonpricetracker", language: "english", currency: "USD", printing: "Holofoil",
+    condition: "Near Mint", grade: null, metric: "market", price: 140, price_date: "2026-10-26",
+    fetched_at: "2026-10-26T12:00:00Z", stale: false, primary: true };
+  render(<PriceDashboard pricing={{ card_id: "card", ppt_mapped: true,
+    provider_states: [
+      { provider: "tcgapi", match_status: "matched", last_synced_at: "2026-10-01" },
+      { provider: "pokemonpricetracker", match_status: "matched", last_synced_at: quote.fetched_at },
+    ], observations: [observation, { ...observation, provider: "ebay", provider_card_id: "123", price: 95 }],
+    provider_quotes: [quote, { ...quote, printing: "Reverse Holofoil", price: 25, primary: false },
+      { ...quote, grade: "psa10", metric: "median_7d", price: 500, primary: false }],
+  }} />);
+  const coverage = screen.getByText("Source Coverage").parentElement!;
+  expect(coverage).toHaveTextContent("2/2");
+  expect(coverage).toHaveTextContent("Pokémon Price Tracker (PPT)");
+  const status = screen.getByText("Provider status").parentElement!;
+  expect(within(status).getAllByText("Pokémon Price Tracker (PPT)")).toHaveLength(1);
+  expect(status).toHaveTextContent("Synced Oct 26, 2026");
+  const table = screen.getByRole("table");
+  expect(within(table).queryByText("Legacy market history")).not.toBeInTheDocument();
+  expect(within(table).getAllByText("Pokémon Price Tracker (PPT)")).toHaveLength(3);
+  expect(table).toHaveTextContent("Reverse Holofoil");
+  expect(table).toHaveTextContent("PSA 10");
+  expect(table).toHaveTextContent("7-day median");
+  expect(table).toHaveTextContent("$140.00");
+  expect(table).toHaveTextContent("eBay listings");
+});
+
+it("keeps dated stale PPT variants and supports provider status in cached older API responses", () => {
+  render(<PriceDashboard pricing={{ card_id: "card", ppt_mapped: true, provider_states: [], observations: [observation],
+    provider_quotes: [{ provider: "pokemonpricetracker", language: "english", currency: "USD", printing: "Holofoil",
+      condition: "Near Mint", grade: null, metric: "market", price: 140, price_date: "2026-09-01",
+      fetched_at: "2026-10-26T12:00:00Z", stale: true, primary: true }],
+  }} />);
+  expect(screen.getByText("Source Coverage").parentElement).toHaveTextContent("1/1");
+  const table = screen.getByRole("table");
+  expect(table).toHaveTextContent("Sep 1, 2026");
+  expect(table).toHaveTextContent("Last known price");
+  expect(table).not.toHaveTextContent("Legacy market history");
+});
+
+it("retains legacy latest pricing when PPT has no raw quote", () => {
+  render(<PriceDashboard pricing={{ card_id: "card", ppt_mapped: false, provider_states: [],
+    observations: [observation], provider_quotes: [] }} />);
+  expect(screen.getByRole("table")).toHaveTextContent("Legacy market history");
+  expect(screen.getByRole("table")).toHaveTextContent("$100.00");
+});

@@ -227,11 +227,11 @@ export type SealedSignalItem = PriceFreshness & {
   price_change_24h?: number | null;
   price_change_7d?: number | null;
   price_change_30d?: number | null;
-  supply_score: number;
-  demand_score: number;
-  momentum_score: number;
-  vintage_score: number;
-  signal_score: number;
+  supply_score: number | null;
+  demand_score: number | null;
+  momentum_score: number | null;
+  vintage_score: number | null;
+  signal_score: number | null;
   signal_label: "STRONG BUY" | "BUY" | "HOLD" | "UNDERPERFORM" | string;
   last_updated_at?: string | null;
 };

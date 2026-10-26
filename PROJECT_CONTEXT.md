@@ -1,6 +1,26 @@
 # CardboardDex project context
 
-## Trending windows count page views — 2026-10-26 (branch `trending-windowed-views` off `phase3-ui-polish`, uncommitted, not deployed)
+## Card-page PPT source coverage — 2026-10-26 (included in this commit; deployment unverified)
+
+- `/cards/{id}/prices` includes one Pokémon Price Tracker provider state after a matched product has successfully synced, with its latest successful sync timestamp. Discovery alone does not claim coverage; disabled/quarantined PPT data stays hidden.
+- The card page names PPT in Source Coverage and Provider status without double counting. Provider status shows sync dates; coverage source names wrap instead of truncating.
+- Latest variants uses current PPT quotes across printing, condition, language, grade and currency. When PPT supplies raw quotes, legacy rows are replaced in this table while historical chart data remains intact. Without PPT raw quotes, the table retains legacy fallback. Direct eBay listings stay separate, and graded PPT rows identify their seven-day median metric.
+- Stale PPT quotes show their source price date and `Last known price`. Date-only prices preserve the provider's calendar day instead of shifting backward in local time zones. No live card-page polling was added; updated data appears on subsequent reads subject to the existing API cache policy.
+
+Validation: backend 446 passed (30 infrastructure/live checks skipped), frontend 188 passed, TypeScript and production build passed. Includes successful-ingestion/update, visibility-gate/quarantine, coverage deduplication, multi-variant pricing, stale-date and legacy-fallback regressions. No production deployment or browser validation performed. No Cards/Sets or ingestion changes.
+
+## Pricing evidence corrections — 2026-10-26 (included in this commit; deployment unverified)
+
+Working branch: `trending-windowed-views`, based on `d0dd477`. Preserves the integrated snapshots and windowed Trending work. No database migrations or Cards/Sets changes.
+
+- Grading profitability sorts break-even results above losses, with unavailable values last. Expected value requires both PSA 9 and PSA 10 prices; the existing probability assumptions remain unchanged. The on-demand response cache moves to `identity-v3`; the raw-price snapshot remains compatible.
+- Sealed component scores are nullable when evidence is absent. The combined score is unavailable and the label is `INSUFFICIENT DATA` unless all four components are known. These products remain in the all-signals view but do not contribute to buy/hold/underperform counts. Missing monthly momentum is no longer extrapolated from daily or weekly changes; a reported zero monthly return remains zero. The UI displays `Unavailable` scores in cards, tables and details.
+- The Sealed publisher now uses `sealed-evidence-v2` to avoid serving old inferred scores. Deploy the frontend nullable-score handling with the backend and seed `python -m jobs.refresh_market_snapshots` in the isolated worker-budget container (already part of `release.sh`). Until the new key exists, Sealed returns a retryable 503. Existing pause and maintenance rules remain in force.
+- Frontend CI now runs `npm test` before typechecking/building.
+
+Validation: backend 445 passed (30 infrastructure/live tests skipped); frontend 185 passed; TypeScript and production build passed; release/maintenance tests 14 passed; `git diff --check` passed. Existing snapshot coverage verifies no SQL on Movers reads, eviction recovery, failed-build preservation and lease ownership. No production changes or browser check were performed. Docker CLI is present but the daemon socket is unavailable; production-sized PostgreSQL refresh duration, peak memory and concurrent ingestion behavior remain unverified.
+
+## Trending windows count page views — 2026-10-26 (commit `d0dd477`, branch `trending-windowed-views`, deployment unverified)
 
 Production `/cards/trending` returned the same click counts for every timeframe: clicks are all-time Redis counters with no dates, and one snapshot served every timeframe.
 
@@ -13,9 +33,9 @@ Production `/cards/trending` returned the same click counts for every timeframe:
 
 Validation: backend 433 passed (30 skipped); the 2 failing tests were OCR tests that can't run in the sandbox. Frontend 184 passed; typecheck and build passed. Not run against PostgreSQL or production data.
 
-## Integrated market snapshots and final fixes — 2026-10-26 (local, uncommitted, not deployed)
+## Integrated market snapshots and final fixes — 2026-10-26 (commit `f7eb6e5`, deployment unverified)
 
-Integrated the source changes from `fix-movers-snapshot` commits `4a91076` and `2492f18` into the existing Phase 1–3 checkout. This is a source integration, not a Git merge/commit. The separate worktree is untouched. Existing frontend motion edits are preserved. No migrations or Cards/Sets changes.
+Integrated the source changes from `fix-movers-snapshot` commits `4a91076` and `2492f18` into the existing Phase 1–3 checkout. This was a source integration, subsequently committed in `f7eb6e5`. The separate worktree is untouched. Existing frontend motion edits are preserved. No migrations or Cards/Sets changes.
 
 - Movers, Sealed and Grading Profit publish shared snapshots every twelve hours; Beat checks every fifteen minutes and repairs missing snapshots. Retention is thirty-six hours. Movers/Grading reads filter stored rankings without rebuilding SQL; Sealed still reads bounded page history.
 - Production Redis outages return retryable, non-cacheable 503s. Only `MARKET_SNAPSHOTS_ON_DEMAND_FALLBACK=true` opts local development into on-request computation when Redis is unreachable. Keep it false in production.
@@ -27,7 +47,7 @@ Integrated the source changes from `fix-movers-snapshot` commits `4a91076` and `
 
 Validation: backend 431 passed (30 infrastructure/live checks skipped); frontend 183 passed; TypeScript and production build passed; release/maintenance tests 14 passed; Python compilation, shell syntax and `git diff --check` passed. Chrome checked compare search/card selection, a 390px comparison chart, mobile card navigation/sticky actions and timeframe changes against the existing configured API. Full Movers browser navigation timed out, so this is partial browser coverage. Docker is unavailable locally, blocking container-based PostgreSQL performance/integration checks. Remaining release work: production-sized PostgreSQL refresh duration/memory, live worker/Beat and ingestion verification, installing the maintenance timer, Cloudflare Cache Rule activation, and deployment. No production or Cloudflare changes were made in this integration.
 
-## Motion pass — 2026-10-26 (branch `phase3-ui-polish`, uncommitted, not deployed)
+## Motion pass — 2026-10-26 (included in `f7eb6e5`, deployment unverified)
 
 Frontend only, no new dependencies. Every effect is off under `prefers-reduced-motion`.
 

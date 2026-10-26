@@ -175,3 +175,15 @@ it("keeps search focused and controls usable during delayed requests", async () 
   fireEvent.click(screen.getByRole("button", { name: "Table" }));
   expect(screen.getByRole("button", { name: "Table" })).toHaveAttribute("aria-pressed", "true");
 });
+
+it("shows unavailable scores in cards, table rows and expanded details", () => {
+  const missing = { ...item("missing"), signal_score: null, signal_label: "INSUFFICIENT DATA" };
+  render(<SealedSignalsDashboard initialData={{ newer: data([missing]), older: data([]) }} />);
+  expect(screen.getByText("Signal score Unavailable")).toBeInTheDocument();
+  expect(screen.getByText("INSUFFICIENT DATA")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Table" }));
+  expect(screen.getByText("Unavailable")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Details for missing Booster Box" }));
+  expect(screen.getByText(/Signal score Unavailable/)).toBeInTheDocument();
+  expect(screen.queryByText("0/100")).not.toBeInTheDocument();
+});

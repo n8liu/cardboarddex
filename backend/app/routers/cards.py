@@ -328,14 +328,23 @@ def get_card_prices(
         if a.status == "matched":
             unconfirmed.pop(a.item_id, None)
 
+    provider_states = [ProviderPricingState(
+        provider=item.provider, match_status=item.match_status, last_synced_at=item.last_synced_at,
+    ) for item in states]
+    if get_settings().ppt_primary_enabled:
+        from app.models import PPTProduct
+        last_ppt_sync = db.scalar(select(func.max(PPTProduct.last_success_at)).where(
+            PPTProduct.card_id == card_id, PPTProduct.status == "matched",
+        ))
+        if last_ppt_sync is not None:
+            provider_states.append(ProviderPricingState(
+                provider="pokemonpricetracker", match_status="matched", last_synced_at=last_ppt_sync,
+            ))
+
     return CardPricingResponse(
         **ppt_pricing,
         card_id=card_id,
-        provider_states=[ProviderPricingState(
-            provider=item.provider,
-            match_status=item.match_status,
-            last_synced_at=item.last_synced_at,
-        ) for item in states],
+        provider_states=provider_states,
         observations=obs_items,
         avg_listing_price=summary["avg_listing_price"],
         median_listing_price=summary["median_listing_price"],

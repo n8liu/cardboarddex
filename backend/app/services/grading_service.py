@@ -201,9 +201,11 @@ def select_grading_profit(
         )
 
         # Weighted Expected Value: 60% PSA 10 + 35% PSA 9 + 5% Raw floor break-even
-        ev_p10 = psa10_profit if psa10_profit is not None else 0.0
-        ev_p9 = psa9_profit if psa9_profit is not None else 0.0
-        expected_value = round((0.60 * ev_p10) + (0.35 * ev_p9), 2)
+        # An unavailable outcome is not a break-even outcome.
+        expected_value = (
+            round((0.60 * psa10_profit) + (0.35 * psa9_profit), 2)
+            if psa10_profit is not None and psa9_profit is not None else None
+        )
 
         # PSA 9 Safe: Does PSA 9 yield positive or break-even profit?
         psa9_safe = psa9_profit is not None and psa9_profit >= 0.0
@@ -253,21 +255,21 @@ def select_grading_profit(
 
     # Sorting
     if sort_by == "psa10_roi_desc":
-        items.sort(key=lambda x: (x.psa10_roi is not None, x.psa10_roi or -999999.0), reverse=True)
+        items.sort(key=lambda x: (x.psa10_roi is not None, x.psa10_roi if x.psa10_roi is not None else 0.0), reverse=True)
     elif sort_by == "psa9_profit_desc":
-        items.sort(key=lambda x: (x.psa9_profit is not None, x.psa9_profit or -999999.0), reverse=True)
+        items.sort(key=lambda x: (x.psa9_profit is not None, x.psa9_profit if x.psa9_profit is not None else 0.0), reverse=True)
     elif sort_by == "psa9_roi_desc":
-        items.sort(key=lambda x: (x.psa9_roi is not None, x.psa9_roi or -999999.0), reverse=True)
+        items.sort(key=lambda x: (x.psa9_roi is not None, x.psa9_roi if x.psa9_roi is not None else 0.0), reverse=True)
     elif sort_by == "ev_desc":
-        items.sort(key=lambda x: (x.expected_value is not None, x.expected_value or -999999.0), reverse=True)
+        items.sort(key=lambda x: (x.expected_value is not None, x.expected_value if x.expected_value is not None else 0.0), reverse=True)
     elif sort_by == "spread_desc":
-        items.sort(key=lambda x: (x.spread_multiplier is not None, x.spread_multiplier or -999999.0), reverse=True)
+        items.sort(key=lambda x: (x.spread_multiplier is not None, x.spread_multiplier if x.spread_multiplier is not None else 0.0), reverse=True)
     elif sort_by == "raw_price_asc":
         items.sort(key=lambda x: x.raw_price)
     elif sort_by == "raw_price_desc":
         items.sort(key=lambda x: x.raw_price, reverse=True)
     else:  # default "psa10_profit_desc"
-        items.sort(key=lambda x: (x.psa10_profit is not None, x.psa10_profit or -999999.0), reverse=True)
+        items.sort(key=lambda x: (x.psa10_profit is not None, x.psa10_profit if x.psa10_profit is not None else 0.0), reverse=True)
 
     total_cards = len(items)
     total_pages = max(1, math.ceil(total_cards / per_page))
@@ -339,7 +341,7 @@ def calculate_grading_profit(
     )
     cache_hash = hashlib.md5(cache_key_raw.encode()).hexdigest()
     source_key = "ppt" if get_settings().ppt_primary_enabled else "legacy"
-    redis_key = f"cardboarddex:{source_key}:grading_profit:identity-v2:{cache_hash}"
+    redis_key = f"cardboarddex:{source_key}:grading_profit:identity-v3:{cache_hash}"
     redis_key = f"{image_generation()}:{redis_key}"
 
     # 1. Try Redis cache first

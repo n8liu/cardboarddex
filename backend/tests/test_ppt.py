@@ -862,3 +862,38 @@ def test_worker_ingestion_leads_live_feed_and_skips_unchanged_quotes(db, payload
     db.commit()
     top = get_live_feed(Response(), "pokemonpricetracker", "all", None, None, 1, 1, db).items[0]
     assert top.price == 120
+
+
+def test_card_pricing_includes_ppt_status_after_successful_ingestion(db, payload, now, monkeypatch):
+    from fastapi import Response
+    from app.routers.cards import get_card_prices
+    product = map_product(db, payload, "english", "cards")
+    db.commit()
+    def pricing():
+        return get_card_prices("legacy-card", response=Response(), days=180, db=db)
+    assert not any(s.provider == "pokemonpricetracker" for s in pricing().provider_states)
+    ingest(db, product, payload, now)
+    db.commit()
+    result = pricing()
+    states = [s for s in result.provider_states if s.provider == "pokemonpricetracker"]
+    assert len(states) == 1 and states[0].match_status == "matched"
+    assert states[0].last_synced_at.replace(tzinfo=UTC) == now
+    assert {q.printing for q in result.provider_quotes if not q.grade} == {"Holofoil", "Reverse Holofoil"}
+    assert next(q for q in result.provider_quotes if q.primary).price == 110
+    # A second successful refresh advances prices/status without duplicate providers.
+    payload["variants"]["Holofoil"]["marketPrice"] = 130
+    payload["prices"]["market"] = 130
+    ingest(db, product, payload, now + timedelta(hours=1))
+    db.commit()
+    updated = pricing()
+    assert next(q for q in updated.provider_quotes if q.primary).price == 130
+    states = [s for s in updated.provider_states if s.provider == "pokemonpricetracker"]
+    assert len(states) == 1 and states[0].last_synced_at.replace(tzinfo=UTC) == now + timedelta(hours=1)
+    monkeypatch.setattr(get_settings(), "ppt_primary_enabled", False)
+    assert not any(s.provider == "pokemonpricetracker" for s in pricing().provider_states)
+    assert pricing().provider_quotes == []
+    monkeypatch.setattr(get_settings(), "ppt_primary_enabled", True)
+    product.status = "quarantined"
+    db.commit()
+    assert not any(s.provider == "pokemonpricetracker" for s in pricing().provider_states)
+    assert pricing().provider_quotes == []

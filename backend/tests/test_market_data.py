@@ -292,24 +292,24 @@ def test_market_snapshots_rebuild_only_every_12_hours(db, monkeypatch, snapshot_
             for path in ["/cards/market-movers", "/cards/sealed-signals", "/cards/grading-profit"]:
                 missing = client.get(path)
                 assert missing.status_code == 503 and missing.headers["cache-control"] == "no-store"
-            assert refresh_due() == {"movers": True, "sealed": True, "grading-identity-v2": True}
+            assert refresh_due() == {"movers": True, "sealed-evidence-v2": True, "grading-identity-v2": True}
             statements = []
             record = lambda *args: statements.append(args[2])
             event.listen(db.get_bind(), "before_cursor_execute", record)
             try:
                 # The 15-minute Beat check queries nothing until a snapshot is 12 hours old.
                 snapshot_redis.clock += 12 * 3600 - 60
-                assert refresh_due() == {"movers": False, "sealed": False, "grading-identity-v2": False}
+                assert refresh_due() == {"movers": False, "sealed-evidence-v2": False, "grading-identity-v2": False}
                 for path in ["/cards/market-movers", "/cards/grading-profit"]:
                     assert client.get(path).status_code == 200
             finally:
                 event.remove(db.get_bind(), "before_cursor_execute", record)
             assert statements == []
             snapshot_redis.clock += 60
-            assert refresh_due() == {"movers": True, "sealed": True, "grading-identity-v2": True}
+            assert refresh_due() == {"movers": True, "sealed-evidence-v2": True, "grading-identity-v2": True}
             # A lost snapshot (cache eviction) is rebuilt on the next check, not in 12 hours.
             snapshot_redis.values.pop(market_snapshots.part_key("grading-identity-v2"))
-            assert refresh_due() == {"movers": False, "sealed": False, "grading-identity-v2": True}
+            assert refresh_due() == {"movers": False, "sealed-evidence-v2": False, "grading-identity-v2": True}
             # Failed rebuilds keep serving the previous snapshot for up to 36 hours.
             snapshot_redis.clock += 36 * 3600
             assert client.get("/cards/market-movers").status_code == 503
@@ -655,3 +655,66 @@ def test_grading_snapshot_keeps_cards_across_batch_boundaries(db, monkeypatch):
     snapshot = grading_service.build_snapshot(db, now)
     assert {row[0] for row in snapshot["rows"]} == {f"graded-{i}" for i in range(257)}
     assert all(row[6:9] == [10, 100, None] for row in snapshot["rows"])
+
+
+def _grading_snapshot(prices):
+    from app.services.grading_service import FIELDS
+    return {"updated_at": datetime.now(UTC).isoformat(), "fields": FIELDS, "rows": [
+        [cid, cid, "set", "Test", "1", "Rare", 100, p10, p9, "pokemonpricetracker", "median_7d", None]
+        for cid, p10, p9 in prices
+    ]}
+
+
+@pytest.mark.parametrize("sort_by", ["psa10_profit_desc", "psa10_roi_desc", "psa9_profit_desc", "psa9_roi_desc", "ev_desc"])
+def test_grading_sort_preserves_break_even_and_missing_outcomes(sort_by):
+    from app.services.grading_service import select_grading_profit
+    snapshot = _grading_snapshot([("loss", 110, 110), ("zero", 125, 125), ("gain", 150, 150),
+                                  ("missing", None, 125) if sort_by.startswith("psa10") or sort_by == "ev_desc" else ("missing", 125, None)])
+    result = select_grading_profit(snapshot, grading_fee=25, sort_by=sort_by)
+    assert [item.card_id for item in result.items] == ["gain", "zero", "loss", "missing"]
+    assert result.items[1].expected_value == 0
+    assert result.items[-1].expected_value is None
+
+
+@pytest.mark.parametrize("prices", [(None, 150), (150, None)])
+def test_grading_expected_value_requires_both_grades(prices):
+    from app.services.grading_service import select_grading_profit
+    item = select_grading_profit(_grading_snapshot([("partial", *prices)]), grading_fee=25).items[0]
+    assert item.expected_value is None
+    assert (item.psa10_profit, item.psa9_profit) == tuple(None if p is None else 25 for p in prices)
+
+
+def test_sealed_missing_evidence_does_not_generate_a_signal(db):
+    db.add(PriceObservation(card_id="box", provider="tcgapi", provider_card_id="box", variant_id="normal",
+        fingerprint="missing-evidence", price=100, payload={"price_change_7d": 50}))
+    db.commit()
+    result = sealed_service.calculate_sealed_signals(db, use_cache=False)
+    item = result.items[0]
+    assert item.supply_score is None and item.supply_rating == "Unavailable"
+    assert item.demand_score is None and item.momentum_score is None
+    assert item.signal_score is None and item.signal_label == "INSUFFICIENT DATA"
+    assert result.strong_buy_count + result.buy_count + result.hold_count + result.underperform_count == 0
+    assert sealed_service.calculate_sealed_signals(db, use_cache=False, signal="buy").items == []
+
+
+def test_sealed_zero_monthly_return_is_not_replaced_by_short_term_growth(db):
+    db.add(PriceObservation(card_id="box", provider="tcgapi", provider_card_id="box", variant_id="normal",
+        fingerprint="zero-momentum", price=100, payload={"total_listings": 10, "buylist_price": 80,
+            "price_change_30d": 0, "price_change_7d": 50, "price_change_24h": 90}))
+    db.commit()
+    item = sealed_service.calculate_sealed_signals(db, use_cache=False).items[0]
+    assert item.momentum_score == 14
+    assert item.signal_score == item.supply_score + item.demand_score + item.vintage_score + 14
+
+
+def test_sealed_score_sort_puts_incomplete_evidence_last(db, monkeypatch):
+    monkeypatch.setattr(sealed_service, "_page_history", lambda *args: None)
+    db.add(PriceObservation(card_id="box", provider="tcgapi", provider_card_id="box", variant_id="normal",
+        fingerprint="sort-evidence", price=100, payload={}))
+    db.commit()
+    snapshot = sealed_service.build_snapshot(db, datetime.now(UTC))
+    snapshot["items"].append({**snapshot["items"][0], "card_id": "scored", "signal_score": 0,
+                              "signal_label": "UNDERPERFORM"})
+    for sort in ("score_desc", "supply_asc"):
+        result = sealed_service.select_sealed_signals(db, snapshot, sort_by=sort)
+        assert [item.card_id for item in result.items] == ["scored", "box"]
