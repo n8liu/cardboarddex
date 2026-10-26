@@ -28,6 +28,10 @@ class RejectionReason(str, Enum):
 
 
 # Negative keyword pattern definitions
+# "number/total" pairs. The total may be a hyphenated promo code ("227/S-P", "SM-P"),
+# which must stay whole or every listing reads as "227/S" and fails the total check.
+RE_NUMBER_FRACTION = re.compile(r"([A-Za-z0-9]+)\s*/\s*([A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)")
+
 RE_ALTERED_AUTO = re.compile(
     r"\b(autographed?|auto\b|signed|signature|hand\s*signed|altered|"
     r"extended\s*art|custom\s*painted|custom\s*art|painted)\b",
@@ -825,7 +829,7 @@ def strict_identity_issue(title: str, number: str, set_name: str,
     found = extract_numbers_from_title(identity)
     if not expected or (expected not in found and expected not in normalize_tokens(identity).split()):
         return ("rejected", "card_number_mismatch") if found else ("uncertain", "card_number_unconfirmed")
-    totals = re.findall(r"[A-Za-z0-9]+\s*/\s*([A-Za-z0-9]+)", identity)
+    totals = [total for _, total in RE_NUMBER_FRACTION.findall(identity)]
     expected_total = str(number).split("/", 1)[1] if "/" in str(number) else str(printed_total or "")
     if expected_total and totals and any(normalize_card_number(t) != normalize_card_number(expected_total) for t in totals):
         return "rejected", "card_number_denominator_mismatch"
@@ -842,7 +846,7 @@ def image_number_matches(text: str, number: str, printed_total: int | None):
     numbers = extract_numbers_from_title(text)
     expected = normalize_card_number(number)
     expected_total = str(number).split("/", 1)[1] if "/" in str(number) else str(printed_total or "")
-    fractions = re.findall(r"([A-Za-z0-9]+)\s*/\s*([A-Za-z0-9]+)", text)
+    fractions = RE_NUMBER_FRACTION.findall(text)
     if expected_total and fractions and not any(normalize_card_number(n) == expected and normalize_card_number(d) == normalize_card_number(expected_total) for n, d in fractions):
         return "rejected", "image_card_number_mismatch", numbers
     if numbers and expected not in numbers:
