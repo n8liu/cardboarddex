@@ -180,4 +180,6 @@ jobs:
             fi
             sleep 5
           done
-          pytest -m live tests/test_deployment_endpoints.py -v
+          # Only pytest and httpx are installed here; conftest.py imports the app's
+          # settings (pydantic_settings) for unit tests, which live checks never use.
+          pytest --noconftest -m live tests/test_deployment_endpoints.py -v
