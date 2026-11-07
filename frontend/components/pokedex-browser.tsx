@@ -454,6 +454,16 @@ export function PokedexBrowser() {
               )}
             </div>
 
+            {hasActiveFilters && (
+              <button
+                type="button"
+                onClick={resetAllFilters}
+                className="shrink-0 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-xs font-bold text-rose-700 transition hover:bg-rose-100"
+              >
+                Reset Filters
+              </button>
+            )}
+
             <button
               type="button"
               onClick={() => setShowEvolutions((prev) => !prev)}
@@ -507,16 +517,6 @@ export function PokedexBrowser() {
                 </span>
               )}
             </div>
-
-            {hasActiveFilters && (
-              <button
-                type="button"
-                onClick={resetAllFilters}
-                className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 transition hover:bg-rose-100"
-              >
-                Reset Filters
-              </button>
-            )}
           </div>
         </div>
 
@@ -752,15 +752,17 @@ function PokemonCard({
         isRestored
           ? "border-emerald-500 bg-emerald-50/40 ring-2 ring-emerald-500/80 shadow-md"
           : isDirect
-          ? "border-amber-300/80 bg-white ring-1 ring-amber-300/40 shadow-sm hover:border-amber-400"
+          ? "border-emerald-300 bg-white ring-1 ring-emerald-300/30 shadow-sm hover:border-emerald-400"
           : "border-slate-200/90 bg-white hover:border-slate-300"
       }`}
       style={{
         boxShadow: isRestored
           ? "0 4px 14px -2px rgba(16, 185, 129, 0.2)"
           : isDirect
-          ? "0 2px 10px -2px rgba(245, 158, 11, 0.15)"
+          ? "0 2px 10px -2px rgba(16, 185, 129, 0.12)"
           : "0 2px 8px -2px rgba(0,0,0,0.05)",
+        // Matches the enlarged artwork; the shared .card-cv estimate is 340px.
+        containIntrinsicSize: "240px 364px",
       }}
     >
       {/* Background glowing gradient circle */}
@@ -787,9 +789,9 @@ function PokemonCard({
           onClick={() => {
             onSelect?.(pokemon.id);
           }}
-          className="relative mt-2 flex h-32 w-full items-center justify-center overflow-hidden rounded-xl bg-slate-50/70 p-2 transition-colors duration-300 group-hover:bg-slate-100/80"
+          className="relative mt-2 flex h-48 w-full items-center justify-center rounded-xl"
         >
-          <div className="relative h-28 w-28 scale-120 transition-transform duration-300 ease-out group-hover:scale-[1.21]">
+          <div className="relative h-48 w-full scale-120 transition-transform duration-300 ease-out group-hover:scale-125">
             <Image
               src={pokemon.artwork}
               alt={pokemon.name}
@@ -797,7 +799,7 @@ function PokemonCard({
               sizes="(max-width: 640px) 150px, (max-width: 1024px) 200px, 250px"
               className="object-contain drop-shadow-md transition-all duration-300"
               placeholder="blur"
-              blurDataURL={shimmerBlurDataUrl(112, 112)}
+              blurDataURL={shimmerBlurDataUrl(160, 160)}
               loading="lazy"
             />
           </div>
@@ -808,9 +810,9 @@ function PokemonCard({
           {evolutionRelation && (
             <div className="mb-1.5 flex items-center">
               {evolutionRelation.type === "direct" ? (
-                <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 border border-amber-200/80 shadow-2xs">
+                <span className="inline-flex items-center gap-1 rounded-md bg-emerald-100/70 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800 border border-emerald-300/80 shadow-2xs">
                   <span>★ Direct Match</span>
-                  <span className="text-amber-600/75 font-normal">({evolutionRelation.stageName})</span>
+                  <span className="text-emerald-700/70 font-normal">({evolutionRelation.stageName})</span>
                 </span>
               ) : evolutionRelation.type === "pre-evolution" ? (
                 <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700 border border-indigo-200/80 shadow-2xs">

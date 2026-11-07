@@ -155,14 +155,7 @@ async function PokemonHero({ basePokemon }: { basePokemon: NonNullable<ReturnTyp
             <div className="lg:col-span-4 flex flex-col items-center justify-center">
               <div className="relative flex w-full items-center justify-center gap-2 sm:gap-3">
 
-                <div
-                  className="relative flex h-60 w-60 sm:h-72 sm:w-72 items-center justify-center rounded-3xl p-5 sm:p-6 shadow-xs border border-white/80"
-                  style={{
-                    background: secondaryTheme
-                      ? `radial-gradient(circle at 35% 35%, ${primaryTheme.glow} 0%, ${secondaryTheme.glow} 50%, rgba(255,255,255,0.5) 100%)`
-                      : `radial-gradient(circle at 50% 50%, ${primaryTheme.glow} 0%, rgba(255,255,255,0.7) 60%, rgba(255,255,255,0) 90%)`,
-                  }}
-                >
+                <div className="relative flex aspect-square w-full max-w-88 items-center justify-center">
                   {/* Concentric subtle radar pulse ring behind artwork */}
                   <div
                     className="pointer-events-none absolute inset-4 rounded-full border border-dashed opacity-25 animate-pulse-slow"
@@ -174,7 +167,7 @@ async function PokemonHero({ basePokemon }: { basePokemon: NonNullable<ReturnTyp
                     alt={pokemon.name}
                     fill
                     priority
-                    sizes="(max-width: 640px) 240px, 300px"
+                    sizes="(max-width: 640px) 320px, 352px"
                     className="object-contain drop-shadow-xl transition-transform duration-300 hover:scale-105"
                   />
                 </div>
