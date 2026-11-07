@@ -13,6 +13,7 @@ import { RecentlyViewed } from "@/components/recently-viewed";
 import { openCommandPalette } from "@/components/command-palette";
 import { FEATURED_POKEMON } from "@/lib/featured-pokemon";
 import { cardImageUrl, getHomeOverview } from "@/lib/api";
+import { isSealedProduct } from "@/lib/pokemon-card-summary";
 import { useCurrency } from "@/context/currency-context";
 import type { GameLanguage } from "@/types/card";
 import type { HomeHighlight, HomeOverview } from "@/types/home";
@@ -39,7 +40,17 @@ function dateLabel(value: string | null): string {
 
 function MarketCard({ title, item, href, loading }: { title: string; item: HomeHighlight | null; href: string; loading: boolean }) {
   const { formatPrice } = useCurrency();
-  if (!item) return <div className={`${panel} p-5`}>
+  const [imageError, setImageError] = useState(false);
+  const isCardMetric = title !== "Strongest sealed growth";
+  const isInvalid =
+    !item ||
+    imageError ||
+    !item.image_url ||
+    item.image_url.toLowerCase().includes("placeholder") ||
+    item.image_url.toLowerCase().includes("image-pending") ||
+    (isCardMetric && isSealedProduct(item));
+
+  if (isInvalid) return <div className={`${panel} p-5`}>
     <h3 className="text-xs font-semibold text-slate-500">{title}</h3>
     {loading ? <div role="status" className="mt-5 space-y-3"><span className="text-xs text-slate-500">Loading {title}…</span><div className="h-16 rounded-lg bg-slate-100 motion-safe:animate-pulse" /><div className="h-5 w-32 rounded bg-slate-100 motion-safe:animate-pulse" /></div> : <><p className="mt-6 text-sm font-semibold text-slate-700">No qualifying price change available.</p><Link href={href} className="mt-6 inline-block text-xs font-bold text-emerald-700 hover:underline">Explore market data →</Link></>}
   </div>;
@@ -47,7 +58,7 @@ function MarketCard({ title, item, href, loading }: { title: string; item: HomeH
   return <Link href={`/cards/${encodeURIComponent(item.card_id)}`} prefetch={false} className={`${panel} ${hover} flex flex-col p-5`}>
     <div className="flex items-center justify-between gap-2"><h3 className="text-xs font-semibold text-slate-500">{title}</h3><span className={`rounded-md border px-2 py-1 text-xs font-bold ${down ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{item.change_percent > 0 ? "+" : ""}{item.change_percent.toFixed(1)}%</span></div>
     <div className="my-5 flex items-center gap-4">
-      <div className="flex h-24 w-20 shrink-0 items-center justify-center rounded-xl bg-slate-50"><Image src={cardImageUrl(item.image_url)} alt="" width={64} height={88} className="h-22 w-16 object-contain" /></div>
+      <div className="flex h-24 w-20 shrink-0 items-center justify-center rounded-xl bg-slate-50"><Image src={cardImageUrl(item.image_url)} alt="" width={64} height={88} className="h-22 w-16 object-contain" onError={() => setImageError(true)} /></div>
       <div className="min-w-0"><p className="line-clamp-2 text-sm font-bold leading-relaxed text-slate-950">{item.name}</p><p className="mt-1 text-[11px] text-slate-500">{item.set_name}{item.printing ? ` · ${item.printing}` : ""}</p><p className="mt-2 text-xl font-bold tracking-tight">{formatPrice(item.market_price)}</p></div>
     </div>
     <div className="mt-auto border-t border-slate-100 pt-3 text-[10px] leading-relaxed text-slate-500">

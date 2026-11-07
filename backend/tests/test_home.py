@@ -24,10 +24,11 @@ def db():
     engine.dispose()
 
 
-def add_product(db, cid, change, *, sealed=False, days=0, series=None, date_offset=-30):
+def add_product(db, cid, change, *, sealed=False, days=0, series=None, date_offset=-30, image_url="auto"):
     now = datetime.now(UTC)
     db.add(Set(id=cid, name=f'{cid} Set', series=series, release_date=now.date() + timedelta(days=date_offset)))
-    db.add(Card(id=cid, name=cid, set_id=cid, number='1', rarity=None if sealed else 'Rare'))
+    card_img = f"https://img.test/{cid}.jpg" if image_url == "auto" else image_url
+    db.add(Card(id=cid, name=cid, set_id=cid, number='1', rarity=None if sealed else 'Rare', image_url=card_img))
     db.add(PriceObservation(fingerprint=cid, card_id=cid, provider='tcgapi', provider_card_id=cid,
         variant_id='default', printing='Normal', price=100, observed_at=now - timedelta(days=days),
         payload={'price_change_30d': change, 'market_price_as_of': (now.date() - timedelta(days=days)).isoformat()}))
@@ -130,3 +131,26 @@ def test_live_collection_totals_follow_new_records_and_share_live_comps_cache(db
     redis.get.return_value = None
     assert live_observation_count(db, redis) == 2
     redis.setex.assert_called_once_with(COUNT_KEY, 60, '2')
+
+
+def test_highlights_exclude_cards_without_images_and_sealed_products(db):
+    # Top gainer with no image - should be skipped
+    add_product(db, "no-img-gain", 80, image_url=None)
+    # Top gainer that is sealed - should be categorized as sealed, not card gainer
+    add_product(db, "booster-box-gain", 70, image_url="https://img.test/box.jpg")
+    # Valid card gainer with image
+    add_product(db, "valid-card-gain", 50, image_url="https://img.test/valid.jpg")
+
+    # Top loser with placeholder image - should be skipped
+    add_product(db, "placeholder-loss", -90, image_url="https://img.test/placeholder.png")
+    # Top loser that is sealed
+    add_product(db, "etb-loss", -80, image_url="https://img.test/etb.jpg")
+    # Valid card loser with image
+    add_product(db, "valid-card-loss", -40, image_url="https://img.test/loss.jpg")
+
+    db.commit()
+    result = service.build_home_overview(db)
+    assert result.gainer is not None
+    assert result.gainer.card_id == "valid-card-gain"
+    assert result.loser is not None
+    assert result.loser.card_id == "valid-card-loss"

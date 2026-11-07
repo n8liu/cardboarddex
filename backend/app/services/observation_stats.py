@@ -73,7 +73,7 @@ def dashboard_observation_snapshot(db, timeframe, now):
     from app.models import Card, Set
     stats = card_observation_stats(*observation_windows(timeframe, now))
     return db.execute(select(
-        Card.id, Card.name, Card.number, Card.rarity,
+        Card.id, Card.name, Card.number, Card.rarity, Card.image_url,
         Set.id.label("set_id"), Set.name.label("set_name"),
         func.coalesce(stats.c.obs_cnt, 0).label("obs_cnt"),
         stats.c.avg_price, stats.c.max_price, stats.c.total_price, stats.c.price_count,

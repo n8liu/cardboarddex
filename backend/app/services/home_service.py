@@ -10,8 +10,14 @@ from sqlalchemy.orm import Session
 from app.common.cache import TTLCache
 from app.models import Card, MarketHistory, PriceObservation, ProviderCardState, Set
 from app.schemas.home import HomeHighlight, HomeOverview, HomeRelease
-from app.services.image_delivery import card_image_url, image_generation
+from app.services.image_delivery import card_image_url, image_generation, has_card_image
+import re
 from app.services.market_data_service import freshness
+
+_SEALED_RE = re.compile(
+    r"\b(booster[\s\-_]*(?:box|pack|bundle)|elite[\s\-_]+trainer[\s\-_]+box|\betb\b|blister|collection[\s\-_]*box|premium[\s\-_]*collection|special[\s\-_]*collection|mini[\s\-_]*tin|\btin\b|theme[\s\-_]*deck|battle[\s\-_]*deck|build[\s\-_]*&[\s\-_]*battle|display[\s\-_]*box|case)\b",
+    re.IGNORECASE,
+)
 
 _cache = TTLCache(max_entries=2, ttl=300)
 _lock = Lock()
@@ -39,7 +45,7 @@ def build_home_overview(db: Session) -> HomeOverview:
     from app.services.product_metadata import product_type_expression
     product_type = product_type_expression()
     query = select(
-        Card.id, Card.name, Card.rarity, Set.name.label('set_name'),
+        Card.id, Card.name, Card.rarity, Card.image_url, Set.name.label('set_name'),
         Set.release_date, product_type.label('product_type'),
         PriceObservation.price, PriceObservation.printing, PriceObservation.observed_at,
         PriceObservation.payload['price_change_30d'].as_string().label('change'),
@@ -56,11 +62,22 @@ def build_home_overview(db: Session) -> HomeOverview:
         price = _finite(row['price'])
         if change is None or change < -100 or price is None or price <= 0:
             continue
-        sealed = row['product_type'] == 'Sealed Products' or (row['product_type'] is None and not row['rarity'])
-        # Zero and declines never become a positive "top growth" highlight.
-        kind = 'sealed' if sealed and change > 0 else 'gainer' if not sealed and change > 0 else 'loser' if not sealed and change < 0 else None
+        rarity = (row['rarity'] or '').strip().lower()
+        is_sealed = (
+            row['product_type'] == 'Sealed Products'
+            or (row['product_type'] is None and not rarity)
+            or bool(_SEALED_RE.search(row['name']))
+            or rarity in ('sealed', 'sealed product', 'none')
+        )
+        kind = 'sealed' if is_sealed and change > 0 else 'gainer' if not is_sealed and change > 0 else 'loser' if not is_sealed and change < 0 else None
         if not kind:
             continue
+        if kind in ('gainer', 'loser'):
+            if not has_card_image(row['id'], row['image_url']):
+                continue
+            img_url = card_image_url(row['id'])
+            if not img_url or 'placeholder' in img_url.lower() or 'image-pending' in img_url.lower():
+                continue
         candidate = dict(row)
         candidate['change'] = change
         existing = winners[kind]

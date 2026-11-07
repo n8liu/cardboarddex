@@ -62,3 +62,20 @@ def card_image_url(card_id: str) -> str:
         return f'/cards/{card_id}/image'
     _refresh()
     return f"{settings.image_cdn_base_url.rstrip('/')}/{_entries.get(str(card_id), PLACEHOLDER)}"
+
+
+def has_card_image(card_id: str, card_image_url_value: str | None = None) -> bool:
+    settings = get_settings()
+    if settings.image_cdn_enabled:
+        _refresh()
+        return str(card_id) in _entries
+    if card_image_url_value:
+        val = str(card_image_url_value).strip().lower()
+        return (
+            bool(val)
+            and "placeholder" not in val
+            and "image-pending" not in val
+            and "no-image" not in val
+            and "no image" not in val
+        )
+    return False

@@ -1,6 +1,6 @@
 from app.services.observation_stats import card_observation_stats, dashboard_observation_snapshot
 from app.config import get_settings
-from app.services.image_delivery import card_image_url, image_generation
+from app.services.image_delivery import card_image_url, image_generation, has_card_image
 from app.common.cache import TTLCache
 import logging
 import re
@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 from fastapi import HTTPException
 from redis.exceptions import RedisError
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import func, not_, or_, select, text
 from sqlalchemy.orm import Session
 
 from app.common.redis import get_redis
@@ -62,6 +62,32 @@ SNAPSHOT_TIMEFRAMES = (*VIEW_WINDOWS, "all_time")
 # Worker-only bound; public SQL keeps its five-second deadline.
 SNAPSHOT_STATEMENT_TIMEOUT = "30000ms"
 
+_SEALED_RE = re.compile(
+    r"\b(booster[\s\-_]*(?:box|pack|bundle)|elite[\s\-_]+trainer[\s\-_]+box|\betb\b|blister|collection[\s\-_]*box|premium[\s\-_]*collection|special[\s\-_]*collection|mini[\s\-_]*tin|\btin\b|theme[\s\-_]*deck|battle[\s\-_]*deck|build[\s\-_]*&[\s\-_]*battle|display[\s\-_]*box|case)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_trending_card_eligible(r: Any) -> bool:
+    name = getattr(r, "name", "") or ""
+    if _SEALED_RE.search(name) or "code card" in name.lower():
+        return False
+    rarity = (getattr(r, "rarity", None) or "").strip().lower()
+    if rarity in ("sealed", "sealed product"):
+        return False
+    if getattr(r, "product_type", None) == "Sealed Products":
+        return False
+    cid = getattr(r, "id", None) or getattr(r, "card_id", None)
+    if not cid:
+        return False
+    img_val = (getattr(r, "image_url", None) or "").strip().lower()
+    if img_val and ("placeholder" in img_val or "image-pending" in img_val or "no-image" in img_val or "no image" in img_val):
+        return False
+    img_url = card_image_url(cid)
+    if img_url and ("placeholder" in img_url.lower() or "image-pending" in img_url.lower()):
+        return False
+    return True
+
 
 def _safe_increment_in_memory(store: dict[str, int], key: str) -> None:
     """Increment count in bounded in-memory store, evicting lowest entry if full."""
@@ -100,7 +126,7 @@ def reset_trending_analytics() -> None:
             r.delete(REDIS_KEY_CARD_CLICKS, REDIS_KEY_POKE_CLICKS, REDIS_KEY_SEARCHES)
         except (RedisError, Exception) as exc:
             logger.warning(
-                "Failed to reset Redis analytics keys error=%s: %s",
+                "Failed to reset trending Redis analytics error=%s: %s",
                 type(exc).__name__,
                 exc,
             )
@@ -174,9 +200,8 @@ def record_action(
     _TRENDING_CACHE.clear()
 
 
-def _get_redis_scores(redis_key: str, fallback_dict: dict[str, int]) -> dict[str, int]:
-    """Retrieve score mapping from Redis sorted set with in-memory fallback."""
-    scores: dict[str, int] = dict(fallback_dict)
+def _get_redis_scores(redis_key: str, in_memory_fallback: dict[str, int]) -> dict[str, int]:
+    scores = dict(in_memory_fallback)
     r = get_redis()
     if r is not None:
         try:
@@ -204,13 +229,16 @@ def calculate_trending_cards(
 
     if _snapshot is None:
         stats = card_observation_stats()
-        # Base query template
+        from app.services.product_metadata import sealed_product
+
+        # Base query template excluding code cards, sealed products, and cards without an image
         base_stmt = (
             select(
                 Card.id,
                 Card.name,
                 Card.number,
                 Card.rarity,
+                Card.image_url,
                 Set.id.label("set_id"),
                 Set.name.label("set_name"),
                 func.coalesce(stats.c.obs_cnt, 0).label("obs_cnt"),
@@ -228,7 +256,7 @@ def calculate_trending_cards(
             clean_q = q.strip().lower()
             obs_stmt = obs_stmt.where(or_(Card.name.ilike(f"%{clean_q}%"), Set.name.ilike(f"%{clean_q}%")))
 
-        rows_map: dict[str, Any] = {r.id: r for r in db.execute(obs_stmt).all()}
+        rows_map: dict[str, Any] = {r.id: r for r in db.execute(obs_stmt).all() if _is_trending_card_eligible(r)}
 
         # 2. Ensure all clicked cards are included even if low or 0 price observation count
         clicked_ids = [cid for cid, cnt in card_clicks.items() if cnt > 0 and cid not in rows_map]
@@ -238,14 +266,15 @@ def calculate_trending_cards(
                 clean_q = q.strip().lower()
                 clicked_stmt = clicked_stmt.where(or_(Card.name.ilike(f"%{clean_q}%"), Set.name.ilike(f"%{clean_q}%")))
             for r in db.execute(clicked_stmt).all():
-                rows_map[r.id] = r
+                if _is_trending_card_eligible(r):
+                    rows_map[r.id] = r
 
     else:
-        rows_map = {r.id: r for r in sorted(_snapshot, key=lambda r: (-r.obs_cnt, r.id))[:200]}
-        clicked_ids = {cid for cid, count in card_clicks.items() if count > 0 and cid not in rows_map}
-        # Preserve the existing 100-card supplementary click limit and order.
-        clicked_ids = set([cid for cid in card_clicks if cid in clicked_ids][:100])
-        rows_map.update({r.id: r for r in _snapshot if r.id in clicked_ids})
+        eligible_snapshot = [r for r in _snapshot if _is_trending_card_eligible(r)]
+        rows_map = {r.id: r for r in sorted(eligible_snapshot, key=lambda r: (-r.obs_cnt, r.id))[:200]}
+        clicked_ids = [cid for cid, count in card_clicks.items() if count > 0 and cid not in rows_map]
+        clicked_ids = [cid for cid in clicked_ids if any(r.id == cid for r in eligible_snapshot)]
+        rows_map.update({r.id: r for r in eligible_snapshot if r.id in set(clicked_ids[:100])})
 
     rows = list(rows_map.values())
     card_ids = list(rows_map.keys())
@@ -266,6 +295,12 @@ def calculate_trending_cards(
     candidates: list[dict[str, Any]] = []
     for r in rows:
         cid = r.id
+        if not _is_trending_card_eligible(r):
+            continue
+        img_url = card_image_url(cid)
+        if not img_url or "placeholder" in img_url.lower() or "image-pending" in img_url.lower():
+            continue
+
         clicks = card_clicks.get(cid, 0)
         obs_cnt = int(r.obs_cnt or 0)
         avg_price = float(r.avg_price or 0)
@@ -315,7 +350,7 @@ def calculate_trending_cards(
             "set_id": r.set_id,
             "number": r.number,
             "rarity": r.rarity,
-            "image_url": card_image_url(cid),
+            "image_url": img_url,
             "market_price": market_price,
             "price_change_7d": price_change_7d,
             "clicks_count": clicks,

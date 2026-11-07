@@ -1,9 +1,23 @@
 import type { CardSummary } from "@/types/card";
 
-/** Match the catalog's legacy sealed classification using the data already on the page. */
-export function isSealedProduct(card: CardSummary): boolean {
-  const rarity = card.rarity?.trim().toLowerCase();
-  return !rarity || rarity === "none";
+const SEALED_KEYWORDS =
+  /\b(booster[\s\-_]*(?:box|pack|bundle)|elite[\s\-_]+trainer[\s\-_]+box|\betb\b|blister|collection[\s\-_]*box|premium[\s\-_]*collection|special[\s\-_]*collection|mini[\s\-_]*tin|\btin\b|theme[\s\-_]*deck|battle[\s\-_]*deck|build[\s\-_]*&[\s\-_]*battle|display[\s\-_]*box|case)\b/i;
+
+export type SealedCheckable = {
+  name?: string | null;
+  rarity?: string | null;
+};
+
+/** Match the catalog and market sealed classification using the data already on the card. */
+export function isSealedProduct(card: SealedCheckable): boolean {
+  if ("rarity" in card && card.rarity !== undefined) {
+    const rarity = card.rarity?.trim().toLowerCase();
+    if (!rarity || rarity === "none") return true;
+  }
+  if (card.name && (SEALED_KEYWORDS.test(card.name) || /code\s*card/i.test(card.name))) {
+    return true;
+  }
+  return false;
 }
 
 export function summarizeDisplayedCards(cards: CardSummary[]) {
