@@ -101,8 +101,9 @@ services:
       disable: true
   celery-beat:
     <<: *app
-    mem_limit: 64m
-    memswap_limit: 96m
+    # Beat idles near 60 MiB; 64m was OOM-killed on 2026-10-29 and paused ingestion.
+    mem_limit: 128m
+    memswap_limit: 160m
     command: [celery, -A, app.celery_app, beat, --loglevel=info, --schedule=/beat/celerybeat-schedule, --pidfile=]
     volumes:
       - beat_data:/beat
